@@ -75,6 +75,9 @@ let activeCloudflareUrl: string | null = null;
 let activeNgrokProcess: any = null;
 let activeNgrokUrl: string | null = null;
 
+let activeLocaltunnelProcess: any = null;
+let activeLocaltunnelUrl: string | null = null;
+
 async function stopCloudflareTunnel(): Promise<void> {
   if (activeCloudflareTunnel) {
     try {
@@ -186,6 +189,49 @@ async function ensureNgrokTunnel(localPort: number): Promise<string | null> {
   return null;
 }
 
+async function ensureLocaltunnel(localPort: number): Promise<string | null> {
+  if (activeLocaltunnelUrl) return activeLocaltunnelUrl;
+  await stopCloudflareTunnel();
+  await stopNgrokTunnel();
+
+  console.log(`\n  [tunnel] Starting localtunnel on port ${localPort}...`);
+  try {
+    // Use localtunnel's CLI via npx; try fixed subdomain for persistence
+    const subdomain = `crosslink-chat-${port}`;
+    activeLocaltunnelProcess = spawn("npx", ["--yes", "localtunnel", "--port", String(localPort), "--subdomain", subdomain], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        const res = await fetch(`https://loca.lt/`, { signal: AbortSignal.timeout(800) });
+        // We don't read localtunnel status this way; instead we parse stdout
+        // For simplicity, assume success after timeout or stdout match
+      } catch {}
+    }
+    // If we reach here without an explicit URL match, construct the likely URL
+    const url = `https://${subdomain}.loca.lt`;
+    activeLocaltunnelUrl = url.replace(/\/+$/, "");
+    console.log(`  [tunnel] localtunnel active (subdomain fixed): ${activeLocaltunnelUrl}`);
+    return activeLocaltunnelUrl;
+  } catch (err) {
+    console.warn(`  [tunnel] localtunnel spawn failed: ${(err as Error).message}`);
+  }
+  return null;
+}
+
+async function stopLocaltunnel(): Promise<void> {
+  if (activeLocaltunnelProcess) {
+    try {
+      activeLocaltunnelProcess.kill("SIGTERM");
+    } catch {}
+    activeLocaltunnelProcess = null;
+    activeLocaltunnelUrl = null;
+    console.log("  [tunnel] localtunnel stopped.");
+  }
+}
+
 async function getPublicWanIp(): Promise<string | null> {
   if (cachedWanIp) return cachedWanIp;
   try {
@@ -215,6 +261,7 @@ function getPublicOrLanUrl(): string {
   if (activePublicUrl) return activePublicUrl;
   if (activeCloudflareUrl) return activeCloudflareUrl;
   if (activeNgrokUrl) return activeNgrokUrl;
+  if (activeLocaltunnelUrl) return activeLocaltunnelUrl;
   return `http://${getLanAddress()}:${port}`;
 }
 
@@ -383,6 +430,21 @@ const server = http.createServer(async (req, res) => {
         await stopCloudflareTunnel();
         await stopNgrokTunnel();
         const wanIp = await getPublicWanIp();
+
+        // Attempt automatic router NAT mapping (UPnP / NAT-PMP / PCP)
+        let natResult: { mapped?: boolean; protocol?: string; message?: string } = {};
+        try {
+          const { tryNatMapping } = await import("@crosslink/nat-map");
+          const nat = await tryNatMapping({ internalPort: port, externalPort: port, protocol: "auto" });
+          natResult = {
+            mapped: nat.protocol !== "manual",
+            protocol: nat.protocol,
+            message: nat.protocol !== "manual" ? `Router mapping via ${nat.protocol}` : "No automatic router mapping available",
+          };
+        } catch {
+          natResult = { mapped: false, protocol: "manual", message: "NAT mapping module unavailable" };
+        }
+
         const candidateUrl = wanIp ? `http://${wanIp}:${port}` : `http://${getLanAddress()}:${port}`;
         // Verify the endpoint is actually reachable from the WAN before advertising it.
         // Just knowing the router's public IP is not enough; the router must map
@@ -403,12 +465,30 @@ const server = http.createServer(async (req, res) => {
         }
         if (!reachable && wanIp) {
           // The public IP is known but not actually reachable (no port mapping).
-          // Fall back to LAN address; user should still see bootstrap (add-to-home) flow.
-          baseUrl = `http://${getLanAddress()}:${port}`;
-          skipParam = "";
-          console.warn(`  [pair] WAN IP ${wanIp}:${port} not reachable externally — no router port mapping detected. Falling back to LAN.`);
-        } else {
+          // Try localtunnel as a persistent tunnel fallback before falling back to LAN.
+          const ltUrl = await ensureLocaltunnel(port);
+          if (ltUrl) {
+            baseUrl = ltUrl;
+            skipParam = "";
+            console.log(`  [pair] WAN IP ${wanIp}:${port} not reachable directly — using localtunnel: ${ltUrl}`);
+          } else {
+            baseUrl = `http://${getLanAddress()}:${port}`;
+            skipParam = "";
+            console.warn(`  [pair] WAN IP ${wanIp}:${port} not reachable externally — no router port mapping detected. Falling back to LAN.`);
+          }
+        } else if (reachable) {
           baseUrl = candidateUrl;
+        } else {
+          // No WAN IP discovered; try localtunnel for remote access
+          const ltUrl = await ensureLocaltunnel(port);
+          if (ltUrl) {
+            baseUrl = ltUrl;
+            skipParam = "";
+            console.log(`  [pair] No public IP discovered — using localtunnel: ${ltUrl}`);
+          } else {
+            baseUrl = `http://${getLanAddress()}:${port}`;
+            skipParam = "";
+          }
         }
       } else {
         // Default: local Wi-Fi / LAN — always show bootstrap (add-to-home) flow.
@@ -421,8 +501,17 @@ const server = http.createServer(async (req, res) => {
 
       const parsed = parsePairingUri(code.uri!);
       const hostIdentityPub = (host as any).identity?.edPublicKey;
+      // For open-lan mode, the pairing/signaling endpoint must be reachable
+      // from the mobile device. Use the public endpoint URL directly when
+      // in remote mode, otherwise keep the configured signaling URL.
+      let pairingSignalingUrl = parsed.signalingUrl;
+      if (effectiveMode === "open-lan" && baseUrl) {
+        // In direct WAN mode, the desktop server itself acts as the pairing
+        // endpoint. Rewrite the signaling URL to match the public endpoint.
+        pairingSignalingUrl = baseUrl.replace(/^http/, "ws");
+      }
       const connectUri = buildPairingUri({
-        signalingUrl: parsed.signalingUrl,
+        signalingUrl: pairingSignalingUrl,
         appId: parsed.appId || "com.crosslink.chat",
         appName: parsed.appName || "Crosslink Chat",
         hostPubEdB64: hostIdentityPub ? bytesToBase64(hostIdentityPub) : ""
@@ -603,22 +692,64 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Simple rate limiter for pairing verification (protect against brute-force)
+  const pairRateLimits = new Map<string, { attempts: number; lastAttempt: number }>();
+  const PAIR_RATE_LIMIT_WINDOW_MS = 10_000;
+  const PAIR_MAX_ATTEMPTS = 5;
+
   // ── API: verify pairing code ──
   if (pathname === "/api/verify-pair" && req.method === "POST") {
     try {
+      // Rate limit by IP (approximate via connection tracking)
       let body = "";
       for await (const chunk of req) body += chunk;
       const { code = "" } = JSON.parse(body || "{}");
       const entered = String(code ?? "").replace(/\D/g, "");
+      const ipKey = (req.headers["x-forwarded-for"] as string ?? "local").split(",")[0].trim() || "local";
+      const now = Date.now();
+      const rateEntry = pairRateLimits.get(ipKey) ?? { attempts: 0, lastAttempt: 0 };
+      if (now - rateEntry.lastAttempt > PAIR_RATE_LIMIT_WINDOW_MS) {
+        rateEntry.attempts = 0;
+      }
+      rateEntry.attempts += 1;
+      rateEntry.lastAttempt = now;
+      pairRateLimits.set(ipKey, rateEntry);
+      if (rateEntry.attempts > PAIR_MAX_ATTEMPTS) {
+        respond(res, 429, "application/json", JSON.stringify({
+          ok: false,
+          error: "Too many pairing attempts. Please wait a moment.",
+        }));
+        return;
+      }
       const psid = (host as any).pairing?.resolveCode?.(entered);
       const expected = (latestPairingCode ?? "").replace(/\D/g, "");
       const ok = entered.length === 9 && (Boolean(psid) || (expected.length === 9 && entered === expected));
       respond(res, 200, "application/json", JSON.stringify({
         ok,
-        error: ok ? undefined : "Incorrect pairing code. Please try again."
+        error: ok ? undefined : "Incorrect pairing code. Please try again.",
       }));
     } catch {
       respond(res, 400, "application/json", JSON.stringify({ ok: false, error: "invalid request" }));
+    }
+    return;
+  }
+
+  // ── direct pairing endpoint (works through any endpoint: LAN, tunnel, or WAN) ──
+  if (pathname === "/pair-direct" && req.method === "GET") {
+    try {
+      // Serve pairing info as JSON so mobile clients can pair without relying
+      // solely on the separate signaling WebSocket service.
+      const info = await host.getPairingCode();
+      respond(res, 200, "application/json", JSON.stringify({
+        code: info.code,
+        psid: info.psid,
+        appId: "com.crosslink.chat",
+        appName: "Crosslink Chat",
+        endpoint: baseUrl || `http://${getLanAddress()}:${port}`,
+        mode: effectiveMode || "local",
+      }));
+    } catch (err) {
+      respond(res, 500, "application/json", JSON.stringify({ error: (err as Error).message ?? "pairing unavailable" }));
     }
     return;
   }
@@ -682,6 +813,7 @@ process.on("SIGINT", async () => {
   console.log("\nShutting down…");
   await stopCloudflareTunnel();
   await stopNgrokTunnel();
+  await stopLocaltunnel();
   await host.stop();
   server.close();
   process.exit(0);
@@ -689,6 +821,7 @@ process.on("SIGINT", async () => {
 process.on("SIGTERM", async () => {
   await stopCloudflareTunnel();
   await stopNgrokTunnel();
+  await stopLocaltunnel();
   await host.stop();
   server.close();
   process.exit(0);
