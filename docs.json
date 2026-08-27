@@ -1,0 +1,130 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "theme": "mint",
+  "name": "Crosslink",
+  "logo": {
+    "light": "/crosslink.svg",
+    "dark": "/crosslink.svg"
+  },
+  "favicon": "/crosslink.svg",
+  "colors": {
+    "primary": "#6366f1",
+    "light": "#818cf8",
+    "dark": "#4f46e5"
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/jacobpowaza/crosslink"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/quickstart"
+  },
+  "tabs": [
+    {
+      "name": "API Reference",
+      "url": "https://api.crosslink.dev"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "Community",
+      "icon": "discord",
+      "url": "https://discord.gg/crosslink"
+    },
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/jacobpowaza/crosslink"
+    }
+  ],
+  "navigation": {
+    "languages": [
+      {
+        "tab": "English",
+        "groups": [
+          {
+            "group": "GET STARTED",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "CONCEPTS",
+            "pages": [
+              "concepts/architecture",
+              "concepts/hosts-and-clients",
+              "concepts/links",
+              "concepts/sessions",
+              "concepts/pairing",
+              "concepts/permissions"
+            ]
+          },
+          {
+            "group": "CLIENT",
+            "pages": [
+              "client/pwa",
+              "client/custom-ui"
+            ]
+          },
+          {
+            "group": "CONNECTIONS",
+            "pages": [
+              "connections/connection-lifecycle",
+              "connections/networking",
+              "connections/reconnection",
+              "connections/offline-behavior"
+            ]
+          },
+          {
+            "group": "SECURITY",
+            "pages": [
+              "security/overview",
+              "security/authentication",
+              "security/encryption",
+              "security/threat-model",
+              "security/permissions"
+            ]
+          },
+          {
+            "group": "GUIDES",
+            "pages": [
+              "guides/react",
+              "guides/electron",
+              "guides/tauri",
+              "guides/node",
+              "guides/tunnels",
+              "guides/self-hosting",
+              "guides/connection-modes",
+              "guides/security"
+            ]
+          },
+          {
+            "group": "REFERENCE",
+            "pages": [
+              "reference/api",
+              "reference/configuration",
+              "reference/events",
+              "reference/errors",
+              "reference/cli",
+              "reference/protocol"
+            ]
+          },
+          {
+            "group": "RESOURCES",
+            "pages": [
+              "resources/examples",
+              "resources/troubleshooting",
+              "resources/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "backgroundImage": "/crosslink.svg"
+}
