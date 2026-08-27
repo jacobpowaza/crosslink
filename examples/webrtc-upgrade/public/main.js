@@ -4920,13 +4920,14 @@ function parsePairingUri(text) {
     params = new URLSearchParams(trimmed.slice(PAIRING_URI_SCHEME.length));
   } else if (/^https?:\/\//i.test(trimmed)) {
     const url = new URL(trimmed);
-    params = url.searchParams.get("c") !== null ? url.searchParams : new URLSearchParams(url.hash.replace(/^#/, ""));
+    params = url.searchParams.get("c") !== null || url.searchParams.get("s") !== null || url.searchParams.get("a") !== null ? url.searchParams : new URLSearchParams(url.hash.replace(/^#/, ""));
   } else {
     throw new Error("not a crosslink pairing URI");
   }
   const version = params.get("v");
   const signalingUrl = params.get("s");
-  const code = normalizeCode(params.get("c") ?? "");
+  const rawCode = params.get("c");
+  const code = rawCode ? normalizeCode(rawCode) : "";
   const appId = params.get("a");
   const appName = params.get("n") ?? appId ?? "";
   const fp16 = (params.get("f") ?? "").toLowerCase();
@@ -4934,7 +4935,6 @@ function parsePairingUri(text) {
   if (!signalingUrl || !/^https?:\/\//i.test(signalingUrl)) {
     throw new Error("pairing uri missing valid signaling url");
   }
-  if (!/^\d{9}$/.test(code)) throw new Error("pairing uri missing 9-digit code");
   if (!appId || appId.length > 256 || !/^[\w.@:/-]+$/.test(appId)) {
     throw new Error("pairing uri missing valid app id");
   }
@@ -5408,7 +5408,7 @@ var CrosslinkClient = class _CrosslinkClient {
    * handler for the custom scheme — the phone's camera produces the hosted
    * link and this call transparently unwraps it.
    */
-  async pairFromQr(text, requestedCaps) {
+  async pairFromQr(text, requestedCaps, codeOverride) {
     if (!this.deviceCryptoStorage) {
       try {
         const storageModule = await Promise.resolve().then(() => (init_device_crypto_storage_NEJ3IT2Z(), device_crypto_storage_NEJ3IT2Z_exports));
@@ -5419,11 +5419,15 @@ var CrosslinkClient = class _CrosslinkClient {
     }
     const manifest = unwrapBootstrapUri(text);
     const uri = parsePairingUri(manifest);
+    const code = (codeOverride ?? uri.code).replace(/\D/g, "");
+    if (code.length !== 9) {
+      throw new Error("A valid 9-digit pairing code is required");
+    }
     if (!uri.signalingUrl) throw new Error("pairing URI has no signaling URL (LAN-only pairing not supported by browser client)");
     const wsUrl = `${uri.signalingUrl.replace(/^http/, "ws").replace(/\/$/, "")}/ws`;
     const peer = await SignalingPeer.open(() => this.ws(wsUrl), this.options.dialTimeoutMs ?? 1e4);
     try {
-      const found = await peer.resolve(uri.code);
+      const found = await peer.resolve(code);
       if (!found.app.fingerprint.startsWith(uri.fp16)) {
         this.log.error("client.fingerprint-mismatch", {
           expected: uri.fp16,
@@ -5601,8 +5605,14 @@ Capabilities: ${req.grantedCaps.join(", ") || "(none)"}`
    * `https://…#pair=<uri>` link a phone camera produces, unwraps it, and
    * delegates to `pairFromQr`.
    */
-  async pairFromBootstrap(bootstrapUrl, requestedCaps) {
-    return this.pairFromQr(bootstrapUrl, requestedCaps);
+  async pairFromBootstrap(bootstrapUrl, requestedCaps, codeOverride) {
+    return this.pairFromQr(bootstrapUrl, requestedCaps, codeOverride);
+  }
+  /**
+   * Explicit pairing method taking a target host URI/manifest and entered 9-digit code.
+   */
+  async pairWithCode(targetUri, code, requestedCaps) {
+    return this.pairFromQr(targetUri, requestedCaps, code);
   }
   /** True when the identity seed is encrypted at rest. */
   get storageEncrypted() {
@@ -6092,6 +6102,233 @@ var PAIRING_CARD_STYLES = `
   border-color: #f87171;
   color: #f87171;
 }
+`.trim();
+var BOOTSTRAP_STYLES = `
+/* \u2500\u2500 Crosslink Mobile Framework Styles \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+.cl-screen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #0f172a;
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  box-sizing: border-box;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  text-align: center;
+  overflow-y: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+.cl-screen-overlay * {
+  box-sizing: border-box;
+}
+
+/* \u2500\u2500 Screen A: Pairing Screen \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+.cl-pair-screen {
+  gap: 20px;
+}
+.cl-pair-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  object-fit: cover;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+}
+.cl-pair-icon-fallback {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #38bdf8;
+}
+.cl-pair-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: #f8fafc;
+}
+.cl-pair-desc {
+  font-size: 14px;
+  color: #94a3b8;
+  max-width: 290px;
+  line-height: 1.5;
+  margin: 0;
+}
+.cl-pair-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-width: 260px;
+  margin: 8px 0;
+}
+.cl-pair-digit {
+  width: 72px;
+  height: 64px;
+  font-size: 26px;
+  text-align: center;
+  border-radius: 14px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #f8fafc;
+  font-weight: 700;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.cl-pair-digit:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+.cl-pair-err {
+  font-size: 13px;
+  color: #f87171;
+  min-height: 20px;
+  margin: 0;
+  line-height: 1.4;
+  max-width: 280px;
+}
+.cl-pair-reset {
+  margin-top: 12px;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: underline;
+  transition: color 0.15s;
+}
+.cl-pair-reset:hover {
+  color: #94a3b8;
+}
+
+/* \u2500\u2500 Screen B: Add to Home Screen (Screen B) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+.cl-bootstrap-screen {
+  background: #000000;
+  justify-content: center;
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  height: 100dvh;
+}
+.cl-bootstrap-mark {
+  width: min(65vw, 170px);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 10px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+}
+.cl-bootstrap-appname {
+  font-size: 21px;
+  font-weight: 600;
+  color: #ffffff;
+  margin-top: 18px;
+  letter-spacing: -0.01em;
+}
+.cl-continue-btn {
+  margin-top: 20px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  padding: 11px 24px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cl-continue-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+.cl-bootstrap-nudge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+.cl-bootstrap-nudge span {
+  font-family: "Caveat", "Segoe Script", "Bradley Hand", cursive, sans-serif;
+  font-size: 21px;
+  color: #ffffff;
+  opacity: 0.92;
+  text-align: center;
+  max-width: 280px;
+  line-height: 1.2;
+}
+.cl-bootstrap-nudge svg {
+  width: 46px;
+  height: 46px;
+  color: #ffffff;
+  opacity: 0.92;
+}
+
+/* \u2500\u2500 SAS Modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+.cl-sas-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  gap: 14px;
+  text-align: center;
+  box-sizing: border-box;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+.cl-sas-modal h2 { font-size: 18px; color: #fff; margin: 0; }
+.cl-sas-modal p { color: #94a3b8; font-size: 13px; margin: 0; }
+.cl-sas-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-width: 240px;
+  margin: 10px 0;
+}
+.cl-sas-grid span {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1.5;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #f8fafc;
+  font-variant-numeric: tabular-nums;
+}
+.cl-sas-caps { color: #94a3b8; font-size: 12px; }
+.cl-sas-actions { display: flex; gap: 12px; margin-top: 10px; }
+.cl-sas-actions button {
+  padding: 10px 22px;
+  border-radius: 999px;
+  border: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cl-sas-ok { background: #38bdf8; color: #082f49; }
+.cl-sas-no { background: #1e293b; color: #f8fafc; border: 1px solid #334155 !important; }
 `.trim();
 var DEFAULT_SERVICE_WORKER_CONFIG = {
   version: "1.0.0",

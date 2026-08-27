@@ -10,12 +10,13 @@
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { createSignalingServer, type SignalingServer } from "@crosslink/signaling";
 import { createRelayServer, type RelayServer } from "@crosslink/relay";
 import { createCrosslinkServer, type CrosslinkServer } from "@crosslink/sdk-node";
-import { CrosslinkClient, MemorySecureStorage } from "@crosslink/sdk-browser";
+import { CrosslinkClient, MemorySecureStorage, CrosslinkMobileBootstrap } from "@crosslink/sdk-browser";
+import { buildPairingUri, parsePairingUri } from "@crosslink/core";
 
 if (typeof globalThis.WebSocket !== "function") {
   (globalThis as { WebSocket: unknown }).WebSocket = WebSocket;
@@ -162,5 +163,72 @@ describe("crosslink end-to-end", () => {
     const notes = apps.find((a) => a.appId === "com.demo.notes");
     expect(notes).toBeDefined();
     expect((notes as { relay?: { channel: string } }).relay?.channel).toBeTruthy();
+  });
+
+  it("completes full-stack mobile onboarding lifecycle: QR connect URI -> Code entry -> Authorize -> Revoke", async () => {
+    // 1. Host issues a fresh pairing session
+    const info = await host.getPairingCode();
+    const cleanCode = info.code.replace(/\D/g, "");
+
+    // 2. Generate pure QR connect URI (WITHOUT pre-baked code)
+    const connectUri = buildPairingUri({
+      signalingUrl: `http://127.0.0.1:${signaling.port}`,
+      appId: "com.demo.notes",
+      appName: "Notes",
+      hostPubEdB64: host.identity.edPublicKey ? Buffer.from(host.identity.edPublicKey).toString("base64") : ""
+    });
+
+    const mobileStorage = new MemorySecureStorage();
+    const mobileClient = new CrosslinkClient({
+      storage: mobileStorage,
+      deviceName: "Mobile Device B"
+    });
+
+    const onAuthorized = vi.fn();
+    const onUnauthorized = vi.fn();
+
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: "com.demo.notes",
+      appName: "Notes",
+      client: mobileClient,
+      pairingUri: connectUri,
+      autoRegisterServiceWorker: false,
+      onAuthorized,
+      onUnauthorized
+    });
+
+    // 3. Initial start on untrusted device -> Must require pairing, app is blocked
+    await bootstrap.start();
+    // 4. Invalid pairing code attempt -> Must fail and remain in pairing-required
+    await expect(mobileClient.pairWithCode(connectUri, "999999999", ["notes.read"])).rejects.toThrow();
+    expect(bootstrap.getState()).toBe("pairing-required");
+    expect(onAuthorized).not.toHaveBeenCalled();
+
+    // 5. Valid pairing code entry -> Successful cryptographic pairing
+    const pairedRecord = await mobileClient.pairWithCode(connectUri, cleanCode, ["notes.read"]);
+    expect(pairedRecord.appId).toBe("com.demo.notes");
+
+    // 6. Connect newly paired client & mark onboarding completed -> App is authorized!
+    (bootstrap as any).markOnboardingCompleted("com.demo.notes");
+    await bootstrap.forceReconnect();
+
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(onAuthorized).toHaveBeenCalled();
+
+    // 7. Verify RPC works over live relay
+    const rpc = mobileClient.rpc();
+    const notesResult = await rpc.call<{ title: string }>("notes.get");
+    expect(notesResult.title).toBe("shopping list");
+
+    // 8. Desktop host revokes Mobile Device B
+    expect(host.revokeDevice(mobileClient.deviceId)).toBe(true);
+
+    // 9. Reconnect attempt rejects device, clears storage, and returns to pairing screen
+    await bootstrap.forceReconnect();
+    expect(bootstrap.getState()).toBe("pairing-required");
+    expect(mobileClient.listApps().length).toBe(0);
+    expect(onUnauthorized).toHaveBeenCalled();
+
+    bootstrap.destroy();
   });
 });

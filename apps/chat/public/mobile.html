@@ -16,77 +16,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet" />
   <title>Crosslink Chat</title>
   <style>
-    /* ── universal Crosslink "add to home screen" bootstrap (Screen B) ── */
-    #bootstrap {
-      position: fixed;
-      inset: 0;
-      z-index: 100;
-      background: #000;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100dvh;
-    }
-    #bootstrap.hidden { display: none; }
-    #bootstrap .mark {
-      width: min(72vw, 180px);
-      height: auto;
-      aspect-ratio: 1 / 1;
-      object-fit: contain;
-      color: #fff;
-      border-radius: 24px;
-      background: rgba(255, 255, 255, 0.1);
-      padding: 12px;
-    }
-    #bootstrap .nudge {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: calc(18px + env(safe-area-inset-bottom));
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      pointer-events: none;
-    }
-    #bootstrap .nudge span {
-      font-family: "Caveat", "Segoe Script", "Bradley Hand", cursive;
-      font-size: 20px;
-      color: #fff;
-      opacity: 0.92;
-      text-align: center;
-      max-width: 280px;
-      line-height: 1.2;
-    }
-    #bootstrap .nudge svg {
-      width: 48px;
-      height: 48px;
-      color: #fff;
-      opacity: 0.92;
-    }
-    #bootstrap .continue-btn {
-      margin-top: 16px;
-      background: rgba(255, 255, 255, 0.15);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      color: #fff;
-      padding: 10px 20px;
-      border-radius: 999px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      pointer-events: auto;
-      transition: background 0.15s;
-    }
-    #bootstrap .continue-btn:hover {
-      background: rgba(255, 255, 255, 0.25);
-    }
-    body.pre-install > header,
-    body.pre-install > main {
-      visibility: hidden;
-    }
-  </style>
-  <style>
     :root {
       color-scheme: dark;
       --bg: #0f172a;
@@ -109,6 +38,15 @@
       -webkit-tap-highlight-color: transparent;
     }
 
+    /* ── Developer Chat App Container ───────────────────── */
+    #chatApp {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      width: 100%;
+      min-height: 0;
+    }
+
     /* ── header ─────────────────────────────────────────── */
     header {
       display: flex;
@@ -124,99 +62,6 @@
     .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
     .dot.on { background: var(--green); box-shadow: 0 0 6px #4ade8060; }
-    .dot.pairing { background: var(--accent); animation: pulse 1.2s ease infinite; }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-    /* ── main ───────────────────────────────────────────── */
-    main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
-
-    /* ── Screen A: pairing code entry ───────────────────── */
-    .pair-screen {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 32px 20px;
-      gap: 20px;
-      text-align: center;
-    }
-    .pair-screen.hidden { display: none; }
-    .pair-screen h2 { font-size: 20px; font-weight: 600; }
-    .pair-screen p { color: var(--muted); font-size: 14px; max-width: 280px; }
-    .pair-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      max-width: 260px;
-    }
-    .pair-grid input {
-      width: 72px;
-      height: 64px;
-      font-size: 24px;
-      text-align: center;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      background: var(--card);
-      color: var(--text);
-      font-weight: 700;
-      outline: none;
-    }
-    .pair-grid input:focus { border-color: var(--accent); }
-
-    /* ── SAS confirm modal ──────────────────────────────── */
-    .sas {
-      position: fixed;
-      inset: 0;
-      z-index: 500;
-      background: rgba(0, 0, 0, 0.85);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 32px 20px;
-      gap: 12px;
-      text-align: center;
-    }
-    .sas.hidden { display: none; }
-    .sas h2 { font-size: 18px; }
-    .sas p { color: var(--muted); font-size: 13px; }
-    .sas-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-      width: 100%;
-      max-width: 240px;
-      margin: 8px 0;
-    }
-    .sas-grid span {
-      display: grid;
-      place-items: center;
-      aspect-ratio: 1.5;
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      font-size: 24px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }
-    .sas .caps { color: var(--muted); font-size: 12px; }
-    .sas-actions { display: flex; gap: 10px; margin-top: 8px; }
-    .sas-actions button {
-      padding: 10px 24px;
-      border-radius: 999px;
-      border: none;
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .sas-actions .ok { background: var(--accent); color: #082f49; }
-    .sas-actions .no { background: var(--card); color: var(--text); border: 1px solid var(--line); }
 
     /* ── chat ───────────────────────────────────────────── */
     .chat {
@@ -225,7 +70,6 @@
       flex-direction: column;
       min-height: 0;
     }
-    .chat.hidden { display: none; }
     .messages {
       flex: 1;
       overflow-y: auto;
@@ -312,63 +156,18 @@
   </style>
 </head>
 <body>
-  <!-- Screen B: Add to Home Screen Bootstrap Nudge (for normal browser tabs) -->
-  <div id="bootstrap" class="hidden">
-    <img class="mark" id="bootstrapLogo" src="./icon-192.png" alt="App" />
-    <h2 id="bootstrapAppName" style="font-size:20px; font-weight:600; color:#fff; margin-top:12px; letter-spacing:-0.01em;">Crosslink Chat</h2>
-    <button class="continue-btn" id="continueBrowserBtn">Continue in browser &rarr;</button>
-    <div class="nudge">
-      <span>Add to home screen</span>
-      <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;">
-        <path d="M12 36 C 20 28, 34 12, 40 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <path d="M36 4 L 42 8 L 34 16" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-      </svg>
-    </div>
-  </div>
-
-  <header>
-    <h1>Crosslink Chat</h1>
-    <div class="status">
-      <button id="resetBtn" onclick="resetDeviceData()" style="background:rgba(255,255,255,0.08);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Reset</button>
-      <span class="dot" id="dot"></span>
-      <span id="stateText">connecting…</span>
-    </div>
-  </header>
-
-  <main>
-    <!-- Screen A: Pairing code entry -->
-    <div class="pair-screen hidden" id="pairCodeScreen">
-      <img src="./crosslink-mark.svg" alt="Crosslink" style="width:72px; opacity:0.9;" />
-      <h2>Pairing Required</h2>
-      <p>Type the 9-digit pairing code shown on your computer to connect.</p>
-      <div class="pair-grid" id="pairCodeGrid">
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
-        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+  <!-- Developer Application Interface (Secured & Mounted by Crosslink) -->
+  <div id="chatApp">
+    <header>
+      <h1>Crosslink Chat</h1>
+      <div class="status">
+        <button id="resetBtn" onclick="window.CrosslinkSDK.resetDeviceStorage().then(() => location.reload())" style="background:rgba(255,255,255,0.08);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Reset</button>
+        <span class="dot on" id="dot"></span>
+        <span id="stateText">Connected</span>
       </div>
-      <p id="pairCodeErr" style="color:#f87171; font-size:13px; min-height:20px; margin:0;"></p>
-    </div>
+    </header>
 
-    <!-- SAS confirm Modal -->
-    <div class="sas hidden" id="sasScreen">
-      <h2>Verify Security Code</h2>
-      <p>Confirm the numbers match on your computer:</p>
-      <div class="sas-grid" id="sasGrid"></div>
-      <p class="caps" id="capList"></p>
-      <div class="sas-actions">
-        <button class="ok" id="sasOk">They match</button>
-        <button class="no" id="sasNo">Cancel</button>
-      </div>
-    </div>
-
-    <!-- Chat Screen -->
-    <div class="chat hidden" id="chatScreen">
+    <main class="chat">
       <div class="messages" id="messages">
         <div class="empty-chat" id="emptyChat">Connected! Send a message below.</div>
       </div>
@@ -376,76 +175,13 @@
         <input id="msgInput" placeholder="Type a message…" autocomplete="off" />
         <button id="sendBtn" onclick="sendMsg()">Send</button>
       </div>
-    </div>
-  </main>
+    </main>
+  </div>
 
-  <script src="./bundle.js?v=2.0.0"></script>
+  <script src="./bundle.js?v=2.1.0"></script>
   <script>
     const $ = id => document.getElementById(id);
     const vibrate = p => { try { navigator.vibrate?.(p); } catch {} };
-
-    // Function to wipe all credentials and stored state on the phone
-    async function resetDeviceData() {
-      try {
-        localStorage.clear();
-        sessionStorage.clear();
-        if (window.indexedDB?.databases) {
-          const dbs = await window.indexedDB.databases();
-          for (const db of dbs) {
-            if (db.name) window.indexedDB.deleteDatabase(db.name);
-          }
-        } else {
-          window.indexedDB?.deleteDatabase("crosslink-secure-storage");
-        }
-        if ("caches" in window) {
-          const keys = await caches.keys();
-          for (const k of keys) await caches.delete(k);
-        }
-      } catch (e) {
-        console.warn("Storage reset warning:", e);
-      }
-      location.href = location.pathname;
-    }
-    window.resetDeviceData = resetDeviceData;
-
-    function isStandalone() {
-      return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-    }
-
-    const params = new URLSearchParams(location.search);
-    if (params.has("reset") || location.hash.includes("reset")) {
-      resetDeviceData();
-    }
-
-    const pairingUri = /*__PAIRING_URI__*/ "" || params.get("pair");
-
-    if (pairingUri) {
-      try { localStorage.setItem("crosslink.pendingPair", pairingUri); } catch {}
-    }
-
-    // Show Screen B (Add to Home Screen) for non-standalone browser tabs
-    if (!isStandalone()) {
-      document.body.classList.add("pre-install");
-      $("bootstrap").classList.remove("hidden");
-    }
-
-    $("continueBrowserBtn")?.addEventListener("click", () => {
-      document.body.classList.remove("pre-install");
-      $("bootstrap").classList.add("hidden");
-      // If we don't have an active connection, show Screen A (Pairing code entry)
-      if (!rpc) {
-        showPairCodeScreen();
-      }
-    });
-
-    function showPairCodeScreen() {
-      $("chatScreen").classList.add("hidden");
-      $("pairCodeScreen").classList.remove("hidden");
-      $("dot").className = "dot pairing";
-      $("stateText").textContent = "Pairing required";
-      const firstInput = document.querySelector(".pairDigit");
-      firstInput?.focus();
-    }
 
     let rpc = null;
 
@@ -508,131 +244,48 @@
       }
     });
 
-    // ── SAS confirmation UI ──
-    function showSasModal(req) {
-      return new Promise((resolve) => {
-        const grid = $("sasGrid");
-        grid.replaceChildren();
-        for (const ch of req.sas.replace(/\s/g, "")) {
-          const span = document.createElement("span");
-          span.textContent = ch;
-          grid.appendChild(span);
-        }
-        $("capList").textContent = "Capabilities: " + (req.grantedCaps.join(", ") || "(none)");
-        $("sasScreen").classList.remove("hidden");
-        vibrate([30, 60, 30]);
-
-        $("sasOk").onclick = () => {
-          $("sasScreen").classList.add("hidden");
-          vibrate(20);
-          resolve(true);
-        };
-        $("sasNo").onclick = () => {
-          $("sasScreen").classList.add("hidden");
-          resolve(false);
-        };
-      });
-    }
-
-    // ── Framework Offline Shell ──
-    const shell = new window.CrosslinkSDK.CrosslinkOfflineShell({
+    // ── Single Authoritative Crosslink Mobile Bootstrap Lifecycle ──
+    const bootstrap = new window.CrosslinkSDK.CrosslinkMobileBootstrap({
+      appId: "com.crosslink.chat",
+      appName: "Crosslink Chat",
+      capabilities: ["chat.send", "chat.read"],
       clientOptions: {
-        deviceName: "mobile",
-        dialTimeoutMs: 3000,
-        onConfirmPairing: (req) => showSasModal(req)
+        dialTimeoutMs: 3000
       },
       offline: {
-        title: "Crosslink Chat is offline",
-        message: "Open Crosslink Chat on your computer to reconnect automatically.",
         appName: "Crosslink Chat",
         icon: "./icon-192.png",
-        themeColor: "#0f172a",
-        bgColor: "#0f172a"
+        title: "Crosslink Chat is offline",
+        message: "Open Crosslink Chat on your computer to reconnect automatically."
       },
-      onConnected: (connectedRpc) => {
+      onboarding: {
+        appName: "Crosslink Chat",
+        icon: "./icon-192.png"
+      },
+      onAuthorized: async (connectedRpc) => {
         rpc = connectedRpc;
-        $("pairCodeScreen").classList.add("hidden");
-        $("chatScreen").classList.remove("hidden");
+        // Mount & expose the developer chat app interface
+        $("chatApp").style.display = "flex";
         $("dot").className = "dot on";
         $("stateText").textContent = "Connected";
         subscribeToMessages();
         loadHistory();
       },
-      onAuthRequired: () => {
-        showPairCodeScreen();
+      onUnauthorized: () => {
+        rpc = null;
+        // Hide developer chat app interface immediately
+        $("chatApp").style.display = "none";
       },
       onStateChange: (state) => {
-        if (state === "host-offline" || state === "reconnecting") {
+        if (state === "offline") {
           $("dot").className = "dot";
           $("stateText").textContent = "Offline";
-        } else if (state === "connecting") {
-          $("dot").className = "dot";
-          $("stateText").textContent = "connecting…";
         }
       }
     });
 
-    // Wire up pairing code inputs (Screen A)
-    const pairDigits = document.querySelectorAll(".pairDigit");
-    pairDigits.forEach((input, idx) => {
-      input.addEventListener("input", () => {
-        const val = input.value.replace(/\D/g, "");
-        input.value = val ? val[0] : "";
-        if (val && idx < pairDigits.length - 1) pairDigits[idx + 1].focus();
-        const fullCode = Array.from(pairDigits).map(i => i.value.replace(/\D/g, "")).join("");
-        if (fullCode.length === 9) {
-          handlePairCode(fullCode);
-        }
-      });
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Backspace" && !input.value && idx > 0) pairDigits[idx - 1].focus();
-      });
-    });
-
-    function resolvePairingUri(uri) {
-      if (!uri) return uri;
-      if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-        return uri
-          .replace(/127\.0\.0\.1(%3A|:)(\d+)/g, (_, sep, p) => location.hostname + sep + p)
-          .replace(/localhost(%3A|:)(\d+)/g, (_, sep, p) => location.hostname + sep + p);
-      }
-      return uri;
-    }
-
-    async function handlePairCode(code) {
-      $("pairCodeErr").textContent = "Verifying code…";
-      $("pairCodeErr").style.color = "#94a3b8";
-      try {
-        const res = await fetch("/api/verify-pair", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (data.ok) {
-          $("pairCodeErr").textContent = "Pairing with host…";
-          $("pairCodeErr").style.color = "#38bdf8";
-          const rawPairUri = pairingUri || localStorage.getItem("crosslink.pendingPair");
-          const targetPairUri = resolvePairingUri(rawPairUri);
-          if (targetPairUri) {
-            await shell.getClient().pairFromQr(targetPairUri, ["chat.send", "chat.read"]);
-            localStorage.removeItem("crosslink.pendingPair");
-            await shell.reconnectNow();
-          }
-        } else {
-          $("pairCodeErr").textContent = "Incorrect pairing code. Try again.";
-          $("pairCodeErr").style.color = "#f87171";
-        }
-      } catch (err) {
-        $("pairCodeErr").textContent = "Could not verify code with host: " + (err.message || err);
-        $("pairCodeErr").style.color = "#f87171";
-      }
-    }
-
-    // Start shell
-    shell.start().catch((err) => {
-      console.error("[Chat PWA] Offline shell start failed:", err);
-      showPairCodeScreen();
+    bootstrap.start().catch((err) => {
+      console.error("[Crosslink Chat] Mobile bootstrap start failed:", err);
     });
   </script>
 </body>

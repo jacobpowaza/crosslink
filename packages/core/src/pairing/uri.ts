@@ -28,15 +28,16 @@ export function fingerprint16(pubEdB64: string): string {
 
 export function buildPairingUri(input: {
   signalingUrl: string;
-  code: string;
+  code?: string;
   appId: string;
   appName: string;
   hostPubEdB64: string;
 }): string {
+  const cleanCode = (input.code ?? "").replace(/\s/g, "");
   const params = new URLSearchParams({
     v: "1",
     s: input.signalingUrl,
-    c: input.code.replace(/\s/g, ""),
+    ...(cleanCode ? { c: cleanCode } : {}),
     a: input.appId,
     n: input.appName,
     f: fingerprint16(input.hostPubEdB64)
@@ -53,7 +54,7 @@ export function parsePairingUri(text: string): ParsedPairingUri {
   } else if (/^https?:\/\//i.test(trimmed)) {
     const url = new URL(trimmed);
     params =
-      url.searchParams.get("c") !== null
+      url.searchParams.get("c") !== null || url.searchParams.get("s") !== null || url.searchParams.get("a") !== null
         ? url.searchParams
         : new URLSearchParams(url.hash.replace(/^#/, ""));
   } else {
@@ -62,7 +63,8 @@ export function parsePairingUri(text: string): ParsedPairingUri {
 
   const version = params.get("v");
   const signalingUrl = params.get("s");
-  const code = normalizeCode(params.get("c") ?? "");
+  const rawCode = params.get("c");
+  const code = rawCode ? normalizeCode(rawCode) : "";
   const appId = params.get("a");
   const appName = params.get("n") ?? appId ?? "";
   const fp16 = (params.get("f") ?? "").toLowerCase();
@@ -71,7 +73,6 @@ export function parsePairingUri(text: string): ParsedPairingUri {
   if (!signalingUrl || !/^https?:\/\//i.test(signalingUrl)) {
     throw new Error("pairing uri missing valid signaling url");
   }
-  if (!/^\d{9}$/.test(code)) throw new Error("pairing uri missing 9-digit code");
   if (!appId || appId.length > 256 || !/^[\w.@:/-]+$/.test(appId)) {
     throw new Error("pairing uri missing valid app id");
   }

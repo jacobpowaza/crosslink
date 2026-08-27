@@ -209,7 +209,11 @@ export class CrosslinkClient {
    * handler for the custom scheme — the phone's camera produces the hosted
    * link and this call transparently unwraps it.
    */
-  async pairFromQr(text: string, requestedCaps?: string[]): Promise<PairedAppRecord> {
+  async pairFromQr(
+    text: string,
+    requestedCaps?: string[],
+    codeOverride?: string
+  ): Promise<PairedAppRecord> {
     // Initialize persistent device cryptographic identity for trusted pairing
     if (!this.deviceCryptoStorage) {
       try {
@@ -221,11 +225,15 @@ export class CrosslinkClient {
     }
     const manifest = unwrapBootstrapUri(text);
     const uri = parsePairingUri(manifest);
+    const code = (codeOverride ?? uri.code).replace(/\D/g, "");
+    if (code.length !== 9) {
+      throw new Error("A valid 9-digit pairing code is required");
+    }
     if (!uri.signalingUrl) throw new Error("pairing URI has no signaling URL (LAN-only pairing not supported by browser client)");
     const wsUrl = `${uri.signalingUrl.replace(/^http/, "ws").replace(/\/$/, "")}/ws`;
     const peer = await SignalingPeer.open(() => this.ws(wsUrl), this.options.dialTimeoutMs ?? 10_000);
     try {
-      const found = await peer.resolve(uri.code);
+      const found = await peer.resolve(code);
       // Primary MITM defense: the QR pins the first 16 hex of the host fingerprint.
       if (!found.app.fingerprint.startsWith(uri.fp16)) {
         this.log.error("client.fingerprint-mismatch", {
@@ -437,8 +445,15 @@ export class CrosslinkClient {
    * `https://…#pair=<uri>` link a phone camera produces, unwraps it, and
    * delegates to `pairFromQr`.
    */
-  async pairFromBootstrap(bootstrapUrl: string, requestedCaps?: string[]): Promise<PairedAppRecord> {
-    return this.pairFromQr(bootstrapUrl, requestedCaps);
+  async pairFromBootstrap(bootstrapUrl: string, requestedCaps?: string[], codeOverride?: string): Promise<PairedAppRecord> {
+    return this.pairFromQr(bootstrapUrl, requestedCaps, codeOverride);
+  }
+
+  /**
+   * Explicit pairing method taking a target host URI/manifest and entered 9-digit code.
+   */
+  async pairWithCode(targetUri: string, code: string, requestedCaps?: string[]): Promise<PairedAppRecord> {
+    return this.pairFromQr(targetUri, requestedCaps, code);
   }
 
   /** True when the identity seed is encrypted at rest. */

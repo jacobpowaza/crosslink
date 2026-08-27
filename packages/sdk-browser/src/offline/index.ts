@@ -16,6 +16,16 @@ export {
 } from "./offline-shell.js";
 
 export {
+  CrosslinkMobileBootstrap,
+  isStandalone,
+  resetDeviceStorage,
+  injectBootstrapStyles,
+  type MobileBootstrapState,
+  type MobileBootstrapOptions,
+  type OnboardingConfig
+} from "./mobile-bootstrap.js";
+
+export {
   generateServiceWorker,
   DEFAULT_SERVICE_WORKER,
   DEFAULT_SERVICE_WORKER_CONFIG,

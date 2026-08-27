@@ -6,7 +6,10 @@ import {
   CrosslinkOfflineShell,
   createOfflineUI,
   generateServiceWorker,
-  createServiceWorkerConfig
+  createServiceWorkerConfig,
+  CrosslinkMobileBootstrap,
+  isStandalone,
+  resetDeviceStorage
 } from "./index.js";
 import {
   CapabilityRegistry,
@@ -17,6 +20,7 @@ import {
   InMemoryHostDeviceStore,
   RpcRouter,
   buildPairingUri,
+  parsePairingUri,
   type CrosslinkSession
 } from "@crosslink/core";
 import { bytesToBase64 } from "@crosslink/protocol";
@@ -31,10 +35,13 @@ class MockElement {
   id = "";
   className = "";
   textContent = "";
+  value = "";
   children: MockElement[] = [];
   parentElement: MockElement | null = null;
   style: Record<string, string> = {};
   onclick: (() => void) | null = null;
+  attributes: Record<string, string> = {};
+  listeners: Record<string, Function[]> = {};
 
   constructor(tagName: string) {
     this.tagName = tagName.toUpperCase();
@@ -57,6 +64,10 @@ class MockElement {
     return el;
   }
 
+  append(...els: MockElement[]) {
+    for (const el of els) this.appendChild(el);
+  }
+
   remove() {
     if (this.parentElement) {
       const idx = this.parentElement.children.indexOf(this);
@@ -68,11 +79,44 @@ class MockElement {
   querySelector(sel: string): MockElement | null {
     for (const child of this.children) {
       if (sel === "button" && child.tagName === "BUTTON") return child;
+      if (sel.startsWith("#") && child.id === sel.slice(1)) return child;
+      if (sel.startsWith(".") && child.className.includes(sel.slice(1))) return child;
       const found = child.querySelector(sel);
       if (found) return found;
     }
     return null;
   }
+
+  querySelectorAll(sel: string): MockElement[] {
+    const out: MockElement[] = [];
+    for (const child of this.children) {
+      if (sel.startsWith(".") && child.className.includes(sel.slice(1))) out.push(child);
+      out.push(...child.querySelectorAll(sel));
+    }
+    return out;
+  }
+
+  setAttribute(name: string, val: string) {
+    this.attributes[name] = val;
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes[name] ?? null;
+  }
+
+  addEventListener(ev: string, fn: Function) {
+    this.listeners[ev] = this.listeners[ev] || [];
+    this.listeners[ev].push(fn);
+  }
+
+  removeEventListener(ev: string, fn: Function) {
+    if (this.listeners[ev]) {
+      const idx = this.listeners[ev].indexOf(fn);
+      if (idx >= 0) this.listeners[ev].splice(idx, 1);
+    }
+  }
+
+  focus() {}
 
   contains(el: MockElement): boolean {
     return this.children.includes(el);
@@ -113,8 +157,19 @@ const mockWindow = {
   }
 };
 
+const storageMap = new Map<string, string>();
+const mockLocalStorage = {
+  getItem: (k: string) => storageMap.get(k) ?? null,
+  setItem: (k: string, v: string) => storageMap.set(k, String(v)),
+  removeItem: (k: string) => storageMap.delete(k),
+  clear: () => storageMap.clear(),
+  get length() { return storageMap.size; },
+  key: (i: number) => Array.from(storageMap.keys())[i] ?? null
+};
+
 (globalThis as any).document = mockDoc;
 (globalThis as any).window = mockWindow;
+(globalThis as any).localStorage = mockLocalStorage;
 
 const SIGNALING_URL = "https://signal.test";
 const RELAY_URL = "https://relay.test";
@@ -207,6 +262,7 @@ function attachSignaling(serviceSocket: MockSocket, host: ReturnType<typeof make
 }
 
 function makeHarness() {
+  storageMap.clear();
   const host = makeHost();
   const storage = new MemorySecureStorage();
   let failRelay = false;
@@ -511,3 +567,250 @@ describe("CrosslinkOfflineShell", () => {
     shell.destroy();
   });
 });
+
+describe("CrosslinkMobileBootstrap State Machine & Security Flow", () => {
+  it("Scenario 1 & 13: Brand-new phone scans QR -> Pairing Screen appears, app is blocked from mounting", async () => {
+    const { client, pairingUri } = makeHarness();
+    const onAuthorized = vi.fn();
+    const onUnauthorized = vi.fn();
+    const onStateChange = vi.fn();
+
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      appName: "TestApp",
+      client,
+      pairingUri,
+      autoRegisterServiceWorker: false,
+      onAuthorized,
+      onUnauthorized,
+      onStateChange
+    });
+
+    await bootstrap.start();
+
+    // 1. Must be in pairing-required state
+    expect(bootstrap.getState()).toBe("pairing-required");
+    // 2. Developer app must NOT be mounted / authorized
+    expect(onAuthorized).not.toHaveBeenCalled();
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+
+    bootstrap.destroy();
+  });
+
+  it("Scenario 2: Incorrect pairing code -> pairing fails and remains in pairing-required", async () => {
+    const { client, pairingUri } = makeHarness();
+    const onAuthorized = vi.fn();
+
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      appName: "TestApp",
+      client,
+      pairingUri,
+      autoRegisterServiceWorker: false,
+      onAuthorized
+    });
+
+    await bootstrap.start();
+
+    // Attempt pairing with invalid code
+    await expect(client.pairWithCode(pairingUri, "000000000", ["test.ping"])).rejects.toThrow();
+
+    expect(bootstrap.getState()).toBe("pairing-required");
+    expect(onAuthorized).not.toHaveBeenCalled();
+    expect(client.listApps().length).toBe(0);
+
+    bootstrap.destroy();
+  });
+
+  it("Scenario 3, 4, 5: Correct pairing code -> device added to host, enters Add to Home Screen, then mounts app on continue", async () => {
+    const { host, client, pairingUri } = makeHarness();
+    const onAuthorized = vi.fn();
+    const onUnauthorized = vi.fn();
+    const stateTransitions: string[] = [];
+
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      appName: "TestApp",
+      client,
+      pairingUri,
+      autoRegisterServiceWorker: false,
+      onAuthorized,
+      onUnauthorized,
+      onStateChange: (st) => stateTransitions.push(st)
+    });
+
+    await bootstrap.start();
+    expect(bootstrap.getState()).toBe("pairing-required");
+
+    // Perform pairing with correct code
+    const parsedUri = parsePairingUri(pairingUri);
+    await client.pairWithCode(pairingUri, parsedUri.code, ["test.ping"]);
+
+    // Device now stored on host
+    expect(host.store.list().length).toBe(1);
+    expect(host.store.list()[0].deviceId).toBe(client.deviceId);
+
+    // Trigger state transition after pairing
+    await bootstrap.forceReconnect();
+
+    // In non-standalone browser mode without onboarding completed, must show Add to Home Screen
+    expect(bootstrap.getState()).toBe("add-to-home-screen");
+    expect(onAuthorized).not.toHaveBeenCalled();
+
+    // Now simulate user clicking "Continue in Browser"
+    (bootstrap as any).markOnboardingCompleted(APP_ID);
+    (bootstrap as any).transitionTo("authorized");
+
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(onAuthorized).toHaveBeenCalledTimes(1);
+
+    bootstrap.destroy();
+  });
+
+  it("Scenario 6 & 7: Returning trusted device in standalone mode -> skips pairing and onboarding", async () => {
+    const { client, pairingUri } = makeHarness();
+    const parsedUri = parsePairingUri(pairingUri);
+
+    // Initial pair
+    await client.pairWithCode(pairingUri, parsedUri.code, ["test.ping"]);
+
+    // Mark onboarding completed (or standalone mode)
+    (localStorage as any).setItem(`crosslink.onboarding.${APP_ID}`, "true");
+
+    const onAuthorized = vi.fn();
+    const onUnauthorized = vi.fn();
+
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      appName: "TestApp",
+      client,
+      pairingUri,
+      autoRegisterServiceWorker: false,
+      onAuthorized,
+      onUnauthorized
+    });
+
+    await bootstrap.start();
+
+    // Skips pairing screen and onboarding, directly authorizes!
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(onAuthorized).toHaveBeenCalledTimes(1);
+
+    bootstrap.destroy();
+  });
+
+  it("Scenario 9 & 10: Revoked device on host -> credential rejected, returns to Pairing Screen, app hidden", async () => {
+    const { host, client, pairingUri } = makeHarness();
+    const parsedUri = parsePairingUri(pairingUri);
+
+    await client.pairWithCode(pairingUri, parsedUri.code, ["test.ping"]);
+    (localStorage as any).setItem(`crosslink.onboarding.${APP_ID}`, "true");
+
+    const onAuthorized = vi.fn();
+    const onUnauthorized = vi.fn();
+
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      appName: "TestApp",
+      client,
+      pairingUri,
+      autoRegisterServiceWorker: false,
+      onAuthorized,
+      onUnauthorized
+    });
+
+    await bootstrap.start();
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(onAuthorized).toHaveBeenCalledTimes(1);
+
+    // Developer revokes the device on host
+    host.store.revoke(client.deviceId, Date.now());
+
+    // Next connection attempt / state change rejects the device
+    await bootstrap.forceReconnect();
+
+    // Must transition back to pairing-required, credential deleted, app hidden
+    expect(bootstrap.getState()).toBe("pairing-required");
+    expect(client.listApps().length).toBe(0);
+    expect(onUnauthorized).toHaveBeenCalled();
+
+    bootstrap.destroy();
+  });
+
+  it("Scenario 15 & 16: Multiple phones have independent trust, revoking one does not revoke the other", async () => {
+    const host = makeHost();
+    const storage1 = new MemorySecureStorage();
+    const storage2 = new MemorySecureStorage();
+
+    const createClientFor = (storage: MemorySecureStorage, name: string) => {
+      const webSocket = (url: string): WsLike => {
+        if (url.includes("signal.test")) {
+          const [clientEnd, serviceEnd] = MockSocket.pair(url, `${url}#service`);
+          attachSignaling(serviceEnd, host);
+          return clientEnd;
+        }
+        const [clientEnd, hostEnd] = MockSocket.pair(url, `${url}#host`);
+        queueMicrotask(() => host.accept(hostEnd));
+        return clientEnd;
+      };
+      const fakeFetch = (async () => ({
+        ok: true,
+        json: async () => ({ relay: { url: RELAY_URL, channel: "chan-1" } })
+      })) as unknown as typeof fetch;
+
+      return new CrosslinkClient({
+        storage,
+        deviceName: name,
+        onConfirmPairing: () => true,
+        requestTimeoutMs: 3000,
+        webSocket,
+        fetch: fakeFetch,
+        dialTimeoutMs: 100
+      });
+    };
+
+    const client1 = createClientFor(storage1, "Phone 1");
+    const client2 = createClientFor(storage2, "Phone 2");
+
+    // Pair Phone 1
+    const session1 = host.pairing.beginSession();
+    const uri1 = buildPairingUri({
+      signalingUrl: SIGNALING_URL,
+      code: session1.code,
+      appId: APP_ID,
+      appName: "TestApp",
+      hostPubEdB64: bytesToBase64(host.identity.edPublicKey)
+    });
+    await client1.pairWithCode(uri1, session1.code, ["test.ping"]);
+
+    // Pair Phone 2
+    const session2 = host.pairing.beginSession();
+    const uri2 = buildPairingUri({
+      signalingUrl: SIGNALING_URL,
+      code: session2.code,
+      appId: APP_ID,
+      appName: "TestApp",
+      hostPubEdB64: bytesToBase64(host.identity.edPublicKey)
+    });
+    await client2.pairWithCode(uri2, session2.code, ["test.ping"]);
+
+    // Host has 2 independent trusted devices
+    expect(host.store.list().length).toBe(2);
+    expect(host.store.get(client1.deviceId)?.revokedAt).toBeUndefined();
+    expect(host.store.get(client2.deviceId)?.revokedAt).toBeUndefined();
+
+    // Revoke Phone 1 only
+    host.store.revoke(client1.deviceId, Date.now());
+
+    // Phone 1 is revoked
+    expect(host.store.get(client1.deviceId)?.revokedAt).toBeDefined();
+    // Phone 2 remains trusted and intact!
+    expect(host.store.get(client2.deviceId)?.revokedAt).toBeUndefined();
+
+    // Phone 2 connects cleanly
+    const rpc2 = await client2.connect(APP_ID);
+    const pingRes = await rpc2.call("test.ping");
+    expect(pingRes).toBe("pong");
+  });
+});
+

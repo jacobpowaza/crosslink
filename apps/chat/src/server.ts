@@ -23,6 +23,8 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCrosslinkServer } from "@crosslink/sdk-node";
+import { buildPairingUri } from "@crosslink/core";
+import { bytesToBase64 } from "@crosslink/protocol";
 import QRCode from "qrcode";
 
 import { startTunnel } from "untun";
@@ -412,7 +414,15 @@ const server = http.createServer(async (req, res) => {
         skipParam = "";
       }
 
-      const mobileUrl = `${baseUrl}/mobile.html?pair=${encodeURIComponent(code.uri!)}${skipParam}`;
+      const hostIdentityPub = (host as any).identity?.edPublicKey;
+      const connectUri = buildPairingUri({
+        signalingUrl: signalingUrl || "",
+        appId: "com.crosslink.chat",
+        appName: "Crosslink Chat",
+        hostPubEdB64: hostIdentityPub ? bytesToBase64(hostIdentityPub) : ""
+      });
+
+      const mobileUrl = `${baseUrl}/mobile.html?pair=${encodeURIComponent(connectUri)}${skipParam}`;
       const mobileQr = await QRCode.toString(mobileUrl, { type: "svg", margin: 1, width: 280 });
       respond(res, 200, "application/json", JSON.stringify({
         code: code.code,
@@ -594,10 +604,12 @@ const server = http.createServer(async (req, res) => {
       for await (const chunk of req) body += chunk;
       const { code = "" } = JSON.parse(body || "{}");
       const entered = String(code ?? "").replace(/\D/g, "");
+      const psid = (host as any).pairing?.resolveCode?.(entered);
       const expected = (latestPairingCode ?? "").replace(/\D/g, "");
+      const ok = entered.length === 9 && (Boolean(psid) || (expected.length === 9 && entered === expected));
       respond(res, 200, "application/json", JSON.stringify({
-        ok: expected.length === 9 && entered === expected,
-        expected,
+        ok,
+        error: ok ? undefined : "Incorrect pairing code. Please try again."
       }));
     } catch {
       respond(res, 400, "application/json", JSON.stringify({ ok: false, error: "invalid request" }));
@@ -605,12 +617,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── mobile page (inject pairing URI) ──
+  // ── mobile page ──
   if (pathname === "/mobile" || pathname === "/mobile.html") {
     try {
       const html = await readFile(path.join(root, "mobile.html"), "utf8");
-      const mobileHtml = html.replace("/*__PAIRING_URI__*/", `"${latestPairingUri ?? ""}"`);
-      respond(res, 200, MIME[".html"], mobileHtml);
+      respond(res, 200, MIME[".html"], html);
     } catch {
       respond(res, 404, "text/plain", "mobile.html not found");
     }
