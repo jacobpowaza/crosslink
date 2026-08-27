@@ -414,11 +414,12 @@ const server = http.createServer(async (req, res) => {
         skipParam = "";
       }
 
+      const parsed = parsePairingUri(code.uri!);
       const hostIdentityPub = (host as any).identity?.edPublicKey;
       const connectUri = buildPairingUri({
-        signalingUrl: signalingUrl || "",
-        appId: "com.crosslink.chat",
-        appName: "Crosslink Chat",
+        signalingUrl: parsed.signalingUrl,
+        appId: parsed.appId || "com.crosslink.chat",
+        appName: parsed.appName || "Crosslink Chat",
         hostPubEdB64: hostIdentityPub ? bytesToBase64(hostIdentityPub) : ""
       });
 

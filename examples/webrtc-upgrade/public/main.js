@@ -6109,8 +6109,8 @@ var BOOTSTRAP_STYLES = `
   position: fixed;
   inset: 0;
   z-index: 99999;
-  background: #0f172a;
-  color: #f8fafc;
+  background: #000000;
+  color: #ffffff;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -6126,37 +6126,30 @@ var BOOTSTRAP_STYLES = `
   box-sizing: border-box;
 }
 
+/* \u2500\u2500 Crosslink Logo \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+.cl-crosslink-logo {
+  width: 150px;
+  height: auto;
+  margin-bottom: 20px;
+  display: block;
+  opacity: 0.95;
+}
+
 /* \u2500\u2500 Screen A: Pairing Screen \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
 .cl-pair-screen {
+  background: #000000;
   gap: 20px;
-}
-.cl-pair-logo {
-  width: 72px;
-  height: 72px;
-  border-radius: 18px;
-  object-fit: cover;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
-}
-.cl-pair-icon-fallback {
-  width: 64px;
-  height: 64px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #38bdf8;
 }
 .cl-pair-title {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
   margin: 0;
-  color: #f8fafc;
+  color: #ffffff;
 }
 .cl-pair-desc {
   font-size: 14px;
-  color: #94a3b8;
+  color: #a1a1aa;
   max-width: 290px;
   line-height: 1.5;
   margin: 0;
@@ -6174,17 +6167,17 @@ var BOOTSTRAP_STYLES = `
   font-size: 26px;
   text-align: center;
   border-radius: 14px;
-  border: 1px solid #334155;
-  background: #1e293b;
-  color: #f8fafc;
+  border: 1px solid #27272a;
+  background: #111111;
+  color: #ffffff;
   font-weight: 700;
   outline: none;
   font-family: inherit;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .cl-pair-digit:focus {
-  border-color: #38bdf8;
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+  border-color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
 }
 .cl-pair-err {
   font-size: 13px;
@@ -6198,7 +6191,7 @@ var BOOTSTRAP_STYLES = `
   margin-top: 12px;
   background: transparent;
   border: none;
-  color: #64748b;
+  color: #71717a;
   font-size: 12px;
   cursor: pointer;
   padding: 6px 12px;
@@ -6207,7 +6200,7 @@ var BOOTSTRAP_STYLES = `
   transition: color 0.15s;
 }
 .cl-pair-reset:hover {
-  color: #94a3b8;
+  color: #a1a1aa;
 }
 
 /* \u2500\u2500 Screen B: Add to Home Screen (Screen B) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
@@ -6219,21 +6212,11 @@ var BOOTSTRAP_STYLES = `
   z-index: 100000;
   height: 100dvh;
 }
-.cl-bootstrap-mark {
-  width: min(65vw, 170px);
-  height: auto;
-  aspect-ratio: 1 / 1;
-  object-fit: cover;
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 10px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
-}
 .cl-bootstrap-appname {
   font-size: 21px;
   font-weight: 600;
   color: #ffffff;
-  margin-top: 18px;
+  margin-top: 12px;
   letter-spacing: -0.01em;
 }
 .cl-continue-btn {
@@ -6283,7 +6266,7 @@ var BOOTSTRAP_STYLES = `
   position: fixed;
   inset: 0;
   z-index: 100001;
-  background: rgba(0, 0, 0, 0.88);
+  background: #000000;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -6295,7 +6278,7 @@ var BOOTSTRAP_STYLES = `
   font-family: system-ui, -apple-system, sans-serif;
 }
 .cl-sas-modal h2 { font-size: 18px; color: #fff; margin: 0; }
-.cl-sas-modal p { color: #94a3b8; font-size: 13px; margin: 0; }
+.cl-sas-modal p { color: #a1a1aa; font-size: 13px; margin: 0; }
 .cl-sas-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -6308,15 +6291,15 @@ var BOOTSTRAP_STYLES = `
   display: grid;
   place-items: center;
   aspect-ratio: 1.5;
-  background: #1e293b;
-  border: 1px solid #334155;
+  background: #111111;
+  border: 1px solid #27272a;
   border-radius: 10px;
   font-size: 24px;
   font-weight: 700;
-  color: #f8fafc;
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
 }
-.cl-sas-caps { color: #94a3b8; font-size: 12px; }
+.cl-sas-caps { color: #a1a1aa; font-size: 12px; }
 .cl-sas-actions { display: flex; gap: 12px; margin-top: 10px; }
 .cl-sas-actions button {
   padding: 10px 22px;
@@ -6327,8 +6310,8 @@ var BOOTSTRAP_STYLES = `
   font-weight: 600;
   cursor: pointer;
 }
-.cl-sas-ok { background: #38bdf8; color: #082f49; }
-.cl-sas-no { background: #1e293b; color: #f8fafc; border: 1px solid #334155 !important; }
+.cl-sas-ok { background: #ffffff; color: #000000; }
+.cl-sas-no { background: #111111; color: #ffffff; border: 1px solid #27272a !important; }
 `.trim();
 var DEFAULT_SERVICE_WORKER_CONFIG = {
   version: "1.0.0",

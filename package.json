@@ -21,6 +21,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "stack": "concurrently -k -n signaling,relay \"node services/signaling/dist/cli.js\" \"node services/relay/dist/cli.js\"",
+    "slack": "npm run stack",
     "demo:echo": "node examples/echo-host/src/cli.ts",
     "demo:notes": "node examples/notes-host/src/cli.ts",
     "demo:pwa": "npm run serve -w @crosslink/demo-pwa",
