@@ -16,7 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet" />
   <title>Crosslink Chat</title>
   <style>
-    /* ── universal Crosslink "add to home screen" bootstrap ── */
+    /* ── universal Crosslink "add to home screen" bootstrap (Screen B) ── */
     #bootstrap {
       position: fixed;
       inset: 0;
@@ -121,7 +121,7 @@
       padding-top: calc(12px + env(safe-area-inset-top));
     }
     header h1 { font-size: 16px; font-weight: 600; }
-    .status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
     .dot.on { background: var(--green); box-shadow: 0 0 6px #4ade8060; }
     .dot.pairing { background: var(--accent); animation: pulse 1.2s ease infinite; }
@@ -135,7 +135,7 @@
       min-height: 0;
     }
 
-    /* ── pairing code screen ────────────────────────────── */
+    /* ── Screen A: pairing code entry ───────────────────── */
     .pair-screen {
       flex: 1;
       display: flex;
@@ -169,7 +169,7 @@
     }
     .pair-grid input:focus { border-color: var(--accent); }
 
-    /* ── SAS confirm ────────────────────────────────────── */
+    /* ── SAS confirm modal ──────────────────────────────── */
     .sas {
       position: fixed;
       inset: 0;
@@ -312,7 +312,7 @@
   </style>
 </head>
 <body>
-  <!-- Add to Home Screen Bootstrap Nudge (for browser tabs) -->
+  <!-- Screen B: Add to Home Screen Bootstrap Nudge (for normal browser tabs) -->
   <div id="bootstrap" class="hidden">
     <img class="mark" id="bootstrapLogo" src="./icon-192.png" alt="App" />
     <h2 id="bootstrapAppName" style="font-size:20px; font-weight:600; color:#fff; margin-top:12px; letter-spacing:-0.01em;">Crosslink Chat</h2>
@@ -417,14 +417,14 @@
       resetDeviceData();
     }
 
-    const skipInstall = params.get("skip_install") === "1" || params.get("skip") === "1" || params.has("direct");
     const pairingUri = /*__PAIRING_URI__*/ "" || params.get("pair");
 
     if (pairingUri) {
       try { localStorage.setItem("crosslink.pendingPair", pairingUri); } catch {}
     }
 
-    if (!isStandalone() && !skipInstall) {
+    // Show Screen B (Add to Home Screen) for non-standalone browser tabs
+    if (!isStandalone()) {
       document.body.classList.add("pre-install");
       $("bootstrap").classList.remove("hidden");
     }
@@ -432,10 +432,20 @@
     $("continueBrowserBtn")?.addEventListener("click", () => {
       document.body.classList.remove("pre-install");
       $("bootstrap").classList.add("hidden");
-      if (shell.getState() === "authentication-required") {
-        $("pairCodeScreen").classList.remove("hidden");
+      // If we don't have an active connection, show Screen A (Pairing code entry)
+      if (!rpc) {
+        showPairCodeScreen();
       }
     });
+
+    function showPairCodeScreen() {
+      $("chatScreen").classList.add("hidden");
+      $("pairCodeScreen").classList.remove("hidden");
+      $("dot").className = "dot pairing";
+      $("stateText").textContent = "Pairing required";
+      const firstInput = document.querySelector(".pairDigit");
+      firstInput?.focus();
+    }
 
     let rpc = null;
 
@@ -528,6 +538,7 @@
     const shell = new window.CrosslinkSDK.CrosslinkOfflineShell({
       clientOptions: {
         deviceName: "mobile",
+        dialTimeoutMs: 3000,
         onConfirmPairing: (req) => showSasModal(req)
       },
       offline: {
@@ -548,22 +559,20 @@
         loadHistory();
       },
       onAuthRequired: () => {
-        $("chatScreen").classList.add("hidden");
-        if (isStandalone() || skipInstall || !document.body.classList.contains("pre-install")) {
-          $("pairCodeScreen").classList.remove("hidden");
-        }
-        $("dot").className = "dot pairing";
-        $("stateText").textContent = "Pairing required";
+        showPairCodeScreen();
       },
       onStateChange: (state) => {
         if (state === "host-offline" || state === "reconnecting") {
           $("dot").className = "dot";
           $("stateText").textContent = "Offline";
+        } else if (state === "connecting") {
+          $("dot").className = "dot";
+          $("stateText").textContent = "connecting…";
         }
       }
     });
 
-    // Wire up pairing code inputs
+    // Wire up pairing code inputs (Screen A)
     const pairDigits = document.querySelectorAll(".pairDigit");
     pairDigits.forEach((input, idx) => {
       input.addEventListener("input", () => {
@@ -580,6 +589,16 @@
       });
     });
 
+    function resolvePairingUri(uri) {
+      if (!uri) return uri;
+      if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        return uri
+          .replace(/127\.0\.0\.1(%3A|:)(\d+)/g, (_, sep, p) => location.hostname + sep + p)
+          .replace(/localhost(%3A|:)(\d+)/g, (_, sep, p) => location.hostname + sep + p);
+      }
+      return uri;
+    }
+
     async function handlePairCode(code) {
       $("pairCodeErr").textContent = "Verifying code…";
       $("pairCodeErr").style.color = "#94a3b8";
@@ -591,18 +610,21 @@
         });
         const data = await res.json().catch(() => ({}));
         if (data.ok) {
-          $("pairCodeErr").textContent = "";
-          const targetPairUri = pairingUri || localStorage.getItem("crosslink.pendingPair");
+          $("pairCodeErr").textContent = "Pairing with host…";
+          $("pairCodeErr").style.color = "#38bdf8";
+          const rawPairUri = pairingUri || localStorage.getItem("crosslink.pendingPair");
+          const targetPairUri = resolvePairingUri(rawPairUri);
           if (targetPairUri) {
             await shell.getClient().pairFromQr(targetPairUri, ["chat.send", "chat.read"]);
+            localStorage.removeItem("crosslink.pendingPair");
             await shell.reconnectNow();
           }
         } else {
-          $("pairCodeErr").textContent = "Incorrect pairing code.";
+          $("pairCodeErr").textContent = "Incorrect pairing code. Try again.";
           $("pairCodeErr").style.color = "#f87171";
         }
       } catch (err) {
-        $("pairCodeErr").textContent = "Could not verify code with host.";
+        $("pairCodeErr").textContent = "Could not verify code with host: " + (err.message || err);
         $("pairCodeErr").style.color = "#f87171";
       }
     }
@@ -610,6 +632,7 @@
     // Start shell
     shell.start().catch((err) => {
       console.error("[Chat PWA] Offline shell start failed:", err);
+      showPairCodeScreen();
     });
   </script>
 </body>
