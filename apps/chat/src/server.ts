@@ -376,20 +376,20 @@ const server = http.createServer(async (req, res) => {
         }
         if (!reachable && wanIp) {
           // The public IP is known but not actually reachable (no port mapping).
-          // Fall back to LAN address with a clear note rather than a broken QR.
+          // Fall back to LAN address; user should still see bootstrap (add-to-home) flow.
           baseUrl = `http://${getLanAddress()}:${port}`;
-          skipParam = "&skip_install=1";
+          skipParam = "";
           console.warn(`  [pair] WAN IP ${wanIp}:${port} not reachable externally — no router port mapping detected. Falling back to LAN.`);
         } else {
           baseUrl = candidateUrl;
         }
       } else {
-        // Default: local Wi-Fi / LAN
+        // Default: local Wi-Fi / LAN — always show bootstrap (add-to-home) flow.
         effectiveMode = "local";
         await stopCloudflareTunnel();
         await stopNgrokTunnel();
         baseUrl = `http://${getLanAddress()}:${port}`;
-        skipParam = "&skip_install=1";
+        skipParam = "";
       }
 
       const mobileUrl = `${baseUrl}/mobile.html?pair=${encodeURIComponent(code.uri!)}${skipParam}`;
