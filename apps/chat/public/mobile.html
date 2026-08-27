@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Crosslink" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet" />
+  <title>Crosslink Chat</title>
+  <style>
+    /* ── universal Crosslink "add to home screen" bootstrap ──
+       Shown whenever this page is running as a plain Safari tab. Once the
+       user adds it to their Home Screen and relaunches from there, this
+       whole layer is skipped and the real app underneath takes over. */
+    #bootstrap {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100dvh;
+    }
+    #bootstrap.hidden { display: none; }
+    #bootstrap .mark {
+      width: min(72vw, 340px);
+      color: #fff;
+    }
+    #bootstrap .nudge {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(18px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      pointer-events: none;
+    }
+    #bootstrap .nudge span {
+      font-family: "Caveat", "Segoe Script", "Bradley Hand", cursive;
+      font-size: 26px;
+      color: #fff;
+      opacity: 0.92;
+    }
+    #bootstrap .nudge svg {
+      width: 64px;
+      height: 54px;
+      color: #fff;
+      opacity: 0.92;
+    }
+    #bootstrap .continue-btn {
+      margin-top: 24px;
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #fff;
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: background 0.15s;
+    }
+    #bootstrap .continue-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+    /* the real app is inert while the bootstrap layer is up */
+    body.pre-install > header,
+    body.pre-install > main {
+      visibility: hidden;
+    }
+  </style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f172a;
+      --card: #1e293b;
+      --line: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #4ade80;
+      --red: #f87171;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ── header ─────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+      flex-shrink: 0;
+      padding-top: calc(12px + env(safe-area-inset-top));
+    }
+    header h1 { font-size: 16px; font-weight: 600; }
+    .status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+    .dot.on { background: var(--green); box-shadow: 0 0 6px #4ade8060; }
+    .dot.pairing { background: var(--accent); animation: pulse 1.2s ease infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    /* ── main ───────────────────────────────────────────── */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    /* ── pairing screen ─────────────────────────────────── */
+    .pairing {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      gap: 16px;
+      text-align: center;
+    }
+    .pairing.hidden { display: none; }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .pairing h2 { font-size: 18px; font-weight: 600; }
+    .pairing p { color: var(--muted); font-size: 14px; max-width: 280px; }
+    .pairing .err { color: var(--red); font-size: 13px; max-width: 280px; }
+
+    /* ── SAS confirm ────────────────────────────────────── */
+    .sas {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      gap: 12px;
+      text-align: center;
+    }
+    .sas.hidden { display: none; }
+    .sas h2 { font-size: 18px; }
+    .sas p { color: var(--muted); font-size: 13px; }
+    .sas-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 100%;
+      max-width: 240px;
+      margin: 8px 0;
+    }
+    .sas-grid span {
+      display: grid;
+      place-items: center;
+      aspect-ratio: 1.5;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 24px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .sas .caps { color: var(--muted); font-size: 12px; }
+    .sas-actions { display: flex; gap: 10px; margin-top: 8px; }
+    .sas-actions button {
+      padding: 10px 24px;
+      border-radius: 999px;
+      border: none;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .sas-actions .ok { background: var(--accent); color: #082f49; }
+    .sas-actions .no { background: var(--card); color: var(--text); border: 1px solid var(--line); }
+
+    /* ── chat ───────────────────────────────────────────── */
+    .chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .chat.hidden { display: none; }
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .msg {
+      max-width: 80%;
+      padding: 9px 13px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.4;
+      word-wrap: break-word;
+      animation: fadeIn 0.12s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(3px); } }
+    .msg.mobile {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #082f49;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.web {
+      align-self: flex-start;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-bottom-left-radius: 4px;
+    }
+    .msg .meta {
+      font-size: 10px;
+      opacity: 0.55;
+      margin-top: 3px;
+    }
+    .empty-chat {
+      flex: 1;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .empty-chat.hidden { display: none; }
+
+    /* ── composer ───────────────────────────────────────── */
+    .composer {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--line);
+      background: var(--card);
+      flex-shrink: 0;
+    }
+    .composer input {
+      flex: 1;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 9px 14px;
+      font: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    .composer input:focus { border-color: var(--accent); }
+    .composer input::placeholder { color: var(--muted); }
+    .composer button {
+      background: var(--accent);
+      color: #082f49;
+      border: none;
+      border-radius: 999px;
+      padding: 9px 16px;
+      font: inherit;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      min-width: 56px;
+    }
+    .composer button:disabled { opacity: 0.3; }
+    .composer button:active { transform: scale(0.96); }
+  </style>
+</head>
+<body>
+  <div id="bootstrap" class="hidden">
+    <img class="mark" src="./crosslink-mark.svg" alt="Crosslink" />
+    <button class="continue-btn" id="continueBrowserBtn">Continue in browser &rarr;</button>
+    <div class="nudge">
+      <span>Add to home screen</span>
+      <svg viewBox="0 0 64 54" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 6C14 4 24 34 34 40C42 44.8 50 40 56 32" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+        <path d="M45 28C49 31 53 34 56 32C57.5 31 57 26 56.5 21" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+    </div>
+  </div>
+
+  <header>
+    <h1>Crosslink Chat</h1>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="stateText">connecting…</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- pairing -->
+    <div class="pairing" id="pairing">
+      <div class="spinner"></div>
+      <h2>Pairing with host…</h2>
+      <p>Establishing encrypted connection</p>
+      <p class="err" id="pairErr" hidden></p>
+    </div>
+
+    <!-- SAS confirm -->
+    <div class="sas hidden" id="sasScreen">
+      <h2>Verify codes</h2>
+      <p>These must match on the web app:</p>
+      <div class="sas-grid" id="sasGrid"></div>
+      <p class="caps" id="capList"></p>
+      <div class="sas-actions">
+        <button class="ok" id="sasOk">They match</button>
+        <button class="no" id="sasNo">Cancel</button>
+      </div>
+    </div>
+
+    <!-- chat -->
+    <div class="chat hidden" id="chatScreen">
+      <div class="messages" id="messages">
+        <div class="empty-chat" id="emptyChat">Connected! Send a message below.</div>
+      </div>
+      <div class="composer">
+        <input id="msgInput" placeholder="Type a message…" autocomplete="off" />
+        <button id="sendBtn" onclick="sendMsg()">Send</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="./bundle.js?v=2.0.0"></script>
+  <script>
+    const { createCrosslinkClient } = window.CrosslinkSDK;
+    const $ = id => document.getElementById(id);
+    const vibrate = p => { try { navigator.vibrate?.(p); } catch {} };
+
+    // ── universal Crosslink bootstrap: Safari tab vs installed PWA ───────
+    // iOS never fires `beforeinstallprompt`; "Add to Home Screen" only
+    // exists behind Safari's Share sheet. So instead of trying to trigger
+    // install, detect *how we were launched* and show a one-line nudge
+    // toward that sheet until the user has actually installed and relaunched.
+    function isStandalone() {
+      return window.matchMedia("(display-mode: standalone)").matches
+        || window.navigator.standalone === true;
+    }
+
+    // read pairing URI from query parameter (?pair=crosslink://pair?...)
+    const params = new URLSearchParams(location.search);
+    const pairFromQuery = params.get("pair");
+
+    // A Home Screen launch always opens the bare start_url — whatever
+    // pairing info arrived via the QR link's query string would otherwise
+    // be lost the moment the user leaves Safari to install. Stash it before
+    // that happens, and pick it back up once we're running standalone.
+    if (pairFromQuery) {
+      try { localStorage.setItem("crosslink.pendingPair", pairFromQuery); } catch {}
+    }
+
+    const skipInstall = params.get("skip_install") === "1" || params.get("skip") === "1" || params.has("direct");
+
+    if (!isStandalone() && !skipInstall) {
+      document.body.classList.add("pre-install");
+      $("bootstrap").classList.remove("hidden");
+    } else {
+      document.body.classList.remove("pre-install");
+      $("bootstrap").classList.add("hidden");
+    }
+
+    $("continueBrowserBtn")?.addEventListener("click", () => {
+      document.body.classList.remove("pre-install");
+      $("bootstrap").classList.add("hidden");
+      if (pairingUri) {
+        startPairing();
+      }
+    });
+
+    const pairingUri = pairFromQuery || (() => {
+      try { return localStorage.getItem("crosslink.pendingPair"); } catch { return null; }
+    })();
+    if (isStandalone() && pairingUri) {
+      try { localStorage.removeItem("crosslink.pendingPair"); } catch {}
+    }
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+
+    if (!pairingUri) {
+      $("pairing").classList.add("hidden");
+      $("pairErr").textContent = "No pairing data. Scan a QR code from the web app instead.";
+      $("pairErr").hidden = false;
+    }
+
+    let rpc = null;
+    let lastMsgCount = 0;
+
+    const client = createCrosslinkClient({
+      deviceName: "mobile",
+      onStateChange(state) {
+        const online = state === "direct" || state === "crosslink-relayed" || state === "lan";
+        $("dot").classList.toggle("on", online);
+        $("dot").classList.toggle("pairing", !online && state !== "offline");
+        $("stateText").textContent = state;
+
+        if (online) {
+          $("pairing").classList.add("hidden");
+          $("sasScreen").classList.add("hidden");
+          $("chatScreen").classList.remove("hidden");
+          $("emptyChat").classList.remove("hidden");
+          rpc = client.rpc();
+          subscribeToMessages();
+          loadHistory();
+        }
+      },
+      onConfirmPairing(req) {
+        $("pairing").classList.add("hidden");
+        $("sasScreen").classList.remove("hidden");
+        $("dot").classList.add("pairing");
+
+        const grid = $("sasGrid");
+        grid.replaceChildren();
+        for (const ch of req.sas.replace(/\s/g, "")) {
+          const span = document.createElement("span");
+          span.textContent = ch;
+          grid.appendChild(span);
+        }
+        $("capList").textContent = "Capabilities: " + (req.grantedCaps.join(", ") || "(none)");
+
+        vibrate([30, 60, 30]);
+
+        return new Promise(resolve => {
+          $("sasOk").onclick = () => { vibrate(20); resolve(true); };
+          $("sasNo").onclick = () => resolve(false);
+        });
+      }
+    });
+
+    function resolvePairingUri(uri) {
+      if (!uri) return uri;
+      if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        return uri
+          .replace(/127\.0\.0\.1(%3A|:)(\d+)/g, (_, sep, port) => location.hostname + sep + port)
+          .replace(/localhost(%3A|:)(\d+)/g, (_, sep, port) => location.hostname + sep + port);
+      }
+      return uri;
+    }
+
+    async function startPairing() {
+      if (!pairingUri) return;
+      try {
+        $("pairErr").hidden = true;
+        const targetUri = resolvePairingUri(pairingUri);
+        await client.pairFromQr(targetUri, ["chat.send", "chat.read"]);
+        vibrate([30, 60, 30]);
+        await client.connect();
+      } catch (err) {
+        $("pairing").classList.add("hidden");
+        $("pairErr").textContent = "Pairing failed: " + err.message;
+        $("pairErr").hidden = false;
+        vibrate(100);
+      }
+    }
+
+    // ── messages ────────────────────────────────────────
+    function subscribeToMessages() {
+      if (!rpc) return;
+      try {
+        rpc.subscribe("chat.new_message", msg => {
+          vibrate(15);
+          appendMessage(msg);
+        });
+      } catch {}
+    }
+
+    async function loadHistory() {
+      if (!rpc) return;
+      try {
+        const res = await rpc.call("chat.history");
+        const msgs = res?.messages ?? [];
+        const el = $("messages");
+        for (const m of msgs) appendMessage(m, true);
+        lastMsgCount = msgs.length;
+        if (msgs.length > 0) $("emptyChat").classList.add("hidden");
+      } catch {}
+    }
+
+    function appendMessage(m, skipEmptyCheck) {
+      if (!skipEmptyCheck) $("emptyChat").classList.add("hidden");
+      const el = $("messages");
+      const div = document.createElement("div");
+      div.className = "msg " + (m.sender === "mobile" ? "mobile" : "web");
+      const text = document.createElement("span");
+      text.textContent = m.text;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = m.sender + " · " + new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      div.append(text, meta);
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function sendMsg() {
+      const input = $("msgInput");
+      const text = input.value.trim();
+      if (!text || !rpc) return;
+      input.value = "";
+      try {
+        await rpc.call("chat.send", { sender: "mobile", text });
+      } catch (err) {
+        console.error("send failed:", err);
+      }
+    }
+
+    $("msgInput").addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMsg();
+      }
+    });
+
+    // ── start ───────────────────────────────────────────
+    if (!isStandalone() && !skipInstall) {
+      // no-op: waiting for "Add to Home Screen" + relaunch
+    } else if (pairingUri) {
+      startPairing();
+    } else if (client.listApps().length > 0) {
+      // already paired (returned to page)
+      $("pairing").classList.add("hidden");
+      $("chatScreen").classList.remove("hidden");
+      client.connect().then(() => {
+        rpc = client.rpc();
+        subscribeToMessages();
+        loadHistory();
+      }).catch(() => {});
+    }
+  </script>
+</body>
+</html>

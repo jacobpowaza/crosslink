@@ -1,0 +1,22 @@
+{
+  "name": "@crosslink/dev-tokens",
+  "version": "0.1.0",
+  "description": "Per-machine dev tokens that close default Crosslink services to unauthenticated access",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.6",
+    "typescript": "^5.6.3"
+  }
+}

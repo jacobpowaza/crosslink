@@ -1,0 +1,295 @@
+---
+title: API Reference
+description: Complete API reference for all Crosslink packages
+---
+
+## Host SDK (`@crosslink/sdk-node`)
+
+### `createCrosslinkServer(options)`
+
+Creates a new Crosslink host server.
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const server = createCrosslinkServer(options);
+```
+
+#### Options
+
+| Property | Type | Required | Description |
+| --- | --- | --- | --- |
+| `application.id` | `string` | Yes | Unique application identifier |
+| `application.name` | `string` | Yes | Human-readable name |
+| `application.version` | `string` | Yes | Semantic version |
+| `capabilities` | `Capability[]` | No | Declared capabilities |
+| `signalingUrl` | `string` | No | Signaling server URL |
+| `relayUrl` | `string` | No | Relay server URL |
+| `lan` | `{ bind: string }` | No | LAN binding options |
+| `pairing` | `PairingOptions` | No | Pairing configuration |
+| `logger` | `Logger` | No | Custom logger |
+
+#### Capability
+
+```ts
+interface Capability {
+  id: string;           // e.g., "app.control"
+  title: string;        // e.g., "Control the app"
+  risk: "low" | "medium" | "high";
+  description?: string;
+  ttlMs?: number;       // Optional time-to-live in ms
+}
+```
+
+#### PairingOptions
+
+```ts
+interface PairingOptions {
+  approve: (req: PairingRequest) => Promise<boolean>;
+  autoApprove?: boolean;
+  codeLength?: number;    // Default: 9
+  codeTtlMs?: number;     // Default: 120000 (2 minutes)
+}
+```
+
+#### PairingRequest
+
+```ts
+interface PairingRequest {
+  deviceName: string;
+  deviceId: string;
+  requestedCaps: string[];
+  sas: string;
+}
+```
+
+### Server methods
+
+#### `server.start()`
+
+Start listening for connections.
+
+```js
+await server.start();
+```
+
+#### `server.stop()`
+
+Gracefully shut down.
+
+```js
+await server.stop();
+```
+
+#### `server.getPairingCode()`
+
+Generate a new pairing code.
+
+```js
+const code = await server.getPairingCode();
+// code = {
+//   code: "123456789",
+//   uri: "crosslink://pair?v=1&s=...",
+//   expires: 1699999999999
+// }
+```
+
+#### `server.expose(method, handler, options?)`
+
+Register an RPC method.
+
+```js
+server.expose("app.status", () => ({ ok: true }), {
+  capability: "app.control"  // Optional capability requirement
+});
+```
+
+#### `server.declareEvent(name)`
+
+Declare an event that can be emitted.
+
+```js
+server.declareEvent("app.tick");
+```
+
+#### `server.emit(name, payload)`
+
+Send an event to all connected clients.
+
+```js
+server.emit("app.tick", { t: Date.now() });
+```
+
+#### `server.revoke(deviceId)`
+
+Revoke a client's access.
+
+```js
+server.revoke(deviceId);
+```
+
+#### `server.revokeCapability(deviceId, capId)`
+
+Revoke a specific capability.
+
+```js
+server.revokeCapability(deviceId, "app.admin");
+```
+
+#### `server.getLinks()`
+
+List all active connections.
+
+```js
+const links = server.getLinks();
+```
+
+#### `server.disconnect(deviceId)`
+
+Disconnect a specific client.
+
+```js
+server.disconnect(deviceId);
+```
+
+#### `server.disconnectAll()`
+
+Disconnect all clients.
+
+```js
+server.disconnectAll();
+```
+
+### Server events
+
+| Event | Payload | Description |
+| --- | --- | --- |
+| `clientConnected` | `{ deviceId }` | Client connected |
+| `clientDisconnected` | `{ deviceId }` | Client disconnected |
+| `error` | `Error` | Server error |
+| `clientError` | `{ deviceId, error }` | Client error |
+
+---
+
+## Client SDK (`@crosslink/sdk-browser`)
+
+### `CrosslinkClient.create(options?)`
+
+Factory method to create a client with encrypted storage.
+
+```js
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await CrosslinkClient.create(options);
+```
+
+### `new CrosslinkClient(options?)`
+
+Constructor (stores identity in plaintext -- avoid in production).
+
+```js
+const client = new CrosslinkClient(options);
+```
+
+#### Options
+
+| Property | Type | Required | Description |
+| --- | --- | --- | --- |
+| `deviceName` | `string` | No | Device name shown to host |
+| `storage` | `SecureStorage` | No | Custom storage backend |
+| `onStateChange` | `(state) => void` | No | State change callback |
+| `onConfirmPairing` | `(req) => Promise<boolean>` | No | Pairing confirmation |
+| `logger` | `Logger` | No | Custom logger |
+| `dialTimeoutMs` | `number` | No | Connection timeout (default: 10000) |
+| `allowPlaintextFallback` | `boolean` | No | Allow plaintext storage |
+
+### Client methods
+
+#### `client.pairFromQr(text, requestedCaps?)`
+
+Pair with a host via QR/URI.
+
+```js
+const record = await client.pairFromQr(uri, ["app.control"]);
+```
+
+#### `client.connect(requestedCaps?)`
+
+Connect to a paired host.
+
+```js
+const rpc = await client.connect(["app.control"]);
+```
+
+#### `client.disconnect()`
+
+Disconnect from the host.
+
+```js
+client.disconnect();
+```
+
+#### `client.forget(appId)`
+
+Remove a paired host.
+
+```js
+client.forget("com.example.myapp");
+```
+
+#### `client.listApps()`
+
+List all paired hosts.
+
+```js
+const apps = client.listApps();
+```
+
+### Client events
+
+| Event | Payload | Description |
+| --- | --- | --- |
+| `stateChange` | `string` | State changed |
+| `connected` | `{ deviceId }` | Connected to host |
+| `disconnected` | `{ deviceId }` | Disconnected from host |
+| `error` | `Error` | Client error |
+
+---
+
+## RPC interface
+
+### `rpc.call(method, args?)`
+
+Call an RPC method.
+
+```js
+const result = await rpc.call("app.status", { detail: true });
+```
+
+### `rpc.subscribe(event, callback)`
+
+Subscribe to an event.
+
+```js
+const unsubscribe = rpc.subscribe("app.tick", (payload) => {
+  console.log(payload);
+});
+```
+
+### `rpc.hasCapability(capId)`
+
+Check if a capability is granted.
+
+```js
+if (rpc.hasCapability("app.control")) {
+  // Proceed
+}
+```
+
+### RPC events
+
+| Event | Payload | Description |
+| --- | --- | --- |
+| `connected` | `{ deviceId }` | Connected |
+| `disconnected` | `{ deviceId }` | Disconnected |
+| `error` | `Error` | Error |

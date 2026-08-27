@@ -1,0 +1,117 @@
+---
+title: Sessions
+description: Session management and lifecycle
+---
+
+## What is a session?
+
+A session is a cryptographically secured context between a host and a client. It contains the shared encryption keys, granted capabilities, and connection state.
+
+## Session creation
+
+Sessions are created during pairing:
+
+```text
+1. Identity exchange (Ed25519 public keys)
+2. Ephemeral key exchange (X25519)
+3. Shared secret derivation (ECDH)
+4. Session key derivation (HKDF-SHA256)
+5. Capability binding
+```
+
+## Session structure
+
+```js
+session = {
+  id: "session-uuid",
+  hostDeviceId: "host-fingerprint",
+  clientDeviceId: "client-fingerprint",
+  sessionKey: "derived-from-ecdh",
+  capabilities: ["app.control", "app.read"],
+  createdAt: timestamp,
+  lastActivity: timestamp,
+  transport: "lan" | "relay" | "webrtc"
+}
+```
+
+## Session persistence
+
+Sessions are persisted:
+- **Host**: In the keychain/encrypted file (paired device records)
+- **Client**: In IndexedDB (encrypted at rest)
+
+Sessions survive:
+- Application restarts
+- Network interruptions
+- Browser tab closes (client reconnects)
+
+Sessions do **not** survive:
+- Explicit revocation (`server.revoke(deviceId)`)
+- Client forgetting (`client.forget(appId)`)
+- Identity key rotation
+
+## Session security
+
+### Forward secrecy
+
+Every session uses fresh ephemeral keys. Compromising the long-term identity does not expose past sessions.
+
+### Key isolation
+
+Each session has independent keys:
+- Different ECDH shared secret
+- Different HKDF derivation
+- Different frame encryption keys
+
+### Capability binding
+
+Capabilities are bound to the session at creation time:
+- Granted during pairing
+- Persisted for the session lifetime
+- Cannot be modified after creation (without re-pairing)
+
+## Session timeout
+
+Sessions have no built-in timeout. The host can implement idle detection:
+
+```js
+// Implement idle timeout
+let lastActivity = Date.now();
+
+server.expose("app.ping", () => {
+  lastActivity = Date.now();
+  return { pong: true };
+});
+
+setInterval(() => {
+  if (Date.now() - lastActivity > 30 * 60 * 1000) {
+    // 30 minutes idle
+    server.disconnectAll();
+  }
+}, 60_000);
+```
+
+## Multiple sessions
+
+A host can maintain multiple sessions:
+
+```text
+Host
+├── Session 1: Client A (phone) -- app.control, app.read
+├── Session 2: Client B (tablet) -- app.read only
+└── Session 3: Client C (laptop) -- app.control, app.read, app.write
+```
+
+Each session is independent:
+- Separate encryption keys
+- Separate capability grants
+- Separate connection state
+
+## Session cleanup
+
+When a session ends:
+
+1. Close the transport connection
+2. Remove the session from the active list
+3. Keep the paired device record (for reconnection)
+4. Emit a `sessionEnded` event

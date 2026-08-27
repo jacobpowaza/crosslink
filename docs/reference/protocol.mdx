@@ -1,0 +1,176 @@
+---
+title: Protocol
+description: Wire protocol specification
+---
+
+## Overview
+
+Crosslink's wire protocol ("CLX1") defines the message format and handshake sequence for establishing encrypted sessions.
+
+## Message format
+
+All messages are JSON-encoded and sent over WebSocket.
+
+```json
+{
+  "kind": "message_type",
+  "data": { ... }
+}
+```
+
+## Handshake messages
+
+### `claim`
+
+Client sends identity claim during pairing.
+
+```json
+{
+  "kind": "claim",
+  "deviceId": "a1b2c3d4e5f6g7h8",
+  "publicKey": "base64-encoded-ed25519-public-key",
+  "deviceName": "My Phone",
+  "requestedCaps": ["app.control", "app.read"],
+  "signature": "base64-encoded-signature"
+}
+```
+
+### `challenge`
+
+Host sends challenge to client.
+
+```json
+{
+  "kind": "challenge",
+  "nonce": "base64-encoded-random-nonce"
+}
+```
+
+### `challenge_response`
+
+Client responds with signed nonce.
+
+```json
+{
+  "kind": "challenge_response",
+  "signature": "base64-encoded-signature"
+}
+```
+
+### `pair_complete`
+
+Pairing completed successfully.
+
+```json
+{
+  "kind": "pair_complete",
+  "record": {
+    "deviceId": "a1b2c3d4e5f6g7h8",
+    "publicKey": "base64-encoded-public-key",
+    "capabilities": ["app.control", "app.read"],
+    "pairedAt": 1699999999999
+  }
+}
+```
+
+### `pair_error`
+
+Pairing failed.
+
+```json
+{
+  "kind": "pair_error",
+  "error": {
+    "code": "PAIRING_FAILED",
+    "message": "Host rejected pairing"
+  }
+}
+```
+
+## Session frames
+
+Once paired, all communication uses encrypted frames.
+
+### Frame format
+
+```text
++--------+--------+----------------+
+| Nonce  |  Tag   |   Ciphertext   |
+| 12 B   | 16 B   |  variable      |
++--------+--------+----------------+
+```
+
+### Encryption
+
+- Algorithm: XChaCha20-Poly1305
+- Nonce: 12 bytes (random, unique per frame)
+- Key: Derived from ECDH shared secret via HKDF-SHA256
+
+### Frame sequence
+
+```text
+Host                          Client
+  |                              |
+  |--- frame (seq=1) --------->|
+  |<-- frame (seq=1) -----------|
+  |--- frame (seq=2) --------->|
+  |<-- frame (seq=2) -----------|
+```
+
+## Key exchange
+
+### Ephemeral keys
+
+```text
+1. Host generates ephemeral X25519 key pair
+2. Client generates ephemeral X25519 key pair
+3. Both exchange ephemeral public keys (signed)
+4. Both compute shared secret: X25519(ephemeral_private, peer_public)
+5. Both derive session key: HKDF-SHA256(shared_secret, salt, info)
+```
+
+### Key derivation
+
+```text
+IKM = X25519(ephemeral_private, peer_ephemeral_public)
+salt = SHA-256(host_identity || client_identity)
+info = "crosslink-session-v1"
+session_key = HKDF-SHA256(IKM, salt, info)
+```
+
+## Capability binding
+
+Capabilities are bound during pairing and included in session context:
+
+```json
+{
+  "capabilities": ["app.control", "app.read"],
+  "grantedAt": 1699999999999,
+  "ttlMs": 3600000
+}
+```
+
+## Version negotiation
+
+```json
+{
+  "kind": "version",
+  "version": 1,
+  "features": ["webrtc", "relay"]
+}
+```
+
+Current protocol version: **1**
+
+## Error frames
+
+```json
+{
+  "kind": "error",
+  "code": "METHOD_NOT_FOUND",
+  "message": "Method not found",
+  "details": {
+    "method": "app.unknown"
+  }
+}
+```

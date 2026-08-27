@@ -1,0 +1,111 @@
+---
+title: Tauri Integration
+description: Using Crosslink in Tauri applications
+---
+
+## Setup
+
+```bash
+# Frontend (Rust side is not needed for Crosslink)
+npm install @crosslink/sdk-browser
+```
+
+## Frontend (Rust)
+
+Tauri apps use the browser SDK in the webview:
+
+```js
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await CrosslinkClient.create({
+  deviceName: "Tauri App",
+  onStateChange: (state) => console.log("State:", state)
+});
+```
+
+## Rust backend (optional)
+
+If you need to expose Crosslink functionality from the Rust backend:
+
+```rust
+// src-tauri/src/main.rs
+use tauri::Manager;
+
+#[tauri::command]
+async fn get_pairing_code(app: tauri::AppHandle) -> Result<String, String> {
+    // Call the Node.js process or implement Crosslink in Rust
+    todo!()
+}
+
+fn main() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_pairing_code])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+```
+
+## IPC bridge
+
+Use Tauri's event system to communicate between frontend and backend:
+
+```js
+import { emit, listen } from "@tauri-apps/api/event";
+
+// Listen for pairing events
+listen("crosslink:pairing-code", (event) => {
+  console.log("Pairing code:", event.payload);
+});
+
+// Emit pairing approval
+emit("crosslink:approve-pairing", { approved: true });
+```
+
+## Permissions
+
+Tauri's permission system can work with Crosslink capabilities:
+
+```json
+// tauri.conf.json
+{
+  "app": {
+    "security": {
+      "permissions": [
+        "core:default",
+        "crosslink:allow-pair",
+        "crosslink:allow-call"
+      ]
+    }
+  }
+}
+```
+
+## Mobile support
+
+Crosslink works on mobile Tauri apps (iOS/Android) via the browser SDK:
+
+```js
+// Works on iOS and Android webviews
+const client = await CrosslinkClient.create({
+  deviceName: "Mobile App",
+  // On mobile, WebCrypto is available in secure contexts
+});
+```
+
+## Security notes
+
+- The webview runs in a sandboxed environment
+- Use Tauri's IPC for sensitive operations
+- Store identity keys in the Rust backend (not webview storage)
+- Consider using Tauri's secure storage for sensitive data
+
+## Building
+
+```bash
+# Build for current platform
+npm run tauri build
+
+# Build for mobile
+npm run tauri ios build
+npm run tauri android build
+```

@@ -1,0 +1,155 @@
+---
+title: Encryption
+description: Cryptographic primitives, key exchange, and session encryption
+---
+
+## Overview
+
+Crosslink uses a layered cryptographic design:
+
+```text
+Identity keys (Ed25519) -- long-term, one per device
+        |
+Ephemeral keys (X25519) -- per-session, forward secrecy
+        |
+HKDF-SHA256 -- derive session keys
+        |
+XChaCha20-Poly1305 -- encrypt/decrypt session frames
+```
+
+## Identity keys
+
+Each device (host or client) has a long-term Ed25519 key pair:
+
+- **Private key**: Stored in OS keychain (host) or WebCrypto non-extractable key (client)
+- **Public key**: Shared during pairing, used for authentication
+- **Fingerprint**: SHA-256 of the public key, first 16 hex chars displayed in QR code
+
+```text
+Host identity:  Ed25519 key pair, persisted in OS keychain
+Client identity: Ed25519 key pair, persisted under WebCrypto key
+```
+
+### Key generation
+
+```js
+// Host (Node.js)
+// Identity is generated automatically by createCrosslinkServer()
+// Stored in .crosslink-data/<appId>/ via keytar or encrypted file
+
+// Client (Browser)
+// Identity is generated automatically by CrosslinkClient.create()
+// Stored in IndexedDB under AES-256-GCM encryption
+```
+
+## CLX1 handshake
+
+The CLX1 handshake authenticates both parties and establishes a shared secret:
+
+```text
+1. Host generates ephemeral X25519 key pair
+2. Client generates ephemeral X25519 key pair
+3. Both exchange ephemeral public keys (signed with identity keys)
+4. Both compute shared secret via X25519(ECDH)
+5. Both derive session keys via HKDF-SHA256(shared_secret, salt, info)
+```
+
+### Handshake security properties
+
+| Property | Mechanism |
+| --- | --- |
+| Authentication | Ed25519 signatures on ephemeral keys |
+| Forward secrecy | Ephemeral X25519 keys (deleted after session) |
+| Key confirmation | Both parties derive same session keys |
+| Replay protection | Nonces + sequence numbers in frames |
+
+## Session encryption
+
+Once the handshake completes, all communication uses XChaCha20-Poly1305:
+
+```text
+Frame format:
++--------+--------+----------------+----------------+
+| Nonce  |  Tag   |   Ciphertext   |  Sequence Num  |
+| 12 B   | 16 B   |  variable      |  4 B           |
++--------+--------+----------------+----------------+
+```
+
+### Why XChaCha20-Poly1305?
+
+| Feature | XChaCha20-Poly1305 | AES-GCM |
+| --- | --- | --- |
+| Nonce size | 192 bits (random safe) | 96 bits (collision risk) |
+| Hardware dependency | None (software) | AES-NI preferred |
+| Performance | Fast on all platforms | Fast with AES-NI |
+| Forward secrecy | Yes (ephemeral keys) | Yes (ephemeral keys) |
+
+The 192-bit nonce makes random nonce generation safe without worrying about collisions, which is critical for the concurrent frame streams in Crosslink.
+
+## Key derivation
+
+Session keys are derived using HKDF-SHA256:
+
+```text
+IKM = X25519(ephemeral_private, peer_ephemeral_public)
+salt = SHA-256(host_identity || client_identity)
+info = "crosslink-session-v1"
+
+session_key = HKDF-SHA256(IKM, salt, info)
+```
+
+## Secret storage encryption
+
+### Host (Node.js)
+
+When the OS keychain is unavailable, the SDK falls back to AES-256-GCM file encryption:
+
+```text
+Key derivation:
+  passphrase = CROSSLINK_SECRET_KEY env var OR machine-bound key
+  salt = random (16 bytes)
+  key = scrypt(passphrase, salt, N=2^14, r=8, p=1, dkLen=32)
+
+Encryption:
+  iv = random (12 bytes)
+  ciphertext = AES-256-GCM(key, iv, plaintext)
+  stored = { v:1, salt, iv, tag, ciphertext }
+```
+
+### Client (Browser)
+
+When using `CrosslinkClient.create()`, the SDK encrypts at rest with AES-256-GCM under a WebCrypto key:
+
+```text
+Key generation:
+  key = crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    extractable: false,  // <-- critical: cannot be exported
+    ["encrypt", "decrypt"]
+  )
+
+Encryption:
+  iv = crypto.getRandomValues(12)
+  ciphertext = crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext)
+```
+
+<Warning>
+The `extractable: false` flag prevents JavaScript from reading the key material. However, a script running on the same origin can still use the key to decrypt data. This protects against copy-and-leave attacks (XSS exfiltration), not against code execution on the origin.
+</Warning>
+
+## Algorithm choices and alternatives
+
+| Primitive | Chosen | Alternatives considered |
+| --- | --- | --- |
+| Identity | Ed25519 | ECDSA-P256 (slower, larger keys), RSA (legacy) |
+| Key exchange | X25519 | ECDH-P256 (same curve as identity is cleaner) |
+| AEAD | XChaCha20-Poly1305 | AES-256-GCM (nonce collision risk), ChaCha20-Poly1305 (smaller nonce) |
+| KDF | HKDF-SHA256 | PBKDF2 (slower, not needed here) |
+| Hash | SHA-256 | SHA-512 (overkill for fingerprints) |
+
+## Security limitations
+
+- **No post-quantum resistance**: Ed25519 and X25519 are vulnerable to quantum computers
+- **No key escrow**: Lost identity keys cannot be recovered (by design)
+- **No anonymity**: Device fingerprints are visible during pairing
+- **No traffic analysis resistance**: Frame sizes and timing are visible to network observers

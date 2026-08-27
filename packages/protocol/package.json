@@ -1,0 +1,23 @@
+{
+  "name": "@crosslink/protocol",
+  "version": "0.1.0",
+  "description": "Crosslink language-neutral wire protocol: envelopes, framing, versioning, errors, fixtures",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "gen:fixtures": "npm run build && node scripts/generate-fixtures.mjs"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.6",
+    "typescript": "^5.6.3"
+  }
+}

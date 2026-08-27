@@ -1,0 +1,27 @@
+{
+  "name": "@crosslink/sdk-browser",
+  "version": "0.1.0",
+  "description": "Crosslink client SDK for browsers and PWAs",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --platform browser --external @crosslink/protocol --external @crosslink/core",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crosslink/core": "*",
+    "@crosslink/protocol": "*",
+    "@crosslink/webrtc-adapter": "*"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.6",
+    "typescript": "^5.6.3"
+  }
+}

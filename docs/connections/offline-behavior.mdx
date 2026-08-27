@@ -1,0 +1,103 @@
+---
+title: Offline Behavior
+description: What happens when devices are unreachable
+---
+
+## Client offline
+
+When the client loses connectivity:
+
+```text
+1. Connection state changes to "offline"
+2. Ongoing RPC calls fail with "not_connected"
+3. Idempotent calls are queued
+4. Event subscriptions are paused
+5. Backoff timer starts for reconnection attempts
+```
+
+## Host offline
+
+When the host goes offline:
+
+```text
+1. Clients detect disconnection (WebSocket close / heartbeat timeout)
+2. Clients enter "reconnecting" state
+3. Clients attempt reconnection with backoff
+4. Host appears in signaling as offline
+5. New pairing codes cannot be generated
+```
+
+## Host unreachable but running
+
+If the host is running but unreachable (network partition):
+
+```text
+1. Client tries LAN candidate (fails)
+2. Client tries relay candidate (fails)
+3. Client enters "reconnecting" state
+4. Client continues retrying with backoff
+5. When network recovers, client reconnects automatically
+```
+
+## Offline call queueing
+
+Only idempotent methods are queued during disconnection:
+
+```ts
+// Idempotent -- queued and replayed
+await rpc.call("data.get", null, { idempotent: true });
+
+// Non-idempotent -- fails immediately
+await rpc.call("data.create", { title: "New" });
+```
+
+### What makes a method idempotent?
+
+A method is idempotent if calling it multiple times with the same input produces the same result:
+
+- **Read operations** (`get`, `list`, `search`) -- naturally idempotent
+- **Write operations** (`create`, `update`, `delete`) -- generally not idempotent
+- **Conditional writes** (`update if current == X`) -- idempotent
+
+Mark methods as idempotent in the RPC options:
+
+```ts
+server.expose("data.get", (input) => getData(input.id), {
+  capability: "data.read"
+  // idempotent is determined by the client's call options, not the server
+});
+```
+
+```ts
+// Client-side: mark as idempotent
+const result = await rpc.call("data.get", { id: "123" }, { idempotent: true });
+```
+
+## Subscription restore
+
+After reconnection, subscriptions are automatically restored:
+
+```ts
+// Subscribe once
+rpc.subscribe("data.changed", handler);
+
+// After reconnection, handler receives events again
+// No need to re-subscribe
+```
+
+## Identity persistence
+
+Both host and client persist their identity across restarts:
+
+- **Host**: `.crosslink-data/<appId>/identity.json` (or OS keychain)
+- **Client**: IndexedDB (encrypted) or localStorage (fallback)
+
+Restarting the host preserves all paired devices and their capabilities.
+
+## Storage cleanup
+
+Relay channels expire after 24 hours. The host automatically re-allocates and re-publishes.
+
+Pairing codes expire after 2 minutes. Expired codes are cleaned up automatically.
+
+Client transport hints are persisted locally for faster reconnection after network changes.

@@ -1,0 +1,35 @@
+{
+  "name": "@crosslink/signaling",
+  "version": "0.1.0",
+  "description": "Crosslink signaling service: presence directory and pairing-code routing",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "crosslink-signaling": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/cli.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@crosslink/dev-tokens": "*",
+    "@crosslink/protocol": "*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "tsup": "^8.3.6",
+    "typescript": "^5.6.3"
+  }
+}

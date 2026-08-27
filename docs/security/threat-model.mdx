@@ -1,0 +1,142 @@
+---
+title: Threat Model
+description: What Crosslink protects against and what it doesn't
+---
+
+## Scope
+
+This document describes Crosslink's threat model: what attacks are in scope, how they're mitigated, and what responsibilities remain with the application.
+
+## Trust boundary
+
+```text
+┌─────────────────────────────────┐
+│          TRUST ZONE             │
+│  ┌─────────┐     ┌─────────┐   │
+│  │  Host   │     │ Client  │   │
+│  │ (your   │     │(user's  │   │
+│  │  code)  │     │ browser)│   │
+│  └─────────┘     └─────────┘   │
+└─────────────────────────────────┘
+┌─────────────────────────────────┐
+│        UNTRUSTED ZONE           │
+│  ┌───────────┐  ┌───────────┐  │
+│  │ Signaling │  │   Relay   │  │
+│  │  Server   │  │  Server   │  │
+│  └───────────┘  └───────────┘  │
+│  ┌───────────────────────────┐  │
+│  │      Network              │  │
+│  └───────────────────────────┘  │
+└─────────────────────────────────┘
+```
+
+## Threats in scope
+
+### Network attacks
+
+| Attack | Mitigation |
+| --- | --- |
+| **Eavesdropping** | All traffic encrypted with XChaCha20-Poly1305 |
+| **Man-in-the-middle (pairing)** | SAS verification + fingerprint pinning |
+| **Man-in-the-middle (session)** | Session keys bound to identity keys |
+| **Replay attacks** | Nonces + sequence numbers |
+| **Relay impersonation** | Cannot forge identity signatures |
+| **Traffic analysis** | Frame padding (partial), timing obfuscation (not implemented) |
+
+### Device attacks
+
+| Attack | Mitigation |
+| --- | --- |
+| **OS keychain theft (host)** | Keytar/Electron safeStorage (OS-level protection) |
+| **Browser XSS (seed theft)** | Non-extractable WebCrypto key (client) |
+| **Compromised signaling server** | Cannot forge identities, cannot decrypt sessions |
+| **Compromised relay server** | Cannot decrypt sessions, sees only ciphertext |
+
+### Protocol attacks
+
+| Attack | Mitigation |
+| --- | --- |
+| **Replay old pairing codes** | Single-use codes with 2-minute TTL |
+| **Replay old session frames** | Sequence numbers + nonce uniqueness |
+| **Downgrade attacks** | Protocol version negotiation, no fallback to weaker |
+| **Key substitution** | Ed25519 signatures on all key material |
+
+## Threats out of scope
+
+### Application-layer attacks
+
+| Threat | Why out of scope | Your responsibility |
+| --- | --- | --- |
+| **RPC injection** | Crosslink is a transport layer | Validate all RPC inputs |
+| **Authorization bypass** | Crosslink provides primitives, not policy | Implement proper capability checks |
+| **Denial of service** | Crosslink is not a rate limiter | Rate limit at the application level |
+| **Data exfiltration** | Crosslink doesn't know your data model | Sanitize sensitive data |
+| **Business logic flaws** | Crosslink is a transport, not an app | Implement your business logic |
+
+### Device attacks
+
+| Threat | Why out of scope | Your responsibility |
+| --- | --- | --- |
+| **Physical device theft** | Device security is platform-dependent | Use device locks, remote wipe |
+| **Malicious browser extension** | Cannot prevent | Educate users, detect anomalies |
+| **OS compromise** | Trust boundary is the device | Device integrity is assumed |
+| **Side-channel attacks** | Hardware-dependent | Not addressed in software |
+
+### Advanced attacks
+
+| Threat | Why out of scope | Notes |
+| --- | --- | --- |
+| **Quantum computing** | Ed25519/X25519 are quantum-vulnerable | Consider post-quantum when standardized |
+| **Timing attacks** | Requires constant-time implementation audit | Not formally audited |
+| **Rubber-hose cryptanalysis** | Cannot prevent coercion | Out of scope for all crypto |
+| **Supply chain attacks** | Out of Crosslink's control | Use verified builds, audit dependencies |
+
+## Capability system
+
+Crosslink's capability system is a **transport-layer primitive**, not a full authorization framework:
+
+### What capabilities do
+
+- Declare what operations a client can request
+- Let the host approve/deny during pairing
+- Persist the granted set for the session
+- Provide a human-readable description for user consent
+
+### What capabilities don't do
+
+- Implement rate limiting
+- Enforce time-based restrictions (use TTLs)
+- Prevent滥用 by a compromised client
+- Replace application-layer authorization
+
+<Warning>
+A compromised client with a valid capability token can call that capability as many times as it wants. Your application must implement rate limiting and abuse detection independently.
+</Warning>
+
+## Security recommendations
+
+### For host applications
+
+1. **Validate all RPC inputs** -- Don't trust the client
+2. **Implement rate limiting** -- Prevent abuse of granted capabilities
+3. **Log security events** -- Pairing, capability grants, errors
+4. **Use OS keychain** -- Don't store secrets in plaintext files
+5. **Review pairing requests** -- Show SAS and capabilities to the user
+6. **Rotate pairing codes** -- Generate new codes regularly
+7. **Monitor connections** -- Detect anomalous patterns
+
+### For client applications
+
+1. **Use `CrosslinkClient.create()`** -- Encrypted storage at rest
+2. **Verify SAS** -- Never skip the verification step
+3. **Review capabilities** -- Don't approve capabilities you don't need
+4. **Handle errors gracefully** -- Don't leak information in error messages
+5. **Secure your domain** -- HTTPS is required for WebCrypto
+
+### For deployments
+
+1. **HTTPS everywhere** -- Signaling and relay must use TLS
+2. **Network isolation** -- Run services in a DMZ if possible
+3. **Access logs** -- Monitor who pairs with what
+4. **Regular updates** -- Keep the SDK updated
+5. **Backup identity keys** -- If you lose them, paired devices can't reconnect

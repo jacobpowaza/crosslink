@@ -1,0 +1,28 @@
+{
+  "name": "@crosslink/core",
+  "version": "0.1.0",
+  "description": "Crosslink transport-agnostic engine: identity, E2E sessions, capabilities, RPC, pairing",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external @crosslink/protocol",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crosslink/protocol": "*",
+    "@noble/ciphers": "^1.2.0",
+    "@noble/curves": "^1.8.1",
+    "@noble/hashes": "^1.7.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.6",
+    "typescript": "^5.6.3"
+  }
+}

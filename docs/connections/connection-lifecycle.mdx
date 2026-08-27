@@ -1,0 +1,125 @@
+---
+title: Connection Lifecycle
+description: How connections are established, maintained, and reconnected
+---
+
+## Full lifecycle
+
+```text
+createLink()
+    |
+Waiting (code generated, QR displayed)
+    |
+Client scans (pair_resolve via signaling)
+    |
+Pairing (claim -> challenge -> complete)
+    |
+Handshake (sinit -> sack, key derivation)
+    |
+Connected (encrypted RPC)
+    |
+  +--> Heartbeat (oping/opong)
+  |    |
+  |    +--> Transport change (LAN <-> relay)
+  |    |
+  |    +--> Reconnect?
+  |         |
+  |         +--> yes: new transport + fresh handshake
+  |         +--> no: session ended
+  |
+  +--> Disconnect
+       |
+       +--> bye (orderly)
+       +--> error (abrupt)
+       +--> revoked (host kills session)
+```
+
+## State machine
+
+```text
+offline
+  |  client.connect()
+connecting
+  |  transport connected
+  |  CLX1 handshake complete
+connected
+  |  transport lost
+reconnecting
+  |  new transport connected
+  |  CLX1 handshake complete
+connected
+  |  max retries exceeded / device revoked
+offline
+```
+
+## Events
+
+### Host events
+
+```ts
+// Device paired (after successful pairing)
+server.typedOn("devicePaired", (record) => {
+  console.log("New device:", record.deviceId);
+});
+
+// Device connected (session established)
+server.typedOn("deviceConnected", ({ deviceId, transport }) => {
+  console.log(`${deviceId} connected via ${transport}`);
+});
+
+// Device disconnected
+server.typedOn("deviceDisconnected", ({ deviceId, transport }) => {
+  console.log(`${deviceId} disconnected`);
+});
+
+// Device revoked
+server.typedOn("deviceRevoked", (deviceId) => {
+  console.log(`${deviceId} revoked`);
+});
+
+// Pairing code issued
+server.typedOn("pairingIssued", (info) => {
+  console.log("Code:", info.code, "Expires:", info.expiresAt);
+});
+```
+
+### Client events
+
+```ts
+// State changes
+const client = createCrosslinkClient({
+  onStateChange: (state, detail) => {
+    console.log(`State: ${state}`, detail);
+  }
+});
+
+// RPC events
+rpc.subscribe("data.changed", (payload) => {
+  console.log("Event:", payload);
+});
+```
+
+## Timeouts
+
+| Timeout | Default | Purpose |
+| --- | --- | --- |
+| Pairing code TTL | 120s | How long a pairing code is valid |
+| Request timeout | 30s | Per-RPC-call timeout |
+| Consent prompt | 60s | Time to respond to per-use consent |
+| Dial timeout | 10s | WebSocket open timeout |
+| Idle sweep | 10 min | Relay idle cleanup |
+| Channel lifetime | 24h | Relay channel max lifetime |
+
+## Error recovery
+
+Crosslink handles these failure modes:
+
+| Failure | Recovery |
+| --- | --- |
+| Transport lost | Auto-reconnect with backoff |
+| Relay channel expired | Re-allocate and re-publish |
+| Pairing code expired | Generate new code |
+| Capability revoked | Next RPC fails with `capability_denied` |
+| Device revoked | Session killed, reconnection blocked |
+| Protocol error | Session torn down, reconnect attempted |
+| Handshake failure | Session torn down |

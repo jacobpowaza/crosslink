@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "generated_by": "@crosslink/protocol",
+  "cases": [
+    {
+      "name": "request",
+      "obj": {
+        "v": "1.0",
+        "t": "req",
+        "i": "AAAAAAAAAAAAAAAA",
+        "m": "echo",
+        "p": {
+          "hello": "world",
+          "n": 42
+        }
+      },
+      "canonical": "{\"i\":\"AAAAAAAAAAAAAAAA\",\"m\":\"echo\",\"p\":{\"hello\":\"world\",\"n\":42},\"t\":\"req\",\"v\":\"1.0\"}",
+      "frame_hex": "000000547b2269223a2241414141414141414141414141414141222c226d223a226563686f222c2270223a7b2268656c6c6f223a22776f726c64222c226e223a34327d2c2274223a22726571222c2276223a22312e30227d"
+    },
+    {
+      "name": "response",
+      "obj": {
+        "v": "1.0",
+        "t": "res",
+        "i": "AAAAAAAAAAAAAAAA",
+        "p": {
+          "echoed": true
+        }
+      },
+      "canonical": "{\"i\":\"AAAAAAAAAAAAAAAA\",\"p\":{\"echoed\":true},\"t\":\"res\",\"v\":\"1.0\"}",
+      "frame_hex": "000000407b2269223a2241414141414141414141414141414141222c2270223a7b226563686f6564223a747275657d2c2274223a22726573222c2276223a22312e30227d"
+    },
+    {
+      "name": "error",
+      "obj": {
+        "v": "1.0",
+        "t": "err",
+        "i": "AAAAAAAAAAAAAAAA",
+        "e": {
+          "code": "parse_error",
+          "message": "boom"
+        }
+      },
+      "canonical": "{\"e\":{\"code\":\"parse_error\",\"message\":\"boom\"},\"i\":\"AAAAAAAAAAAAAAAA\",\"t\":\"err\",\"v\":\"1.0\"}",
+      "frame_hex": "000000587b2265223a7b22636f6465223a2270617273655f6572726f72222c226d657373616765223a22626f6f6d227d2c2269223a2241414141414141414141414141414141222c2274223a22657272222c2276223a22312e30227d"
+    },
+    {
+      "name": "chunk-binary",
+      "obj": {
+        "v": "1.0",
+        "t": "chunk",
+        "i": "AAAAAAAAAAAAAAAA",
+        "n": 0,
+        "d": {
+          "$b": true,
+          "c": "application/octet-stream",
+          "d": "AQIDBA=="
+        }
+      },
+      "canonical": "{\"d\":{\"$b\":true,\"c\":\"application/octet-stream\",\"d\":\"AQIDBA==\"},\"i\":\"AAAAAAAAAAAAAAAA\",\"n\":0,\"t\":\"chunk\",\"v\":\"1.0\"}",
+      "frame_hex": "000000727b2264223a7b222462223a747275652c2263223a226170706c69636174696f6e2f6f637465742d73747265616d222c2264223a224151494442413d3d227d2c2269223a2241414141414141414141414141414141222c226e223a302c2274223a226368756e6b222c2276223a22312e30227d"
+    },
+    {
+      "name": "end",
+      "obj": {
+        "v": "1.0",
+        "t": "end",
+        "i": "AAAAAAAAAAAAAAAA",
+        "p": {
+          "total": 3
+        }
+      },
+      "canonical": "{\"i\":\"AAAAAAAAAAAAAAAA\",\"p\":{\"total\":3},\"t\":\"end\",\"v\":\"1.0\"}",
+      "frame_hex": "0000003c7b2269223a2241414141414141414141414141414141222c2270223a7b22746f74616c223a337d2c2274223a22656e64222c2276223a22312e30227d"
+    },
+    {
+      "name": "event",
+      "obj": {
+        "v": "1.0",
+        "t": "evt",
+        "s": "BBBBBBBBBBBB",
+        "e": "tasks.status",
+        "p": {
+          "pct": 50
+        }
+      },
+      "canonical": "{\"e\":\"tasks.status\",\"p\":{\"pct\":50},\"s\":\"BBBBBBBBBBBB\",\"t\":\"evt\",\"v\":\"1.0\"}",
+      "frame_hex": "0000004a7b2265223a227461736b732e737461747573222c2270223a7b22706374223a35307d2c2273223a22424242424242424242424242222c2274223a22657674222c2276223a22312e30227d"
+    },
+    {
+      "name": "subscribe",
+      "obj": {
+        "v": "1.0",
+        "t": "sub",
+        "s": "BBBBBBBBBBBB",
+        "e": "tasks.status"
+      },
+      "canonical": "{\"e\":\"tasks.status\",\"s\":\"BBBBBBBBBBBB\",\"t\":\"sub\",\"v\":\"1.0\"}",
+      "frame_hex": "0000003b7b2265223a227461736b732e737461747573222c2273223a22424242424242424242424242222c2274223a22737562222c2276223a22312e30227d"
+    },
+    {
+      "name": "cancel",
+      "obj": {
+        "v": "1.0",
+        "t": "cancel",
+        "i": "AAAAAAAAAAAAAAAA"
+      },
+      "canonical": "{\"i\":\"AAAAAAAAAAAAAAAA\",\"t\":\"cancel\",\"v\":\"1.0\"}",
+      "frame_hex": "0000002f7b2269223a2241414141414141414141414141414141222c2274223a2263616e63656c222c2276223a22312e30227d"
+    },
+    {
+      "name": "ping",
+      "obj": {
+        "v": "1.0",
+        "t": "ping",
+        "ts": 1700000000000
+      },
+      "canonical": "{\"t\":\"ping\",\"ts\":1700000000000,\"v\":\"1.0\"}",
+      "frame_hex": "000000297b2274223a2270696e67222c227473223a313730303030303030303030302c2276223a22312e30227d"
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+---
+title: Introduction
+description: Universal secure app-to-app connectivity
+---
+
+Crosslink is a framework for securely connecting a web or mobile interface to an application running on another device.
+
+Any app on your computer can talk to any app on your phone or browser over an end-to-end encrypted channel -- paired once by scanning a QR code, then reconnected automatically forever after.
+
+<video
+  controls
+  className="w-full aspect-video rounded-lg shadow-lg border border-gray-200 dark:border-gray-800"
+  src="/resources/brag.mp4"
+  poster="/resources/brag.jpg"
+/>
+
+## What problem does it solve?
+
+Every app reinvents device pairing: ad-hoc tokens, hand-copied keys, homegrown crypto, brittle sockets. Crosslink packages the hard parts once:
+
+| Concern | What Crosslink gives you |
+| --- | --- |
+| **Pairing** | Single-use 9-digit code + QR; SAS verification words; fingerprint pinning |
+| **Identity** | One Ed25519 key per installation; revocation lists persisted locally |
+| **Crypto** | X25519 + HKDF handshake ("CLX1"), XChaCha20-Poly1305 session frames |
+| **Authorization** | Capability grants per device, host-authored policy, per-use consent |
+| **RPC** | Typed request/response, streaming progress chunks, event subscriptions |
+| **Transports** | LAN WebSocket -> crosslink relay -> WebRTC DataChannel, auto-fallback |
+| **Reconnect** | Exponential backoff, offline call queueing, subscription restore |
+| **Secrets** | Host seed in the OS keychain; browser seed under a non-extractable WebCrypto key |
+| **Observability** | Structured, redacting `Logger` threaded through every layer |
+
+## When should I use Crosslink?
+
+- You have an app on a desktop/server and want a phone to control it
+- You need a phone-as-remote pattern (remote desktop, presentation control, media remote)
+- You want to let users pair devices without accounts, OAuth, or cloud sync
+- You need encrypted RPC between processes on different devices
+- You're building an Electron/Tauri app that needs a companion mobile interface
+
+### Real-world use cases
+
+| Use case | Host | Client |
+| --- | --- | --- |
+| Media remote | Desktop music player | Phone browser |
+| Presentation control | Desktop slideshow | Phone browser |
+| Remote terminal | Server CLI | Phone browser |
+| Smart home | Home server | Any device |
+| File transfer | Desktop app | Phone browser |
+| Device dashboard | IoT device | Phone browser |
+| Game second screen | Desktop game | Phone browser |
+
+## Architecture overview
+
+```text
+User scans QR
+      |
+Crosslink landing page
+      |
+Add to Home Screen (optional)
+      |
+Crosslink PWA / Client
+      |
+Encrypted connection (E2E)
+      |
+Desktop / Server application (Host)
+```
+
+In more detail:
+
+```text
++-----------------+   LAN / WebRTC / relay    +----------------+
+|  App A (host)   | <== E2E encrypted ======> | App B (phone)  |
+|  Node.js SDK    |      CLX1 sessions        | Browser SDK    |
++-----------------+                            +----------------+
+        ^                ^      ^
+        +-- signaling ----+      +-- relay (dumb pipe) --------+
+```
+
+The **signaling service** helps devices find each other and route pairing codes. The **relay** forwards encrypted traffic when a direct connection isn't possible. Both services see zero plaintext.
+
+### What the services do
+
+| Service | Purpose | Sees traffic? | Required? |
+| --- | --- | --- | --- |
+| **Signaling** | Presence directory + pairing-code router | Hashed codes + opaque blobs only | Only for cross-network pairing |
+| **Relay** | Encrypted pipe for NAT traversal | Ciphertext only (cannot decrypt) | Only for cross-network connectivity |
+| **LAN** | Direct WebSocket on local network | N/A (no service) | Same-network only |
+
+## Security architecture
+
+```text
+Client
+   |
+   | encrypted (XChaCha20-Poly1305)
+   v
+Signaling / Relay (untrusted)
+   |
+   | encrypted
+   v
+Host
+```
+
+Services are **untrusted by design**:
+- Signaling sees only hashed codes and opaque signed blobs
+- Relay sees only ciphertext
+- Compromising either cannot forge, decrypt, or substitute identities
+
+<Warning>
+Crosslink provides the transport and authentication primitives. Your application is responsible for:
+- Validating input at the RPC layer (schema validation)
+- Rate limiting at the application level
+- Logging security-relevant events
+- Implementing proper error handling
+- Following the principle of least privilege in capability design
+</Warning>
+
+## Key properties
+
+- **No accounts required** -- devices pair by scanning a QR code
+- **End-to-end encrypted** -- the relay and signaling servers never see your data
+- **Forward secrecy** -- every session uses fresh ephemeral keys
+- **Capability-based permissions** -- granular access control per device
+- **Transport agnostic** -- works over LAN, relay, or WebRTC with automatic fallback
+- **Cross-platform** -- Node.js, browsers, Electron, Tauri
+
+## How it differs from alternatives
+
+| Alternative | Limitation | Crosslink advantage |
+| --- | --- | --- |
+| REST API + API keys | Keys must be shared somehow | QR pairing, no shared secrets |
+| OAuth | Requires accounts + cloud | No accounts, fully local |
+| SSH tunneling | Complex setup, not user-friendly | Scan QR, done |
+| WebSocket manually | No encryption, no auth | Full E2E encryption + auth |
+| TURN/STUN | Requires infrastructure | Self-hostable, LAN fallback |
+
+## Packages
+
+| Package | Purpose | Install |
+| --- | --- | --- |
+| `@crosslink/sdk-node` | Host SDK for Node.js | `npm install @crosslink/sdk-node` |
+| `@crosslink/sdk-browser` | Client SDK for browsers | `npm install @crosslink/sdk-browser` |
+| `@crosslink/core` | Core engine (crypto, sessions, RPC) | `npm install @crosslink/core` |
+| `@crosslink/protocol` | Wire protocol specification | `npm install @crosslink/protocol` |
+| `@crosslink/webrtc-adapter` | WebRTC DataChannel transport | `npm install @crosslink/webrtc-adapter` |
+
+## Next steps
+
+<CardGroup>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get a working connection in under 5 minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how the pieces fit together
+  </Card>
+  <Card title="Security" icon="shield" href="/security/overview">
+    Crypto choices, threat model, and security invariants
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/guides/self-hosting">
+    Deploy your own signaling and relay
+  </Card>
+</CardGroup>

@@ -1,0 +1,163 @@
+---
+title: Security Overview
+description: Security architecture, principles, and invariants
+---
+
+<Warning>
+**This is a security-focused overview of Crosslink's design.** It is not a formal audit report. Crosslink provides transport-layer security primitives; your application must implement application-layer security (input validation, rate limiting, audit logging) independently.
+</Warning>
+
+## Security principles
+
+Crosslink is built on four principles:
+
+1. **End-to-end encryption** -- No intermediary can read or modify traffic
+2. **Forward secrecy** -- Compromising a long-term key does not expose past sessions
+3. **Trust minimization** -- Services are untrusted; the client's browser/OS is the trust boundary
+4. **Capability-based authorization** -- Declarative, host-authored, no ambient authority
+
+## Cryptographic primitives
+
+| Layer | Primitive | Purpose | Rationale |
+| --- | --- | --- | --- |
+| Identity | Ed25519 | Long-term device identity | Fast, small keys, no legacy |
+| Key exchange | X25519 | Ephemeral Diffie-Hellman | Forward secrecy, same-curve as identity |
+| Handshake | CLX1 (custom) | Authenticated key exchange | Combines identity + ECDH + signatures |
+| Session frames | XChaCha20-Poly1305 | AEAD encryption | Better nonce management than AES-GCM |
+| Key derivation | HKDF-SHA256 | Session key from shared secret | Standard, well-understood |
+| Secret storage (host) | AES-256-GCM | At-rest encryption | scrypt-derived key, OS keychain preferred |
+| Secret storage (client) | AES-256-GCM | At-rest encryption | WebCrypto non-extractable key |
+
+## What the relay and signaling servers see
+
+| Server | What it sees | What it cannot see |
+| --- | --- | --- |
+| **Signaling** | Hashed pairing codes, opaque signed blobs, device fingerprints | Plaintext, session content, private keys |
+| **Relay** | Ciphertext (encrypted frames) | Plaintext, keys, message content |
+
+## Authentication flow
+
+```text
+1. Host generates Ed25519 identity (persistent)
+2. Host creates pairing code (single-use, 2-min TTL)
+3. Client resolves code via signaling
+4. Client verifies host fingerprint (from QR code)
+5. Both exchange signed public keys
+6. SAS verification confirms no MITM
+7. Ephemeral X25519 keys derived
+8. Session established with fresh keys
+```
+
+## Threat model
+
+### In scope
+
+| Threat | Mitigation |
+| --- | --- |
+| Network eavesdropping | E2E encryption (XChaCha20-Poly1305) |
+| MITM during pairing | SAS verification + fingerprint pinning |
+| Compromised relay | Cannot decrypt (sees only ciphertext) |
+| Compromised signaling | Cannot forge identities (signature verification) |
+| Replay attacks | Nonce-based, single-use pairing codes |
+| Key compromise | Forward secrecy (ephemeral session keys) |
+| Browser XSS (seed theft) | Non-extractable WebCrypto key |
+| OS keychain theft | Keytar/Electron safeStorage (OS-level protection) |
+
+### Out of scope
+
+| Threat | Responsibility |
+| --- | --- |
+| Application-layer injection | Your RPC handlers must validate input |
+| Denial of service | Your application must implement rate limiting |
+| Physical device compromise | Device security is your responsibility |
+| Malicious host application | Users trust the host they pair with |
+| Browser extension attacks | Out of Crosslink's control |
+| Side-channel attacks | Hardware-dependent, not addressed |
+
+## Pairing security
+
+### Single-use codes
+
+Each pairing code can only be used once. The code is:
+- 9 digits (1 billion possible values)
+- Valid for 2 minutes
+- Tied to the host's fingerprint
+- Bound to specific capabilities
+
+### SAS verification
+
+Short Authentication String (SAS) digits are derived from:
+- The host's public key
+- The client's public key
+- The session's shared secret
+
+Both parties must see the same digits. If they don't, a MITM is detected.
+
+### Fingerprint pinning
+
+The QR code includes the first 16 hex characters of the host's Ed25519 fingerprint. The client verifies this against the actual host public key during pairing.
+
+<Warning>
+If the fingerprint in the QR code does not match the host's actual fingerprint, pairing **must** be rejected. This is the primary MITM defense during pairing.
+</Warning>
+
+## Session security
+
+### Forward secrecy
+
+Every session uses fresh ephemeral X25519 keys. Compromising the host's long-term identity key does not expose past session content.
+
+### Session binding
+
+Sessions are bound to:
+- The specific host identity
+- The specific client identity
+- The capabilities granted during pairing
+- The session's ephemeral key material
+
+### Frame integrity
+
+Every encrypted frame includes:
+- A 12-byte nonce (random, unique per frame)
+- A Poly1305 authentication tag (detects tampering)
+- Sequence numbers (detects replay/reordering)
+
+## Secret storage security
+
+### Host (Node.js)
+
+The SDK tries backends in order:
+
+1. **keytar** -- OS keychain (macOS Keychain, Linux libsecret, Windows Credential Vault)
+2. **Electron safeStorage** -- Same vaults via Electron bindings
+3. **Encrypted file** -- AES-256-GCM with scrypt-derived key
+4. **Plaintext file** -- Requires explicit `allowPlaintextFallback: true`
+
+<Warning>
+The plaintext fallback is **not** selected automatically. A host that silently degrades to plaintext is worse than one that refuses to start.
+</Warning>
+
+### Client (Browser)
+
+The SDK tries backends in order:
+
+1. **IndexedDB + AES-256-GCM** -- Non-extractable WebCrypto key
+2. **localStorage** -- Plaintext fallback
+3. **Memory** -- Ephemeral, lost on reload
+
+<Warning>
+The non-extractable WebCrypto key is **not** a vault. A script running on the origin can still use the key to decrypt. It prevents copy-and-leave attacks, not code-execution attacks.
+</Warning>
+
+## Security checklist for production
+
+- [ ] Use HTTPS for all signaling/relay endpoints
+- [ ] Implement rate limiting at the application level
+- [ ] Validate all RPC inputs (schema validation)
+- [ ] Log security-relevant events (pairing, capability grants, errors)
+- [ ] Set appropriate capability TTLs
+- [ ] Review granted capabilities before approving pairing
+- [ ] Monitor for anomalous connection patterns
+- [ ] Keep the SDK updated to the latest version
+- [ ] Use OS keychain for host secret storage (not plaintext)
+- [ ] Use `CrosslinkClient.create()` for browser clients (encrypted storage)

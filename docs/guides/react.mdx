@@ -1,0 +1,182 @@
+---
+title: React Integration
+description: Using Crosslink in React applications
+---
+
+## Setup
+
+```bash
+npm install @crosslink/sdk-browser
+```
+
+## Basic usage
+
+```jsx
+import { useEffect, useState } from "react";
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+function App() {
+  const [client, setClient] = useState(null);
+  const [status, setStatus] = useState("disconnected");
+
+  useEffect(() => {
+    const init = async () => {
+      const c = await CrosslinkClient.create({
+        deviceName: "React App",
+        onStateChange: setStatus
+      });
+      setClient(c);
+    };
+    init();
+  }, []);
+
+  const pair = async (uri) => {
+    await client.pairFromQr(uri, ["app.control"]);
+    const rpc = await client.connect(["app.control"]);
+    // Use rpc...
+  };
+
+  return <div>Status: {status}</div>;
+}
+```
+
+## Custom hook
+
+```jsx
+import { useState, useEffect, useCallback } from "react";
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+export function useCrosslink(options = {}) {
+  const [client, setClient] = useState(null);
+  const [state, setState] = useState("idle");
+  const [rpc, setRpc] = useState(null);
+
+  useEffect(() => {
+    const init = async () => {
+      const c = await CrosslinkClient.create({
+        deviceName: options.deviceName ?? "Browser",
+        onStateChange: setState,
+        ...options
+      });
+      setClient(c);
+    };
+    init();
+  }, []);
+
+  const pair = useCallback(async (uri, caps) => {
+    if (!client) return;
+    await client.pairFromQr(uri, caps);
+    const r = await client.connect(caps);
+    setRpc(r);
+  }, [client]);
+
+  const call = useCallback(async (method, args) => {
+    if (!rpc) throw new Error("Not connected");
+    return rpc.call(method, args);
+  }, [rpc]);
+
+  const disconnect = useCallback(() => {
+    client?.disconnect();
+    setRpc(null);
+  }, [client]);
+
+  return { client, state, rpc, pair, call, disconnect };
+}
+```
+
+### Usage
+
+```jsx
+function RemoteControl() {
+  const { state, pair, call } = useCrosslink({
+    deviceName: "Phone Remote"
+  });
+
+  return (
+    <div>
+      <p>State: {state}</p>
+      <button onClick={() => pair(uri, ["app.control"])}>
+        Connect
+      </button>
+      <button onClick={() => call("app.next")} disabled={state !== "connected"}>
+        Next Track
+      </button>
+    </div>
+  );
+}
+```
+
+## QR scanner component
+
+```jsx
+import { useRef, useEffect } from "react";
+
+export function QRScanner({ onScan }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    const start = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }
+      });
+      videoRef.current.srcObject = stream;
+      // Use a QR library to read frames
+      // e.g., jsQR, html5-qrcode, or zxing
+    };
+    start();
+  }, []);
+
+  return <video ref={videoRef} autoPlay playsInline />;
+}
+```
+
+## Error handling
+
+```jsx
+function CrosslinkApp() {
+  const [error, setError] = useState(null);
+
+  const pair = async (uri) => {
+    try {
+      await client.pairFromQr(uri, ["app.control"]);
+    } catch (err) {
+      if (err.message.includes("fingerprint")) {
+        setError("Security warning: host fingerprint mismatch");
+      } else if (err.message.includes("PAIRING_FAILED")) {
+        setError("Pairing rejected by host");
+      } else {
+        setError(err.message);
+      }
+    }
+  };
+
+  return (
+    <div>
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+```
+
+## Event subscriptions
+
+```jsx
+useEffect(() => {
+  if (!rpc) return;
+
+  const unsub = rpc.subscribe("app.update", (payload) => {
+    setData(payload);
+  });
+
+  return () => unsub();
+}, [rpc]);
+```
+
+## Best practices
+
+- Always use `CrosslinkClient.create()` (not `new CrosslinkClient()`)
+- Handle connection state changes
+- Show SAS to the user during pairing
+- Review capabilities before approving
+- Unsubscribe from events on unmount
+- Clean up connections on unmount

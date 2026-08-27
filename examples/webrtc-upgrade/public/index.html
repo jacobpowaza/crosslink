@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crosslink — WebRTC Upgrade</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfbfd;
+        --fg: #16161a;
+        --muted: #6b6b76;
+        --line: #e3e3ea;
+        --accent: #2f6fed;
+        --good: #157f4a;
+        --warn: #9a6400;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #131317;
+          --fg: #eeeef2;
+          --muted: #9a9aa6;
+          --line: #2a2a33;
+          --accent: #7aa2ff;
+          --good: #4cc38a;
+          --warn: #e0a83a;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 46rem; margin: 0 auto; }
+      h1 { font-size: 1.4rem; margin: 0 0 0.25rem; letter-spacing: -0.01em; }
+      p.lede { color: var(--muted); margin: 0 0 1.75rem; }
+      section {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 1rem;
+        background: color-mix(in oklab, var(--bg) 92%, var(--fg) 8%);
+      }
+      h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.07em;
+           color: var(--muted); margin: 0 0 0.75rem; font-weight: 600; }
+      label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.3rem; }
+      input, button, textarea {
+        font: inherit; border-radius: 8px; border: 1px solid var(--line);
+      }
+      input, textarea {
+        width: 100%; padding: 0.55rem 0.7rem; background: var(--bg); color: var(--fg);
+      }
+      button {
+        padding: 0.55rem 0.95rem; background: var(--accent); color: #fff;
+        border-color: transparent; cursor: pointer; font-weight: 500;
+      }
+      button.secondary { background: transparent; color: var(--fg); border-color: var(--line); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end; }
+      .row > * { flex: 0 0 auto; }
+      .row > .grow { flex: 1 1 14rem; }
+      .badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+      .badge {
+        font-size: 0.78rem; padding: 0.2rem 0.55rem; border-radius: 999px;
+        border: 1px solid var(--line); color: var(--muted);
+      }
+      .badge.on { color: var(--good); border-color: currentColor; }
+      .badge.warn { color: var(--warn); border-color: currentColor; }
+      pre {
+        margin: 0; padding: 0.8rem; overflow-x: auto; border-radius: 8px;
+        background: color-mix(in oklab, var(--bg) 80%, var(--fg) 20%);
+        font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        max-height: 22rem;
+      }
+      .hint { color: var(--muted); font-size: 0.85rem; margin: 0.6rem 0 0; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>WebRTC Upgrade</h1>
+      <p class="lede">
+        Pair over the relay from anywhere, then move the connection onto a direct
+        peer-to-peer DataChannel — negotiated over the Crosslink session itself.
+      </p>
+
+      <div class="badges">
+        <span class="badge" id="badge-state">offline</span>
+        <span class="badge" id="badge-transport">no transport</span>
+        <span class="badge" id="badge-storage">storage: …</span>
+      </div>
+
+      <section>
+        <h2>1 · Pair</h2>
+        <div class="row">
+          <div class="grow">
+            <label for="uri">Pairing URI from the host terminal</label>
+            <input id="uri" placeholder="crosslink://pair?…" autocomplete="off" spellcheck="false" />
+          </div>
+          <button id="pair">Pair</button>
+        </div>
+        <p class="hint">
+          The URI pins the host's key fingerprint. If the signaling service tried to
+          substitute a different host, pairing aborts before any secret is exchanged.
+        </p>
+      </section>
+
+      <section>
+        <h2>2 · Connect &amp; upgrade</h2>
+        <div class="row">
+          <button id="connect" disabled>Connect</button>
+          <button id="upgrade" class="secondary" disabled>Upgrade to direct</button>
+          <button id="disconnect" class="secondary" disabled>Disconnect</button>
+        </div>
+        <p class="hint">
+          The upgrade sends an SDP offer as an ordinary RPC call over the connection
+          you already have. If it fails, the relayed session keeps working.
+        </p>
+      </section>
+
+      <section>
+        <h2>3 · Call the host</h2>
+        <div class="row">
+          <button id="list" class="secondary" disabled>files.list</button>
+          <button id="info" class="secondary" disabled>link.info</button>
+          <div class="grow">
+            <label for="cmd">shell.run — needs confirmation on the host, every time</label>
+            <input id="cmd" value="uname -a" autocomplete="off" spellcheck="false" />
+          </div>
+          <button id="run" class="secondary" disabled>Run</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Log</h2>
+        <pre id="log">ready</pre>
+      </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

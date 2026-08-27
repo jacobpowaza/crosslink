@@ -1,0 +1,139 @@
+---
+title: CLI Reference
+description: Command-line interface for Crosslink
+---
+
+## Services
+
+### Start signaling and relay
+
+```bash
+npm run stack
+```
+
+Starts both services on localhost.
+
+### Start only signaling
+
+```bash
+npm run signaling
+```
+
+### Start only relay
+
+```bash
+npm run relay
+```
+
+## Development
+
+### Run in development mode
+
+```bash
+npm run dev
+```
+
+### Build all packages
+
+```bash
+npm run build
+```
+
+### Run tests
+
+```bash
+npm test
+```
+
+### Lint
+
+```bash
+npm run lint
+```
+
+## Examples
+
+### Run echo example
+
+```bash
+cd examples/echo-host
+npm run dev
+```
+
+### Run notes example
+
+```bash
+cd examples/notes-host
+npm run dev
+```
+
+### Run todo example
+
+```bash
+cd examples/todo-host
+npm run dev
+```
+
+## Environment variables
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `PORT` | Service port | `8081` / `8082` |
+| `HOST` | Bind address | `0.0.0.0` |
+| `CROSSLINK_SIGNALING_URL` | Signaling URL | `http://127.0.0.1:8081` |
+| `CROSSLINK_RELAY_URL` | Relay URL | `http://127.0.0.1:8082` |
+| `CROSSLINK_SECRET_KEY` | Passphrase for encrypted storage | _(none)_ |
+| `CROSSLINK_STORAGE_DIR` | Storage directory | `.crosslink-data` |
+| `NODE_ENV` | Environment | `development` |
+
+## Docker
+
+### Build images
+
+```bash
+docker build -t crosslink/signaling -f services/signaling/Dockerfile .
+docker build -t crosslink/relay -f services/relay/Dockerfile .
+```
+
+### Run with Docker Compose
+
+```bash
+docker compose up -d
+```
+
+### Check logs
+
+```bash
+docker compose logs -f signaling
+docker compose logs -f relay
+```
+
+## Troubleshooting
+
+### Port already in use
+
+```bash
+# Find what's using the port
+lsof -i :8081
+
+# Kill the process
+kill <PID>
+```
+
+### Connection refused
+
+```bash
+# Check if services are running
+curl http://127.0.0.1:8081/health
+curl http://127.0.0.1:8082/health
+```
+
+### Module not found
+
+```bash
+# Ensure dependencies are installed
+npm install
+
+# Ensure you're using ESM
+# package.json should have: "type": "module"
+```

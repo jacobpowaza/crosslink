@@ -1,0 +1,239 @@
+---
+title: Self-Hosting
+description: Running your own signaling and relay servers
+---
+
+## Overview
+
+Crosslink's signaling and relay servers are stateless, horizontally scalable, and can run anywhere with Node.js.
+
+## Quick start
+
+```bash
+git clone https://github.com/anthropics/crosslink.git
+cd crosslink
+npm install
+npm run stack
+```
+
+This starts both services on localhost:
+- Signaling: `ws://127.0.0.1:8081`
+- Relay: `http://127.0.0.1:8082`
+
+## Services
+
+### Signaling service
+
+The signaling service helps devices find each other and route pairing codes.
+
+**What it sees:**
+- Hashed pairing codes
+- Opaque signed blobs (not readable without private keys)
+- Device fingerprints (for routing)
+
+**What it cannot see:**
+- Plaintext content
+- Session keys
+- Private keys
+
+### Relay service
+
+The relay service forwards encrypted traffic when a direct connection isn't possible.
+
+**What it sees:**
+- Ciphertext (encrypted frames)
+
+**What it cannot see:**
+- Plaintext content
+- Session keys
+- Message content
+
+## Docker deployment
+
+### Docker Compose
+
+```yaml
+version: "3.9"
+services:
+  signaling:
+    image: crosslink/signaling:latest
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  relay:
+    image: crosslink/relay:latest
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
+
+### Standalone containers
+
+```bash
+# Signaling
+docker run -d -p 8081:8081 -e PORT=8081 crosslink/signaling:latest
+
+# Relay
+docker run -d -p 8082:8082 -e PORT=8082 crosslink/relay:latest
+```
+
+## Environment variables
+
+### Signaling
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8081` | HTTP server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
+| `CODE_TTL_MS` | `120000` | Pairing code TTL (2 minutes) |
+| `CLEANUP_INTERVAL_MS` | `30000` | Cleanup interval |
+
+### Relay
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8082` | HTTP server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
+| `MAX_FRAME_SIZE` | `65536` | Max frame size in bytes |
+| `IDLE_TIMEOUT_MS` | `300000` | Idle connection timeout (5 minutes) |
+
+## Production considerations
+
+### TLS termination
+
+Use a reverse proxy (nginx, Caddy, Cloudflare) for TLS:
+
+```nginx
+# nginx.conf
+server {
+    listen 443 ssl;
+    server_name signaling.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/signaling.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/signaling.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+### Load balancing
+
+Both services are stateless and can be horizontally scaled:
+
+```nginx
+upstream signaling {
+    server 10.0.0.1:8081;
+    server 10.0.0.2:8081;
+    server 10.0.0.3:8081;
+}
+
+upstream relay {
+    server 10.0.0.1:8082;
+    server 10.0.0.2:8082;
+    server 10.0.0.3:8082;
+}
+```
+
+### Monitoring
+
+Monitor these metrics:
+
+| Metric | Warning threshold |
+| --- | --- |
+| Connection count | > 80% of MAX_CONNECTIONS |
+| Memory usage | > 80% of container limit |
+| Error rate | > 1% of requests |
+| Latency (p99) | > 500ms |
+
+### Backup
+
+The services are stateless -- no backup needed. However, if you customize configuration, back up:
+- Environment variables
+- TLS certificates
+- Docker Compose files
+
+## Security checklist
+
+- [ ] Use TLS termination (nginx, Caddy, Cloudflare)
+- [ ] Run in a DMZ or private network
+- [ ] Monitor connection counts and error rates
+- [ ] Set appropriate MAX_CONNECTIONS
+- [ ] Enable health checks
+- [ ] Use Docker secrets for sensitive values
+- [ ] Regularly update the images
+- [ ] Restrict network access with firewall rules
+
+## Custom deployment
+
+### Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crosslink-signaling
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: crosslink-signaling
+  template:
+    metadata:
+      labels:
+        app: crosslink-signaling
+    spec:
+      containers:
+      - name: signaling
+        image: crosslink/signaling:latest
+        ports:
+        - containerPort: 8081
+        env:
+        - name: PORT
+          value: "8081"
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+```
+
+### Systemd service
+
+```ini
+[Unit]
+Description=Crosslink Signaling Service
+After=network.target
+
+[Service]
+Type=simple
+User=crosslink
+Environment=PORT=8081
+ExecStart=/usr/bin/node /opt/crosslink/signaling/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```

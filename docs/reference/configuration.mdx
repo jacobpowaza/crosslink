@@ -1,0 +1,164 @@
+---
+title: Configuration
+description: All configuration options
+---
+
+## Host configuration
+
+```js
+createCrosslinkServer({
+  application: { ... },
+  capabilities: [ ... ],
+  signalingUrl: "...",
+  relayUrl: "...",
+  lan: { ... },
+  pairing: { ... },
+  logger: ...
+});
+```
+
+### application
+
+| Property | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Unique application identifier (reverse-domain recommended) |
+| `name` | `string` | Yes | Human-readable name |
+| `version` | `string` | Yes | Semantic version |
+
+### capabilities
+
+Array of capability objects:
+
+| Property | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | Yes | Unique identifier (dot-separated namespace) |
+| `title` | `string` | Yes | Human-readable name |
+| `risk` | `"low" \| "medium" \| "high"` | Yes | Risk level |
+| `description` | `string` | No | Detailed explanation |
+| `ttlMs` | `number` | No | Time-to-live in milliseconds |
+
+### signalingUrl
+
+`string` -- URL of the signaling server. Default: `http://127.0.0.1:8081`
+
+### relayUrl
+
+`string` -- URL of the relay server. Default: `http://127.0.0.1:8082`
+
+### lan
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `bind` | `"loopback" \| "all"` | Bind address (default: `"loopback"`) |
+| `host` | `string` | Address to advertise for LAN pairing when `bind: "all"`. Overrides auto-detection (first non-internal interface, unreliable with more than one active network) — also settable via `CROSSLINK_LAN_HOST` |
+
+### pairing
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `approve` | `(req) => Promise<boolean>` | Pairing approval callback |
+| `autoApprove` | `boolean` | Auto-approve low-risk (default: `false`) |
+| `codeLength` | `number` | Pairing code digits (default: `9`) |
+| `codeTtlMs` | `number` | Code TTL in ms (default: `120000`) |
+
+---
+
+## Client configuration
+
+```js
+CrosslinkClient.create({
+  deviceName: "...",
+  storage: ...,
+  onStateChange: ...,
+  onConfirmPairing: ...,
+  logger: ...,
+  dialTimeoutMs: ...,
+  allowPlaintextFallback: ...
+});
+```
+
+### deviceName
+
+`string` -- Device name shown to host. Default: `"browser"`
+
+### storage
+
+`SecureStorage` -- Custom storage backend. Default: IndexedDB (encrypted)
+
+### onStateChange
+
+`(state: string) => void` -- State change callback
+
+### onConfirmPairing
+
+`(req: PairingConfirmRequest) => Promise<boolean>` -- Pairing confirmation
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `sas` | `string` | SAS digits |
+| `grantedCaps` | `string[]` | Granted capabilities |
+| `hostName` | `string` | Host application name |
+
+### logger
+
+`Logger` -- Custom logger implementation
+
+### dialTimeoutMs
+
+`number` -- Connection timeout in ms. Default: `10000`
+
+### allowPlaintextFallback
+
+`boolean` -- Allow plaintext storage when IndexedDB is unavailable. Default: `true`
+
+---
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CROSSLINK_SIGNALING_URL` | `http://127.0.0.1:8081` | Signaling server URL |
+| `CROSSLINK_RELAY_URL` | `http://127.0.0.1:8082` | Relay server URL |
+| `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted file storage |
+| `CROSSLINK_STORAGE_DIR` | `.crosslink-data` | Storage directory for host |
+| `CROSSLINK_LAN_HOST` | _(auto-detected)_ | Address advertised for LAN pairing (`lan.bind: "all"`); set on a multi-network host so phones/tablets get an address they can actually reach |
+
+---
+
+## Service configuration
+
+### Signaling
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8081` | HTTP server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
+| `CODE_TTL_MS` | `120000` | Pairing code TTL |
+| `CLEANUP_INTERVAL_MS` | `30000` | Cleanup interval |
+
+### Relay
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `8082` | HTTP server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
+| `MAX_FRAME_SIZE` | `65536` | Max frame size in bytes |
+| `IDLE_TIMEOUT_MS` | `300000` | Idle connection timeout |
+
+---
+
+## TypeScript configuration
+
+Both SDKs ship with TypeScript declarations. No `@types` packages needed.
+
+```json
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ES2022"
+  }
+}
+```

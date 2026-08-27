@@ -1,0 +1,153 @@
+---
+title: Permissions
+description: Capability-based access control
+---
+
+Crosslink uses a capability-based permission model. Capabilities are declared by the host, granted during pairing, and enforced at the RPC layer.
+
+## How capabilities work
+
+```text
+1. Host declares capabilities at startup
+2. Client requests specific capabilities during pairing
+3. User approves/denies each requested capability
+4. Granted capabilities are persisted for the session
+5. RPC methods declare which capability they require
+6. Crosslink enforces: only methods with granted capabilities can be called
+```
+
+## Declaring capabilities
+
+Hosts declare capabilities when creating the server:
+
+```js
+const server = createCrosslinkServer({
+  application: { id: "com.example.myapp", name: "My App", version: "1.0.0" },
+  capabilities: [
+    { id: "app.control", title: "Control the app", risk: "low" },
+    { id: "app.read", title: "Read app data", risk: "low" },
+    { id: "app.write", title: "Modify app data", risk: "medium" },
+    { id: "app.admin", title: "Admin operations", risk: "high" }
+  ]
+});
+```
+
+### Capability fields
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `id` | Yes | Unique identifier (dot-separated namespace) |
+| `title` | Yes | Human-readable name shown to user |
+| `risk` | Yes | Risk level: `"low"`, `"medium"`, `"high"` |
+| `description` | No | Detailed explanation |
+
+## Binding capabilities to RPC methods
+
+```js
+// This method requires "app.control"
+server.expose("app.start", (args) => {
+  return { started: true };
+}, { capability: "app.control" });
+
+// This method requires "app.read"
+server.expose("app.getData", (args) => {
+  return { data: "..." };
+}, { capability: "app.read" });
+
+// This method requires no capability (open to all paired devices)
+server.expose("app.version", () => {
+  return { version: "1.0.0" };
+});
+```
+
+## Requesting capabilities
+
+Clients specify which capabilities they need:
+
+```js
+const rpc = await client.connect(["app.control", "app.read"]);
+```
+
+If the host has not granted these capabilities, the RPC calls will fail with `CAPABILITY_DENIED`.
+
+## Risk levels
+
+| Risk | Behavior |
+| --- | --- |
+| `low` | Auto-approved if client requests it |
+| `medium` | Shown to user during pairing |
+| `high` | Requires explicit user confirmation |
+
+## Pairing approval
+
+The host's `pairing.approve` callback receives the full request:
+
+```js
+pairing: {
+  approve: async (req) => {
+    console.log(`Device: ${req.deviceName}`);
+    console.log(`Requested: ${req.requestedCaps.join(", ")}`);
+    console.log(`SAS: ${req.sas}`);
+
+    // Auto-approve low-risk, ask for high-risk
+    const highRisk = req.requestedCaps.filter(c =>
+      server.getCapability(c)?.risk === "high"
+    );
+    if (highRisk.length > 0) {
+      return await promptUser(`Allow ${req.deviceName} to: ${highRisk.join(", ")}?`);
+    }
+    return true;
+  }
+}
+```
+
+## Enforcing capabilities
+
+Crosslink automatically enforces capabilities:
+
+```js
+// Client tries to call a method without the required capability
+const result = await rpc.call("app.admin");
+// Throws: CAPABILITY_DENIED
+```
+
+You can also check explicitly:
+
+```js
+if (rpc.hasCapability("app.admin")) {
+  // Proceed
+}
+```
+
+## Capability TTLs
+
+Capabilities can have time limits:
+
+```js
+capabilities: [
+  { id: "app.temporary", title: "Temporary access", risk: "medium", ttlMs: 3600000 } // 1 hour
+]
+```
+
+After the TTL expires, the capability is no longer granted.
+
+## Revoking capabilities
+
+Hosts can revoke capabilities at runtime:
+
+```js
+// Revoke a specific capability from a device
+server.revokeCapability(deviceId, "app.admin");
+
+// Revoke all capabilities from a device
+server.revoke(deviceId);
+```
+
+## Security notes
+
+<Warning>
+- Capabilities are a transport-layer primitive, not a full authorization framework
+- A compromised client with a valid capability token can abuse it
+- Implement rate limiting and abuse detection at the application layer
+- Review capability requests carefully during pairing
+</Warning>

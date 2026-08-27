@@ -1,0 +1,147 @@
+---
+title: FAQ
+description: Frequently asked questions
+---
+
+## General
+
+### What is Crosslink?
+
+Crosslink is a framework for securely connecting web or mobile interfaces to applications running on other devices. It provides end-to-end encrypted RPC over automatic transport fallback.
+
+### Do I need accounts or OAuth?
+
+No. Crosslink uses QR code pairing for device authentication. No accounts, cloud sync, or OAuth required.
+
+### Is it really end-to-end encrypted?
+
+Yes. The signaling and relay servers see only ciphertext. They cannot read, modify, or forge messages.
+
+### What platforms are supported?
+
+- **Host:** Node.js 20+ (Linux, macOS, Windows)
+- **Client:** Modern browsers (Chrome, Firefox, Safari, Edge)
+- **Frameworks:** Electron, Tauri, React, Vue, Svelte
+
+### Is it production-ready?
+
+Crosslink provides transport-layer security primitives. It is not a complete security solution -- your application must implement input validation, rate limiting, and other application-layer security measures.
+
+---
+
+## Pairing
+
+### How long does a pairing code last?
+
+Pairing codes expire after 2 minutes and can only be used once.
+
+### Can I pair multiple devices?
+
+Yes. A host can serve multiple clients simultaneously, each with independent sessions and capabilities.
+
+### What if I lose my paired device?
+
+Generate a new pairing code and scan it again. The old paired record is replaced.
+
+### Can I re-pair after revoking?
+
+Yes. Generate a new pairing code and complete the pairing flow again.
+
+---
+
+## Security
+
+### How does SAS verification work?
+
+SAS (Short Authentication String) digits are derived from the shared secret during pairing. Both parties must see the same digits to confirm no MITM is present.
+
+### What if fingerprints don't match?
+
+**Do not proceed with pairing.** A fingerprint mismatch likely indicates a MITM attack.
+
+### Is the relay server trusted?
+
+No. The relay server is untrusted -- it sees only ciphertext and cannot decrypt, read, or modify messages.
+
+### Can the signaling server impersonate a host?
+
+No. The signaling server cannot forge Ed25519 signatures. It can only relay opaque signed blobs.
+
+### What about forward secrecy?
+
+Every session uses fresh ephemeral X25519 keys. Compromising the long-term identity key does not expose past sessions.
+
+---
+
+## Technical
+
+### Why XChaCha20-Poly1305 instead of AES-GCM?
+
+XChaCha20-Poly1305 has a 192-bit nonce, making random nonce generation safe without collision concerns. It also has no hardware dependency.
+
+### Why Ed25519 instead of ECDSA?
+
+Ed25519 is faster, produces smaller signatures, and has no legacy compatibility concerns.
+
+### Can I use Crosslink for LAN-only communication?
+
+Yes. Crosslink supports direct WebSocket connections on the same network without external services.
+
+### Does Crosslink work offline?
+
+LAN-only connections work without internet. Cross-network connections require signaling and relay services.
+
+### Can I self-host the services?
+
+Yes. Both services are stateless, horizontally scalable, and can run anywhere with Node.js or Docker.
+
+---
+
+## Integration
+
+### Can I use Crosslink with React?
+
+Yes. See the [React Integration](/guides/react) guide.
+
+### Can I use Crosslink with Electron?
+
+Yes. See the [Electron Integration](/guides/electron) guide.
+
+### Can I use Crosslink with Tauri?
+
+Yes. See the [Tauri Integration](/guides/tauri) guide.
+
+### Can I use Crosslink in a Node.js server?
+
+Yes. See the [Node.js Integration](/guides/node) guide.
+
+### Do I need to install both SDKs?
+
+- **Host applications:** Only need `@crosslink/sdk-node`
+- **Browser applications:** Only need `@crosslink/sdk-browser`
+- **Full-stack:** Both packages
+
+---
+
+## Troubleshooting
+
+### Why can't my devices connect?
+
+1. Check if signaling/relay services are running
+2. Verify URLs match between host and client
+3. Check firewall rules
+4. Try LAN connection if on same network
+
+### Why is my connection slow?
+
+1. Check if you're using relay (slower) vs LAN (faster)
+2. Reduce frame sizes
+3. Check network latency
+4. Monitor with structured logging
+
+### Why can't I store secrets securely?
+
+1. Check OS keychain availability (host)
+2. Serve from HTTPS/localhost (client for WebCrypto)
+3. Install keytar dependencies (Linux)
+4. Use `CROSSLINK_SECRET_KEY` as fallback

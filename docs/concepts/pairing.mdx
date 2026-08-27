@@ -1,0 +1,136 @@
+---
+title: Pairing
+description: How devices discover and authenticate each other
+---
+
+## Pairing flow
+
+```text
+1. Host generates pairing code (9-digit, 2-min TTL)
+2. User displays QR code / reads code to client
+3. Client scans QR or enters code
+4. Client resolves code via signaling service
+5. Client verifies host fingerprint
+6. Both exchange signed public keys
+7. Host sends challenge, client signs it
+8. Both derive SAS digits
+9. User confirms matching SAS
+10. Client persists paired-app record
+```
+
+## Pairing code
+
+### Format
+
+```text
+9 digits: XXX-XXX-XXX
+Example: 123-456-789
+```
+
+### Properties
+
+| Property | Value |
+| --- | --- |
+| Length | 9 digits |
+| Entropy | ~30 bits |
+| TTL | 2 minutes |
+| Usage | Single-use only |
+
+### Generation
+
+```js
+const code = await server.getPairingCode();
+// code = {
+//   code: "123456789",
+//   uri: "crosslink://pair?v=1&s=...&c=123456789&a=...",
+//   expires: 1699999999999
+// }
+```
+
+## Pairing URI
+
+The QR code encodes a pairing URI:
+
+```text
+crosslink://pair?v=1&s=<signalingUrl>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>&e=<expiryMs>
+```
+
+| Parameter | Description |
+| --- | --- |
+| `v` | Protocol version |
+| `s` | Signaling server URL |
+| `c` | 9-digit pairing code |
+| `a` | Application ID |
+| `n` | Application name (URL-encoded) |
+| `f` | First 16 hex chars of host fingerprint |
+| `e` | Expiry timestamp in ms |
+
+## SAS verification
+
+Short Authentication String (SAS) digits are derived from:
+
+```text
+sas = HKDF-SHA256(
+  IKM: X25519(hostEphemeral, clientEphemeral),
+  salt: hostIdentity || clientIdentity,
+  info: "crosslink-sas"
+)[:6]
+```
+
+Both parties must see the same 6 digits. If they differ, a MITM is likely.
+
+<Warning>
+Never skip SAS verification. It is the primary defense against man-in-the-middle attacks during pairing.
+</Warning>
+
+## Fingerprint pinning
+
+The QR code includes the first 16 hex characters of the host's Ed25519 fingerprint:
+
+```text
+fingerprint16 = SHA-256(hostPublicKey)[:16]
+```
+
+The client verifies this matches the actual host public key during pairing.
+
+## Pairing options
+
+### Host-side options
+
+```js
+pairing: {
+  approve: async (req) => {
+    // req.deviceName, req.requestedCaps, req.sas
+    return true; // approve
+  },
+  autoApprove: false, // require explicit approval
+  codeLength: 9,      // digits (default: 9)
+  codeTtlMs: 120_000  // TTL (default: 2 minutes)
+}
+```
+
+### Client-side options
+
+```js
+await client.pairFromQr(uri, requestedCaps, {
+  onConfirmPairing: async ({ sas, grantedCaps, hostName }) => {
+    return window.confirm(`Pair with ${hostName}? SAS: ${sas}`);
+  }
+});
+```
+
+## Re-pairing
+
+If a device loses its paired record:
+1. Generate a new pairing code
+2. Scan the QR code again
+3. Complete the pairing flow
+4. The old paired record is replaced
+
+## Security considerations
+
+- Single-use codes prevent replay attacks
+- Short TTL limits the window for interception
+- Fingerprint pinning prevents MITM via compromised signaling
+- SAS verification confirms no active attacker
+- Capability scoping limits blast radius of compromised client

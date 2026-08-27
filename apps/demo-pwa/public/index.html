@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Crosslink Notes — end-to-end-encrypted notes synced from your computer, paired once by QR code." />
+  <title>Crosslink Notes</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="CL Notes" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main id="app">
+    <!-- Screen 1: pair -->
+    <section id="screen-pair">
+      <h1>Crosslink<br />Notes</h1>
+
+      <!-- Canonical Crosslink Pairing Card -->
+      <div id="pairCardContainer"></div>
+
+      <div class="row pair-actions">
+        <button id="scanBtn" class="scanner-btn" hidden>Scan QR with camera</button>
+        <button id="installBtn" hidden>Install app</button>
+      </div>
+
+      <textarea
+        id="uri"
+        rows="3"
+        placeholder="crosslink://pair?v=1&s=…&c=…"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+      ></textarea>
+      <button id="pairBtn" class="primary">Pair device</button>
+      <p id="pairStatus" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- Screen 2: SAS confirm -->
+    <section id="screen-sas" hidden>
+      <h2>Verify codes</h2>
+      <p class="hint">These three groups must match on your computer:</p>
+      <div id="sasGrid" class="sas-grid"></div>
+      <p class="hint">Capabilities requested:</p>
+      <ul id="capList" class="caps"></ul>
+      <div class="row">
+        <button id="sasOk" class="primary">They match</button>
+        <button id="sasNo">Cancel</button>
+      </div>
+    </section>
+
+    <!-- Screen 3: notes -->
+    <section id="screen-notes" hidden>
+      <header class="bar">
+        <h2>Notes</h2>
+        <div class="header-actions">
+          <span id="connState" class="pill">offline</span>
+          <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <form id="newNote" class="composer">
+        <input id="title" placeholder="Title" required maxlength="200" autocomplete="off" />
+        <textarea id="body" rows="3" placeholder="Body" maxlength="10000"></textarea>
+        <button class="primary">Add note</button>
+      </form>
+      <p id="formStatus" class="status err" role="alert"></p>
+      <ul id="noteList"></ul>
+      <p id="emptyState" class="hint" hidden>No notes yet — add your first one above.</p>
+      <footer class="bar">
+        <span id="eventLog" class="hint">events appear here</span>
+        <button id="forget">Forget pairing</button>
+      </footer>
+    </section>
+
+    <!-- Settings panel -->
+    <div id="settingsPanel" class="settings-panel" hidden>
+      <div class="settings-content">
+        <div class="settings-header">
+          <h2>Connection</h2>
+          <button id="settingsClose" class="icon-btn" aria-label="Close settings">&times;</button>
+        </div>
+        <p class="hint">Choose how your phone connects to this computer.</p>
+        <div class="settings-options">
+          <label class="settings-option">
+            <input type="radio" name="networkMode" value="auto" checked />
+            <div>
+              <strong>Auto</strong>
+              <span class="hint">Try local network first, then relay if needed.</span>
+            </div>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="networkMode" value="local-only" />
+            <div>
+              <strong>Local network only</strong>
+              <span class="hint">Only connect when on the same Wi-Fi. No internet required.</span>
+            </div>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="networkMode" value="lan-and-relay" />
+            <div>
+              <strong>Open LAN + Relay</strong>
+              <span class="hint">Accept LAN connections from any device on your network, plus relay for remote access.</span>
+            </div>
+          </label>
+        </div>
+        <div class="settings-section">
+          <h3>WebRTC</h3>
+          <p class="hint">When enabled, sessions upgrade to a direct peer-to-peer connection after pairing, reducing latency and removing relay dependency.</p>
+          <label class="settings-toggle">
+            <input type="checkbox" id="webrtcToggle" checked />
+            <span>Enable direct connections</span>
+          </label>
+        </div>
+        <div class="settings-section">
+          <h3>Devices</h3>
+          <div id="deviceList" class="device-list"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- QR scanner overlay -->
+  <div id="scanner" class="scanner-overlay" hidden>
+    <video id="scannerVideo" playsinline muted></video>
+    <p class="hint">Point at the QR code shown by notes-host</p>
+    <button id="scannerClose">Cancel</button>
+  </div>
+
+  <footer class="app-footer">
+    made with <a href="https://crosslink.example.com" target="_blank" rel="noopener noreferrer">crosslink</a>
+  </footer>
+
+  <script src="./bundle.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

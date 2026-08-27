@@ -1,0 +1,205 @@
+---
+title: Examples
+description: Complete working examples
+---
+
+## Echo example
+
+A simple echo server that returns any message sent to it.
+
+### Host
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const server = createCrosslinkServer({
+  application: { id: "com.example.echo", name: "Echo", version: "1.0.0" },
+  capabilities: [
+    { id: "echo", title: "Echo messages", risk: "low" }
+  ],
+  signalingUrl: "http://127.0.0.1:8081",
+  relayUrl: "http://127.0.0.1:8082",
+  lan: { bind: "loopback" },
+  pairing: {
+    approve: async () => true
+  }
+});
+
+server.expose("echo", (args) => {
+  return { message: args.message };
+}, { capability: "echo" });
+
+await server.start();
+const info = await server.getPairingCode();
+console.log("Pair:", info.uri);
+```
+
+### Client
+
+```js
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await CrosslinkClient.create({
+  deviceName: "Echo Client",
+  onConfirmPairing: async () => true
+});
+
+await client.pairFromQr(process.argv[2], ["echo"]);
+const rpc = await client.connect(["echo"]);
+
+const result = await rpc.call("echo", { message: "Hello!" });
+console.log(result.message); // "Hello!"
+```
+
+---
+
+## Notes example
+
+A simple notes app with CRUD operations.
+
+### Host
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const notes = new Map();
+let nextId = 1;
+
+const server = createCrosslinkServer({
+  application: { id: "com.example.notes", name: "Notes", version: "1.0.0" },
+  capabilities: [
+    { id: "notes.read", title: "Read notes", risk: "low" },
+    { id: "notes.write", title: "Write notes", risk: "medium" }
+  ],
+  signalingUrl: "http://127.0.0.1:8081",
+  relayUrl: "http://127.0.0.1:8082",
+  lan: { bind: "loopback" },
+  pairing: {
+    approve: async () => true
+  }
+});
+
+server.expose("notes.list", () => {
+  return { notes: Array.from(notes.values()) };
+}, { capability: "notes.read" });
+
+server.expose("notes.get", (args) => {
+  return notes.get(args.id) ?? null;
+}, { capability: "notes.read" });
+
+server.expose("notes.create", (args) => {
+  const note = { id: nextId++, text: args.text, createdAt: Date.now() };
+  notes.set(note.id, note);
+  return note;
+}, { capability: "notes.write" });
+
+server.declareEvent("notes.updated");
+
+await server.start();
+const info = await server.getPairingCode();
+console.log("Pair:", info.uri);
+```
+
+### Client
+
+```js
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await CrosslinkClient.create({
+  deviceName: "Notes Client",
+  onConfirmPairing: async () => true
+});
+
+await client.pairFromQr(process.argv[2], ["notes.read", "notes.write"]);
+const rpc = await client.connect(["notes.read", "notes.write"]);
+
+// Create a note
+await rpc.call("notes.create", { text: "My first note" });
+
+// List notes
+const { notes } = await rpc.call("notes.list");
+console.log(notes);
+```
+
+---
+
+## Todo example
+
+A todo app with filtering and persistence.
+
+### Host
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const todos = new Map();
+let nextId = 1;
+
+const server = createCrosslinkServer({
+  application: { id: "com.example.todo", name: "Todo", version: "1.0.0" },
+  capabilities: [
+    { id: "todo.read", title: "Read todos", risk: "low" },
+    { id: "todo.write", title: "Write todos", risk: "medium" }
+  ],
+  signalingUrl: "http://127.0.0.1:8081",
+  relayUrl: "http://127.0.0.1:8082",
+  lan: { bind: "loopback" },
+  pairing: {
+    approve: async () => true
+  }
+});
+
+server.expose("todo.list", (args) => {
+  let items = Array.from(todos.values());
+  if (args.filter === "active") items = items.filter(t => !t.done);
+  if (args.filter === "done") items = items.filter(t => t.done);
+  return { todos: items };
+}, { capability: "todo.read" });
+
+server.expose("todo.add", (args) => {
+  const todo = { id: nextId++, text: args.text, done: false, createdAt: Date.now() };
+  todos.set(todo.id, todo);
+  return todo;
+}, { capability: "todo.write" });
+
+server.expose("todo.toggle", (args) => {
+  const todo = todos.get(args.id);
+  if (todo) todo.done = !todo.done;
+  return todo;
+}, { capability: "todo.write" });
+
+server.declareEvent("todo.updated");
+
+await server.start();
+const info = await server.getPairingCode();
+console.log("Pair:", info.uri);
+```
+
+---
+
+## Custom storage example
+
+Using a custom storage backend for the client.
+
+```js
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+// Custom storage using cookies
+const cookieStorage = {
+  get: (key) => {
+    const match = document.cookie.match(new RegExp(`(^| )${key}=([^;]+)`));
+    return match ? decodeURIComponent(match[2]) : null;
+  },
+  set: (key, value) => {
+    document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=31536000`;
+  },
+  delete: (key) => {
+    document.cookie = `${key}=; path=/; max-age=0`;
+  }
+};
+
+const client = new CrosslinkClient({
+  deviceName: "Cookie Client",
+  storage: cookieStorage
+});
+```

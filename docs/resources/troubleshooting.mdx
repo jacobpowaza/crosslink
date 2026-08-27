@@ -1,0 +1,237 @@
+---
+title: Troubleshooting
+description: Common issues and solutions
+---
+
+## Pairing issues
+
+### Pairing code expired
+
+**Symptom:** `PAIRING_CODE_EXPIRED` error
+
+**Cause:** Pairing codes have a 2-minute TTL.
+
+**Fix:**
+- Generate a new pairing code
+- Complete pairing within 2 minutes
+
+### Pairing code already used
+
+**Symptom:** `PAIRING_CODE_USED` error
+
+**Cause:** Pairing codes are single-use.
+
+**Fix:**
+- Generate a new pairing code
+- Don't refresh the QR code page
+
+### Fingerprint mismatch
+
+**Symptom:** `FINGERPRINT_MISMATCH` or "host fingerprint does not match"
+
+**Cause:** The host's actual fingerprint doesn't match the QR code.
+
+**Security warning:** This likely indicates a MITM attack.
+
+**Fix:**
+- Verify the host is legitimate
+- Don't proceed with pairing
+- Check if the signaling server is compromised
+
+### Pairing rejected by host
+
+**Symptom:** `PAIRING_FAILED` error
+
+**Cause:** Host's `approve` callback returned `false`.
+
+**Fix:**
+- Check host logs for rejection reason
+- Verify requested capabilities are acceptable
+- Ensure host is running and reachable
+
+---
+
+## Connection issues
+
+### Connection refused
+
+**Symptom:** `CONNECTION_FAILED` error
+
+**Fix:**
+1. Check if services are running:
+   ```bash
+   curl http://127.0.0.1:8081/health
+   curl http://127.0.0.1:8082/health
+   ```
+2. Check URLs match between host and client
+3. Check firewall rules
+4. Check if ports are already in use
+
+### Connection timeout
+
+**Symptom:** `CONNECTION_TIMEOUT` error
+
+**Fix:**
+1. Check network connectivity
+2. Increase `dialTimeoutMs` option
+3. Check if relay/signaling is reachable
+4. Try LAN connection if on same network
+
+### Relay unavailable
+
+**Symptom:** `RELAY_UNAVAILABLE` error
+
+**Fix:**
+1. Check relay URL
+2. Check relay service is running
+3. Check firewall rules
+4. Consider using LAN if on same network
+
+### Signaling unavailable
+
+**Symptom:** `SIGNALING_UNAVAILABLE` error
+
+**Fix:**
+1. Check signaling URL
+2. Check signaling service is running
+3. Check WebSocket connection (upgrade headers)
+
+---
+
+## RPC issues
+
+### Method not found
+
+**Symptom:** `METHOD_NOT_FOUND` error
+
+**Fix:**
+1. Verify the method name is correct
+2. Check if host exposes the method
+3. Check if host is connected
+
+### Capability denied
+
+**Symptom:** `CAPABILITY_DENIED` error
+
+**Fix:**
+1. Check if capability was requested during pairing
+2. Check if capability was granted by host
+3. Re-pair with required capabilities
+
+### RPC timeout
+
+**Symptom:** `TIMEOUT` error
+
+**Fix:**
+1. Check host is responsive
+2. Increase RPC timeout
+3. Check if host method is slow
+
+---
+
+## Storage issues
+
+### Secret storage unavailable
+
+**Symptom:** `STORAGE_ERROR` error
+
+**Fix:**
+1. Check OS keychain availability
+2. Install keytar dependencies:
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install libsecret-1-dev
+   ```
+3. Set `CROSSLINK_SECRET_KEY` environment variable
+4. Use `allowPlaintextFallback: true` (not recommended for production)
+
+### Browser storage not encrypted
+
+**Symptom:** Warning: "identity seed is stored in the clear"
+
+**Cause:** WebCrypto/IndexedDB unavailable.
+
+**Fix:**
+1. Serve from HTTPS or localhost
+2. Check browser compatibility
+3. Use `CrosslinkClient.create()` (not `new CrosslinkClient()`)
+
+---
+
+## Transport issues
+
+### WebRTC not connecting
+
+**Symptom:** Connection falls back to relay
+
+**Fix:**
+1. Check STUN/TURN server availability
+2. Check NAT traversal
+3. Consider using relay as primary
+
+### LAN not working
+
+**Symptom:** Devices can't find each other on LAN
+
+**Fix:**
+1. Check both devices are on same network
+2. Check firewall rules (port 8081/8082)
+3. Check LAN binding (`bind: "all"` for non-loopback)
+4. Try with `bind: "loopback"` for local testing
+
+---
+
+## Performance issues
+
+### Slow connections
+
+**Possible causes:**
+1. Using relay instead of direct connection
+2. High latency network
+3. Large frame sizes
+
+**Fixes:**
+1. Prefer LAN when possible
+2. Reduce frame sizes
+3. Use connection pooling
+4. Monitor with structured logging
+
+### Memory leaks
+
+**Possible causes:**
+1. Event listeners not cleaned up
+2. Subscriptions not unsubscribed
+3. Connections not properly closed
+
+**Fixes:**
+1. Call `unsubscribe()` for all subscriptions
+2. Call `client.disconnect()` on unmount
+3. Call `server.stop()` on shutdown
+
+---
+
+## Debug logging
+
+Enable verbose logging to diagnose issues:
+
+```js
+// Host
+const server = createCrosslinkServer({
+  logger: {
+    debug: (msg, data) => console.debug(`[DEBUG] ${msg}`, data),
+    info: (msg, data) => console.info(`[INFO] ${msg}`, data),
+    warn: (msg, data) => console.warn(`[WARN] ${msg}`, data),
+    error: (msg, data) => console.error(`[ERROR] ${msg}`, data)
+  }
+});
+
+// Client
+const client = await CrosslinkClient.create({
+  logger: {
+    debug: (msg, data) => console.debug(`[DEBUG] ${msg}`, data),
+    info: (msg, data) => console.info(`[INFO] ${msg}`, data),
+    warn: (msg, data) => console.warn(`[WARN] ${msg}`, data),
+    error: (msg, data) => console.error(`[ERROR] ${msg}`, data)
+  }
+});
+```

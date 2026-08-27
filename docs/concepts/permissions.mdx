@@ -1,0 +1,177 @@
+---
+title: Permissions
+description: Capability-based access control
+---
+
+Crosslink uses a three-layer permission system: **capabilities**, **policy**, and **consent**.
+
+## Capabilities
+
+Capabilities are declared by the host and answer: "what may this device ask for?"
+
+```ts
+capabilities: [
+  { id: "notes.read",  title: "Read notes",  risk: "low", defaultGranted: true },
+  { id: "notes.write", title: "Write notes", risk: "medium" },
+  { id: "notes.delete", title: "Delete everything", risk: "high",
+    description: "Permanently removes every note",
+    confirmEachUse: true },
+]
+```
+
+| Field | Purpose |
+| --- | --- |
+| `id` | Unique identifier |
+| `title` | Human-readable name (shown in prompts) |
+| `description` | Explain what this grants (write for users, not you) |
+| `risk` | `low` / `medium` / `high` -- drives policy defaults |
+| `defaultGranted` | Auto-grant on pairing if policy allows |
+| `confirmEachUse` | Every invocation requires fresh consent |
+
+## Permission policy
+
+The policy runs **before the user is asked anything**. It filters what a device may ever hold:
+
+```ts
+permissions: {
+  allow: ["notes.read", "notes.write", "notes.delete"],  // "*" by default
+  deny: ["notes.delete"],           // wins over allow and over any approval
+  maxAutoGrantRisk: "low",          // ceiling for autoApprove; default "low"
+  requireApproval: "high",          // always needs a human; default "high"
+  grantTtlMs: 30 * 24 * 3600_000,  // grants lapse after 30 days
+  maxCapabilitiesPerDevice: 8,
+  maxDevices: 5,
+}
+```
+
+### Key invariants
+
+- **`autoApprove` cannot grant above `maxAutoGrantRisk`**, which defaults to `low`
+- **The approval prompt can narrow an offer, never widen it**
+- **`deny` wins over everything** -- including human approval
+
+## Pairing approval
+
+When a new device pairs, the host decides what to grant:
+
+```ts
+pairing: {
+  approve: async (request) => {
+    // request.requestedCaps            -- capabilities on offer after policy
+    // request.requiresExplicitApproval -- subset needing human decision
+    // request.deniedCaps               -- what policy refused, with reasons
+    // request.sas                      -- compare with client's screen
+
+    if (await askUser(request) === "read-only") return ["notes.read"];
+    return true; // grant everything on offer
+  }
+}
+```
+
+Returning an array grants that subset. The result is intersected with what the policy permitted.
+
+### Default behavior
+
+Without `pairing.approve`, the host refuses all pairing requests. You must implement this callback.
+
+With `pairing.autoApprove: true`, all requests are approved -- useful for development, never for production.
+
+## Per-use consent
+
+Capabilities marked `confirmEachUse` are never standing permissions. Every invocation stops at a prompt:
+
+```ts
+onConsentRequest: async (request) => {
+  // request.title        -- "Delete everything"
+  // request.description  -- "Permanently removes every note"
+  // request.input        -- the actual RPC payload
+  // request.deviceId     -- who's asking
+
+  const answer = await askUser(request);
+  return answer; // "once" | "session" | "always" | false
+}
+```
+
+| Answer | Behavior |
+| --- | --- |
+| `"once"` | Allow this single call |
+| `"session"` | Allow for this connection; forgotten on disconnect |
+| `"always"` | Allow for 24 hours (configurable via `consent.alwaysTtlMs`) |
+| `false` | Deny |
+
+**Silence denies.** A host with no `onConsentRequest` configured refuses `confirmEachUse` methods outright.
+
+## Capability checks
+
+Capabilities are checked on **every RPC request**, not just at connection time:
+
+```ts
+server.expose("notes.delete", (input) => {
+  return { deleted: notes.delete(input.id) };
+}, { capability: "notes.delete" });
+```
+
+If a device's grant changes (revoked, expired, modified), live sessions are affected immediately.
+
+## Device administration
+
+```ts
+// List all paired devices
+server.listDevices();
+// [{ deviceId, name, caps, addedAt, lastSeen, revokedAt }]
+
+// View currently valid capabilities (TTL applied)
+server.grantedCapabilities(deviceId);
+
+// Modify capabilities
+server.setDeviceCaps(deviceId, ["notes.read"]);
+
+// Revoke a device (kills active sessions)
+server.revokeDevice(deviceId);
+
+// Revoke all devices
+server.revokeAllDevices();
+
+// Clear cached consent
+server.clearConsent(deviceId);
+```
+
+## Error codes
+
+| Code | Meaning |
+| --- | --- |
+| `capability_denied` | Device lacks the required capability |
+| `grant_expired` | Capability was granted but TTL lapsed |
+| `consent_denied` | User declined per-use confirmation |
+| `consent_timeout` | Prompt timed out without response |
+| `policy_denied` | Permission policy forbids this, regardless of grants |
+| `device_revoked` | Device has been revoked |
+
+## Example: layered permissions
+
+```ts
+const server = createCrosslinkServer({
+  application: { id: "com.example.app", name: "My App" },
+  capabilities: [
+    { id: "read", title: "Read data", risk: "low", defaultGranted: true },
+    { id: "write", title: "Write data", risk: "medium" },
+    { id: "admin", title: "Admin access", risk: "high", confirmEachUse: true },
+  ],
+  permissions: {
+    maxAutoGrantRisk: "low",       // only "read" is auto-granted
+    requireApproval: "high",       // "admin" always needs a human
+    grantTtlMs: 7 * 24 * 3600_000, // grants expire after 7 days
+    maxDevices: 3,
+  },
+  pairing: {
+    approve: async (req) => {
+      // Never grant admin during pairing; always require per-use consent
+      return req.requestedCaps.filter(c => c !== "admin");
+    }
+  },
+  onConsentRequest: async (req) => {
+    console.log(`${req.title} requested by ${req.deviceId}`);
+    return prompt("Allow? (once/session/always/no)") || false;
+  }
+});
+```

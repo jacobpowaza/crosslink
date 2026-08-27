@@ -1,0 +1,23 @@
+{
+  "name": "@crosslink/example-webrtc-upgrade",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "host": "node src/host.ts",
+    "build": "esbuild src/main.ts --bundle --format=esm --outfile=public/main.js",
+    "serve": "npm run build && node -e \"const h=require('node:http'),f=require('node:fs'),p=require('node:path');h.createServer((q,s)=>{const n=q.url==='/'?'/index.html':q.url.split('?')[0];const t=p.join('public',n);f.readFile(t,(e,d)=>{if(e){s.statusCode=404;return s.end('not found')}s.setHeader('content-type',n.endsWith('.js')?'text/javascript':'text/html');s.end(d)})}).listen(8090,()=>console.log('client on http://127.0.0.1:8090'))\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crosslink/sdk-browser": "*",
+    "@crosslink/sdk-node": "*",
+    "@crosslink/core": "*",
+    "@crosslink/webrtc-adapter": "*",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "esbuild": "^0.24.0"
+  }
+}

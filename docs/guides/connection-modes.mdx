@@ -1,0 +1,62 @@
+---
+title: "Connection Modes & Networking Setup"
+description: "How to configure and choose between Cloudflare Quick Tunnels, Public WAN IP, Local Wi-Fi, and ngrok."
+---
+
+# Connection Modes & Networking Setup
+
+Crosslink gives developers and users complete runtime control over how mobile devices connect to desktop applications. Using the **Settings Cog (⚙️)** on the pairing widget, you can switch connection modes on the fly.
+
+---
+
+## 1. Connection Modes Compared
+
+| Mode | Remote Access | Setup / Cost | Splash Screen | Best For |
+|---|---|---|---|---|
+| **Cloudflare Quick Tunnel** | ✅ Anywhere (Cellular / Remote Wi-Fi) | **$0 / Zero Accounts** | **No** (Direct Safari load) | Quick demoing, instant browser chat, zero-friction pairing |
+| **Public WAN IP (Open LAN)** | ✅ Anywhere | **$0 / Zero Accounts** | **No** | Permanent "Add to Home Screen" PWA installation |
+| **Local Wi-Fi Only** | ❌ Local LAN only | **$0 / Offline** | **No** | Air-gapped networks, office subnets, offline use |
+| **ngrok Tunnel** | ✅ Anywhere | Free or Paid Account | Optional | Custom domains, enterprise tunnels, reserved hostnames |
+
+---
+
+## 2. Setting Up Each Mode
+
+### Option A: Cloudflare Quick Tunnel (Default for Instant Web)
+- **How it works:** Crosslink automatically provisions a zero-cost temporary HTTPS tunnel (`https://*.trycloudflare.com`) using `untun`/`cloudflared`.
+- **User experience:** The user scans the QR code with their mobile camera. Safari opens directly into the web app, skipping the "Add to Home Screen" prompt for immediate chatting.
+- **CLI usage:**
+  ```bash
+  npm run demo:chat:cf
+  # or
+  CROSSLINK_TUNNEL=cloudflared npm run demo:chat
+  ```
+
+### Option B: Public WAN IP (Open LAN)
+- **How it works:** Crosslink automatically discovers your machine's external IP address via STUN / IP discovery (`api.ipify.org`).
+- **User experience:** The QR code encodes `http://<YOUR_PUBLIC_IP>:8100/mobile.html`.
+- **Why it matters:** Unlike ephemeral tunnels that change domains every restart, your public IP is stable. When added to the iOS Home Screen, the PWA remains permanently installed and accessible.
+- **Port Forwarding:** Ensure your router forwards the application port (e.g. `8100`) to your desktop machine, or use UPnP.
+
+### Option C: Local Network Only
+- **How it works:** Restricts traffic strictly to the local Wi-Fi subnet (`192.168.x.x` or `10.0.x.x`).
+- **User experience:** Disables all external relay pipes and public signaling brokers. Direct WebSocket connection between phone and computer.
+- **CLI usage:**
+  ```bash
+  CROSSLINK_LOCAL_ONLY=true npm run demo:chat
+  ```
+
+### Option D: ngrok Setup
+- **How it works:** Connects through your personal ngrok account with custom auth tokens and domains.
+- **CLI usage:**
+  ```bash
+  CROSSLINK_TUNNEL_PROVIDER=ngrok npm run tunnel
+  ```
+
+---
+
+## 3. Switching Modes at Runtime
+
+Users can click the **Settings Cog (⚙️)** in the top right of the pairing card at any time:
+1. Hovering over the **Info icon (ℹ️)** at the right of any option displays a tooltip detailing its technical requirements and a link to this guide.
+2. Clicking an option dynamically regenerates the QR code on screen in real-time.

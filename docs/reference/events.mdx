@@ -1,0 +1,160 @@
+---
+title: Events
+description: All events emitted by Crosslink
+---
+
+## Host events
+
+### `clientConnected`
+
+Emitted when a client connects.
+
+```js
+server.on("clientConnected", (event) => {
+  console.log(`Client ${event.deviceId} connected`);
+});
+```
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `deviceId` | `string` | Client device ID |
+
+### `clientDisconnected`
+
+Emitted when a client disconnects.
+
+```js
+server.on("clientDisconnected", (event) => {
+  console.log(`Client ${event.deviceId} disconnected`);
+});
+```
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `deviceId` | `string` | Client device ID |
+
+### `error`
+
+Emitted on server error.
+
+```js
+server.on("error", (error) => {
+  console.error("Server error:", error);
+});
+```
+
+### `clientError`
+
+Emitted on client error.
+
+```js
+server.on("clientError", (event) => {
+  console.error(`Client ${event.deviceId} error:`, event.error);
+});
+```
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `deviceId` | `string` | Client device ID |
+| `error` | `Error` | Error object |
+
+---
+
+## Client events
+
+### `stateChange`
+
+Emitted on state change.
+
+```js
+client.onStateChange((state) => {
+  console.log("State:", state);
+});
+```
+
+States:
+- `idle` -- Not connected
+- `connecting` -- Establishing connection
+- `connected` -- Active session
+- `reconnecting` -- Attempting to reconnect
+- `disconnected` -- Intentionally disconnected
+- `error` -- Connection failed
+
+### `connected`
+
+Emitted when connected to host.
+
+```js
+client.on("connected", (event) => {
+  console.log(`Connected to ${event.deviceId}`);
+});
+```
+
+### `disconnected`
+
+Emitted when disconnected from host.
+
+```js
+client.on("disconnected", (event) => {
+  console.log(`Disconnected from ${event.deviceId}`);
+});
+```
+
+### `error`
+
+Emitted on client error.
+
+```js
+client.on("error", (error) => {
+  console.error("Client error:", error);
+});
+```
+
+---
+
+## RPC events
+
+### `connected`
+
+Emitted when RPC is connected.
+
+```js
+rpc.on("connected", (event) => {
+  console.log(`RPC connected to ${event.deviceId}`);
+});
+```
+
+### `disconnected`
+
+Emitted when RPC is disconnected.
+
+```js
+rpc.on("disconnected", (event) => {
+  console.log(`RPC disconnected from ${event.deviceId}`);
+});
+```
+
+### `error`
+
+Emitted on RPC error.
+
+```js
+rpc.on("error", (error) => {
+  console.error("RPC error:", error);
+});
+```
+
+### Custom events
+
+Declare and emit custom events:
+
+```js
+// Host
+server.declareEvent("app.tick");
+setInterval(() => server.emit("app.tick", { t: Date.now() }), 1000);
+
+// Client
+rpc.subscribe("app.tick", (payload) => {
+  console.log("Tick:", payload.t);
+});
+```

@@ -1,0 +1,149 @@
+---
+title: Node.js Integration
+description: Using Crosslink in Node.js applications
+---
+
+## Setup
+
+```bash
+npm install @crosslink/sdk-node
+```
+
+## Basic usage
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const server = createCrosslinkServer({
+  application: { id: "com.example.myapp", name: "My App", version: "1.0.0" },
+  capabilities: [
+    { id: "app.control", title: "Control the app", risk: "medium" }
+  ],
+  signalingUrl: "http://127.0.0.1:8081",
+  relayUrl: "http://127.0.0.1:8082",
+  lan: { bind: "loopback" }
+});
+
+server.expose("app.status", () => ({ ok: true }));
+await server.start();
+```
+
+## Exposing methods
+
+### Basic method
+
+```js
+server.expose("math.add", (args) => {
+  return { result: args.a + args.b };
+});
+```
+
+### With capability
+
+```js
+server.expose("admin.shutdown", () => {
+  process.exit(0);
+}, { capability: "admin" });
+```
+
+### Async method
+
+```js
+server.expose("db.query", async (args) => {
+  const result = await db.query(args.sql);
+  return { rows: result.rows };
+});
+```
+
+### Streaming method
+
+```js
+server.expose("file.read", (args, { stream }) => {
+  const fileStream = fs.createReadStream(args.path);
+  fileStream.on("data", (chunk) => stream.write(chunk));
+  fileStream.on("end", () => stream.end());
+}, { capability: "file.read" });
+```
+
+## Emitting events
+
+```js
+// Declare events
+server.declareEvent("app.tick");
+server.declareEvent("app.update");
+
+// Emit events
+setInterval(() => {
+  server.emit("app.tick", { t: Date.now() });
+}, 1000);
+```
+
+## Managing clients
+
+```js
+// List connected clients
+const links = server.getLinks();
+console.log(`${links.length} clients connected`);
+
+// Disconnect a specific client
+server.disconnect(deviceId);
+
+// Disconnect all clients
+server.disconnectAll();
+```
+
+## Identity persistence
+
+The host identity is persisted automatically:
+
+```text
+.crosslink-data/
+└── com.example.myapp/
+    ├── identity.json    (or keytar/encrypted file)
+    └── paired-devices.json
+```
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CROSSLINK_SIGNALING_URL` | `http://127.0.0.1:8081` | Signaling server URL |
+| `CROSSLINK_RELAY_URL` | `http://127.0.0.1:8082` | Relay server URL |
+| `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted file storage |
+| `CROSSLINK_STORAGE_DIR` | `.crosslink-data` | Storage directory |
+
+## Graceful shutdown
+
+```js
+process.on("SIGTERM", async () => {
+  await server.stop();
+  process.exit(0);
+});
+```
+
+## Error handling
+
+```js
+server.on("error", (err) => {
+  console.error("Server error:", err);
+});
+
+server.on("clientError", (err) => {
+  console.error("Client error:", err);
+});
+```
+
+## TypeScript
+
+Both SDKs ship with TypeScript declarations:
+
+```ts
+import type { CreateCrosslinkServerOptions } from "@crosslink/sdk-node";
+
+const options: CreateCrosslinkServerOptions = {
+  application: { id: "com.example.myapp", name: "My App", version: "1.0.0" },
+  capabilities: [
+    { id: "app.control", title: "Control the app", risk: "medium" }
+  ]
+};
+```

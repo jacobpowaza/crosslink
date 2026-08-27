@@ -1,0 +1,156 @@
+---
+title: PWA
+description: Progressive Web App client setup
+---
+
+Crosslink clients work as installable PWAs on iOS, Android, and desktop browsers.
+
+## QR scan to PWA lifecycle
+
+```text
+User scans QR with phone camera
+  |
+Safari / Chrome opens
+  |
+Crosslink landing page loads
+  |
+Prompt: "Add to Home Screen"
+  |
+PWA installs
+  |
+Crosslink client initializes
+  |
+Pairing flow completes
+  |
+App is ready
+```
+
+## Setting up the PWA
+
+### Service worker
+
+Create `sw.js` for offline support:
+
+```js
+const CACHE_NAME = "crosslink-v1";
+const PRECACHE = ["/", "/index.html", "/app.js"];
+
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(PRECACHE)));
+});
+
+self.addEventListener("fetch", (e) => {
+  e.respondWith(
+    caches.match(e.request).then(r => r || fetch(e.request))
+  );
+});
+```
+
+### Manifest
+
+Create `manifest.json`:
+
+```json
+{
+  "name": "My Crosslink Client",
+  "short_name": "MyApp",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+```
+
+### HTML
+
+```html
+<link rel="manifest" href="/manifest.json">
+<script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js");
+  }
+</script>
+```
+
+## Deep linking
+
+The PWA can accept `crosslink://pair?...` deep links. Handle them in your app:
+
+```js
+// Check if launched via deep link
+const hash = window.location.hash;
+if (hash.startsWith("#pair=")) {
+  const uri = decodeURIComponent(hash.slice(6));
+  await client.pairFromQr(uri, ["read", "write"]);
+}
+```
+
+## iOS-specific behavior
+
+<Warning>
+iOS has specific PWA limitations that affect Crosslink:
+</Warning>
+
+- **No WebCrypto in Private Mode** -- `IndexedDbSecureStorage` falls back to `localStorage` with `storageEncrypted === false`
+- **Safari opens instead of PWA** -- Users must manually "Add to Home Screen" from Safari's share menu
+- **Service worker limitations** -- Background sync is restricted
+- **IndexedDB quirks** -- Some versions clear storage aggressively
+
+Handle the iOS flow:
+
+```js
+const client = await CrosslinkClient.create({
+  onConfirmPairing: async ({ sas, hostName, grantedCaps }) => {
+    // iOS doesn't support window.confirm in PWAs well
+    // Use a custom UI instead
+    return showCustomConfirm(sas, hostName, grantedCaps);
+  }
+});
+
+if (!client.storageEncrypted) {
+  console.warn("Storage not encrypted -- WebCrypto unavailable");
+}
+```
+
+## Android behavior
+
+Chrome on Android handles PWAs well:
+
+- "Add to Home Screen" prompt appears automatically
+- WebCrypto is available (IndexedDB + non-extractable keys)
+- Service workers work reliably
+- Deep links work via intent filters
+
+## Desktop browsers
+
+Desktop PWAs work but are less common. The client functions identically:
+
+```js
+const client = await CrosslinkClient.create();
+await client.pairFromQr(uri, ["read"]);
+const rpc = await client.connect();
+```
+
+## Connection states
+
+The PWA should reflect the connection state in the UI:
+
+```text
+Ready         -- waiting for pairing code or URI
+Connecting    -- establishing session
+Connected     -- active session, RPC available
+Offline       -- disconnected, attempting reconnect
+Expired       -- pairing code expired, need new scan
+Error         -- connection failed
+```
+
+```js
+const client = createCrosslinkClient({
+  onStateChange: (state) => {
+    updateUI(state); // reflect in your UI
+  }
+});
+```

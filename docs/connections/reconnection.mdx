@@ -1,0 +1,114 @@
+---
+title: Reconnection
+description: Automatic reconnection with backoff
+---
+
+Crosslink automatically reconnects when a connection is lost.
+
+## How reconnection works
+
+```text
+1. Transport lost detected (WebSocket close / timeout)
+2. Client enters "reconnecting" state
+3. Backoff timer: 1s -> 2s -> 4s -> 8s -> 16s -> 30s (max)
+4. Fresh CLX1 handshake with new ephemeral keys
+5. Subscriptions restored
+6. Queued idempotent calls replayed
+7. Client returns to "connected" state
+```
+
+## Backoff strategy
+
+```text
+Attempt 1: 1 second
+Attempt 2: 2 seconds
+Attempt 3: 4 seconds
+Attempt 4: 8 seconds
+Attempt 5: 16 seconds
+Attempt 6+: 30 seconds (capped)
+```
+
+The backoff resets after a successful connection.
+
+## Reconnection is a new session
+
+Each reconnection performs a fresh CLX1 handshake with new ephemeral keys:
+
+- Forward secrecy is maintained per-session
+- No bearer tokens are reused
+- Revocation is re-checked on every handshake
+- Device identity is verified against stored records
+
+## Offline call queueing
+
+Idempotent methods are queued during disconnection:
+
+```ts
+// This will be queued and replayed after reconnection
+const result = await rpc.call("data.get", null, { idempotent: true });
+```
+
+Non-idempotent methods fail immediately:
+
+```ts
+// This fails with "not_connected" during disconnection
+await rpc.call("data.create", { title: "New" });
+```
+
+## Subscription restoration
+
+Event subscriptions are automatically restored after reconnection:
+
+```ts
+// Subscribe once -- survives reconnections
+rpc.subscribe("data.changed", (payload) => {
+  console.log("Update:", payload);
+});
+```
+
+## Transport resilience
+
+The client adapts to network changes:
+
+```text
+Phone moves from WiFi to cellular:
+  LAN connection lost
+  -> Client falls back to relay
+  -> Session re-established
+  -> RPC continues
+```
+
+```text
+Desktop goes to sleep:
+  All connections lost
+  -> Clients enter reconnect state
+  -> Desktop wakes up
+  -> Clients reconnect automatically
+```
+
+## Monitoring reconnection
+
+```ts
+const client = createCrosslinkClient({
+  onStateChange: (state, detail) => {
+    if (state === "reconnecting") {
+      console.log("Reconnecting...", detail);
+      // detail may include attempt count, backoff delay
+    }
+    if (state === "connected") {
+      console.log("Reconnected!");
+    }
+  }
+});
+```
+
+## Relay channel recovery
+
+If a relay channel expires (24h lifetime), the host:
+
+1. Allocates a new channel
+2. Publishes the new channel ID through signaling
+3. Clients discover the new channel via presence lookup
+4. Reconnection proceeds normally
+
+This is transparent to the application.

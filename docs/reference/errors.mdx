@@ -1,0 +1,142 @@
+---
+title: Error Codes
+description: All Crosslink error codes and how to handle them
+---
+
+## Error classes
+
+All Crosslink errors extend from the base `CrosslinkError` class.
+
+```ts
+class CrosslinkError extends Error {
+  code: string;
+  details?: Record<string, unknown>;
+}
+```
+
+---
+
+## Pairing errors
+
+| Code | Description | Resolution |
+| --- | --- | --- |
+| `PAIRING_CODE_EXPIRED` | Pairing code has expired (2-minute TTL) | Generate a new code |
+| `PAIRING_CODE_USED` | Pairing code already used | Generate a new code |
+| `PAIRING_CODE_INVALID` | Invalid pairing code format | Check the code (9 digits) |
+| `PAIRING_FAILED` | Pairing rejected by host | Check host approval callback |
+| `PAIRING_TIMEOUT` | Pairing timed out | Check network, try again |
+| `FINGERPRINT_MISMATCH` | Host fingerprint doesn't match QR | Security warning -- likely MITM |
+| `SIGNATURE_INVALID` | Invalid signature during pairing | Key corruption -- regenerate identity |
+
+---
+
+## Connection errors
+
+| Code | Description | Resolution |
+| --- | --- | --- |
+| `CONNECTION_FAILED` | Could not establish connection | Check signaling/relay URLs |
+| `CONNECTION_TIMEOUT` | Connection timed out | Check network, increase `dialTimeoutMs` |
+| `CONNECTION_CLOSED` | Connection closed unexpectedly | Check host is running |
+| `RELAY_UNAVAILABLE` | Relay server unreachable | Check relay URL and availability |
+| `SIGNALING_UNAVAILABLE` | Signaling server unreachable | Check signaling URL and availability |
+
+---
+
+## RPC errors
+
+| Code | Description | Resolution |
+| --- | --- | --- |
+| `METHOD_NOT_FOUND` | RPC method doesn't exist | Check method name and host exposure |
+| `CAPABILITY_DENIED` | Missing required capability | Request capability during pairing |
+| `TIMEOUT` | RPC call timed out | Increase timeout or check host |
+| `STREAM_ERROR` | Streaming RPC error | Check stream implementation |
+| `INVALID_ARGS` | Invalid RPC arguments | Validate arguments before calling |
+
+---
+
+## Identity errors
+
+| Code | Description | Resolution |
+| --- | --- | --- |
+| `IDENTITY_NOT_FOUND` | No identity key found | Re-pair or check storage |
+| `IDENTITY_CORRUPTED` | Identity key corrupted | Re-pair with host |
+| `STORAGE_ERROR` | Secret storage error | Check OS keychain availability |
+
+---
+
+## Protocol errors
+
+| Code | Description | Resolution |
+| --- | --- | --- |
+| `PROTOCOL_VERSION_MISMATCH` | Incompatible protocol versions | Update SDK |
+| `HANDSHAKE_FAILED` | CLX1 handshake failed | Check key material |
+| `DECRYPTION_FAILED` | Frame decryption failed | Session key mismatch |
+| `FRAME_TOO_LARGE` | Frame exceeds max size | Reduce payload size |
+
+---
+
+## Error handling
+
+### Host
+
+```js
+try {
+  await server.start();
+} catch (err) {
+  if (err.code === "SIGNALING_UNAVAILABLE") {
+    console.error("Signaling server is down");
+  } else {
+    console.error("Failed to start:", err);
+  }
+}
+```
+
+### Client
+
+```js
+try {
+  await client.pairFromQr(uri, ["app.control"]);
+} catch (err) {
+  if (err.code === "FINGERPRINT_MISMATCH") {
+    console.error("SECURITY: Host fingerprint mismatch -- possible MITM");
+  } else if (err.code === "PAIRING_FAILED") {
+    console.error("Pairing rejected by host");
+  } else {
+    console.error("Pairing error:", err);
+  }
+}
+```
+
+### RPC
+
+```js
+try {
+  await rpc.call("app.status");
+} catch (err) {
+  if (err.code === "CAPABILITY_DENIED") {
+    console.error("Missing capability");
+  } else if (err.code === "METHOD_NOT_FOUND") {
+    console.error("Method not exposed by host");
+  } else {
+    console.error("RPC error:", err);
+  }
+}
+```
+
+---
+
+## Debug logging
+
+Enable debug logging to trace errors:
+
+```js
+const server = createCrosslinkServer({
+  // ...
+  logger: {
+    debug: (msg, data) => console.debug(`[DEBUG] ${msg}`, data),
+    info: (msg, data) => console.info(`[INFO] ${msg}`, data),
+    warn: (msg, data) => console.warn(`[WARN] ${msg}`, data),
+    error: (msg, data) => console.error(`[ERROR] ${msg}`, data)
+  }
+});
+```

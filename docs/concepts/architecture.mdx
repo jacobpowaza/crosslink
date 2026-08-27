@@ -1,0 +1,176 @@
+---
+title: Architecture
+description: How the pieces fit together
+---
+
+## System overview
+
+Crosslink connects two devices through an end-to-end encrypted channel. The system has three layers:
+
+```text
++---------------------+
+|   Application Layer |  Your code (RPC, events, permissions)
++---------------------+
+|   Transport Layer   |  LAN / relay / WebRTC, auto-fallback
++---------------------+
+|   Crypto Layer      |  Ed25519, X25519, XChaCha20-Poly1305
++---------------------+
+```
+
+## Component diagram
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│                     APPLICATION                          │
+│  ┌──────────┐              ┌──────────┐                  │
+│  │ Host App │              │  Client  │                  │
+│  │ (Node.js)│              │ (Browser)│                  │
+│  └────┬─────┘              └────┬─────┘                  │
+│       │                         │                        │
+│  ┌────┴─────┐              ┌────┴─────┐                  │
+│  │ Host SDK │              │Client SDK│                  │
+│  └────┬─────┘              └────┬─────┘                  │
+│       │                         │                        │
+│  ┌────┴─────────────────────────┴────┐                   │
+│  │          Core Engine              │                   │
+│  │  ┌─────────┐ ┌───────┐ ┌──────┐  │                   │
+│  │  │ Sessions│ │  RPC  │ │Crypto│  │                   │
+│  │  └─────────┘ └───────┘ └──────┘  │                   │
+│  └────┬─────────────────────────┬────┘                   │
+│       │                         │                        │
+│  ┌────┴─────────────────────────┴────┐                   │
+│  │        Transport Manager          │                   │
+│  │  ┌─────┐  ┌───────┐  ┌────────┐  │                   │
+│  │  │ LAN │  │ Relay │  │ WebRTC │  │                   │
+│  │  └─────┘  └───────┘  └────────┘  │                   │
+│  └───────────────────────────────────┘                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+## How a connection is established
+
+### Phase 1: Pairing
+
+```text
+Host                          Signaling                      Client
+  |                              |                             |
+  |--- generate code ---------> |                             |
+  |    (9-digit, TTL 2min)      |                             |
+  |                             |<-- resolve code ------------|
+  |                             |--- send claim (publicKey) ->|
+  |<-- receive claim -----------|                             |
+  |                             |                             |
+  |--- send challenge --------->|--- forward challenge ------>|
+  |                             |<-- send signature -----------|
+  |<-- receive signature --------|                             |
+  |                             |                             |
+  |--- SAS verification ------>|                             |
+  |<-- SAS verification --------|                             |
+  |                             |                             |
+  |=== E2E encrypted session established =========================|
+```
+
+### Phase 2: Session establishment
+
+```text
+Host                          Client
+  |                              |
+  |--- ephemeral pubKey ------->|
+  |<-- ephemeral pubKey --------|
+  |                              |
+  |--- HKDF (shared secret) --->|
+  |<-- HKDF (shared secret) ----|
+  |                              |
+  |=== XChaCha20-Poly1305 frames ===|
+```
+
+### Phase 3: RPC communication
+
+```text
+Host                          Client
+  |                              |
+  |<-- request (method, args) ---|
+  |--- response (result) ------>|
+  |                              |
+  |<-- subscribe (event) --------|
+  |--- event (payload) -------->|
+  |--- event (payload) -------->|
+```
+
+## Transport layer
+
+The transport layer automatically selects the best available transport:
+
+```text
+Transport priority:
+1. LAN WebSocket    (same network, lowest latency)
+2. WebRTC           (cross-network, NAT traversal)
+3. Relay fallback   (when direct WebRTC fails)
+```
+
+### LAN transport
+
+- Direct WebSocket between devices
+- No external services needed
+- Lowest latency
+- Works only on same network
+
+### WebRTC transport
+
+- Peer-to-peer data channel
+- NAT traversal via STUN/TURN
+- Medium latency
+- Works cross-network when possible
+
+### Relay transport
+
+- All traffic routed through relay server
+- Highest latency
+- Always works
+- Server sees only ciphertext
+
+## Secret storage
+
+### Host (Node.js)
+
+```text
+Backend priority:
+1. keytar          (macOS Keychain, Linux libsecret, Windows Credential Vault)
+2. Electron safeStorage (same vaults via Electron bindings)
+3. Encrypted file  (AES-256-GCM, key from CROSSLINK_SECRET_KEY or machine-derived)
+4. Plaintext file  (mode-600, requires explicit opt-in)
+```
+
+### Client (Browser)
+
+```text
+Backend priority:
+1. IndexedDB + AES-256-GCM (non-extractable WebCrypto key)
+2. localStorage            (plaintext fallback)
+3. Memory                  (ephemeral, lost on reload)
+```
+
+## Package relationships
+
+```text
+@crosslink/sdk-node
+  └── @crosslink/core
+        ├── @crosslink/protocol
+        └── @crosslink/webrtc-adapter (optional)
+
+@crosslink/sdk-browser
+  └── @crosslink/core
+        ├── @crosslink/protocol
+        └── @crosslink/webrtc-adapter (optional)
+```
+
+## Key design decisions
+
+| Decision | Rationale |
+| --- | --- |
+| Ed25519 for identity | Fast, small keys, widely supported, no legacy baggage |
+| X25519 for key exchange | ECDH on the same curve, forward secrecy |
+| XChaCha20-Poly1305 for framing | Better nonce management than AES-GCM, no hardware dependency |
+| Capability-based permissions | Declarative, host-authored, no runtime checks needed |
+| Transport fallback | Graceful degradation, always connectable |
+| Services as untrusted | Minimizes attack surface, E2E encryption by default |

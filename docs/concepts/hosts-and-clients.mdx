@@ -1,0 +1,119 @@
+---
+title: Hosts and Clients
+description: Understanding host and client roles
+---
+
+## Roles
+
+Crosslink has two roles:
+
+| Role | Runs on | SDK | Purpose |
+| --- | --- | --- | --- |
+| **Host** | Desktop/server (Node.js) | `@crosslink/sdk-node` | Exposes RPC methods, manages sessions |
+| **Client** | Browser/phone | `@crosslink/sdk-browser` | Calls RPC methods, receives events |
+
+## Host
+
+The host is the application that:
+- Declares capabilities
+- Generates pairing codes
+- Exposes RPC methods
+- Manages client sessions
+- Stores the identity key (in OS keychain)
+
+### Creating a host
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const host = createCrosslinkServer({
+  application: { id: "com.example.myapp", name: "My App", version: "1.0.0" },
+  capabilities: [
+    { id: "app.control", title: "Control the app", risk: "medium" }
+  ],
+  signalingUrl: "http://127.0.0.1:8081",
+  relayUrl: "http://127.0.0.1:8082",
+  lan: { bind: "loopback" }
+});
+```
+
+### Host methods
+
+| Method | Description |
+| --- | --- |
+| `host.start()` | Start listening for connections |
+| `host.stop()` | Gracefully shut down |
+| `host.getPairingCode()` | Generate a new pairing code |
+| `host.expose(method, handler, options)` | Register an RPC method |
+| `host.declareEvent(name)` | Declare an event that can be emitted |
+| `host.emit(name, payload)` | Send an event to all connected clients |
+| `host.revoke(deviceId)` | Revoke a client's access |
+
+## Client
+
+The client is the interface that:
+- Scans QR codes to pair
+- Calls RPC methods
+- Subscribes to events
+- Manages paired-app records
+
+### Creating a client
+
+```js
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+// Recommended: encrypted storage
+const client = await CrosslinkClient.create({
+  deviceName: "My Phone",
+  onConfirmPairing: async ({ sas, grantedCaps }) => {
+    console.log(`SAS: ${sas}`);
+    return true;
+  }
+});
+```
+
+### Client methods
+
+| Method | Description |
+| --- | --- |
+| `client.pairFromQr(uri, requestedCaps)` | Pair with a host via QR/URI |
+| `client.connect(requestedCaps)` | Connect to a paired host |
+| `client.disconnect()` | Disconnect from the host |
+| `client.forget(appId)` | Remove a paired host |
+| `client.listApps()` | List all paired hosts |
+
+## Client storage
+
+<Warning>
+Use `CrosslinkClient.create()` instead of `new CrosslinkClient()`. The factory encrypts the identity seed at rest; the constructor stores it in plaintext.
+</Warning>
+
+| Storage | Encrypted | Persistent | Best for |
+| --- | --- | --- | --- |
+| `IndexedDbSecureStorage` | Yes (AES-256-GCM) | Yes | Production browsers |
+| `LocalStorageSecureStorage` | No | Yes | Fallback |
+| `MemorySecureStorage` | No | No | Tests |
+
+## Host storage
+
+The host stores its identity key and paired-device records:
+
+| Backend | Encrypted | Requires |
+| --- | --- | --- |
+| keytar | Yes (OS keychain) | `keytar` npm package + libsecret (Linux) |
+| Electron safeStorage | Yes (OS vault) | Electron runtime |
+| Encrypted file | Yes (AES-256-GCM) | `CROSSLINK_SECRET_KEY` or machine-bound key |
+| Plaintext file | No | Explicit opt-in |
+
+## Multiple clients
+
+A host can serve multiple clients simultaneously:
+
+```text
+Host
+├── Client A (phone) -- app.control, app.read
+├── Client B (tablet) -- app.read only
+└── Client C (laptop) -- app.control, app.read, app.write
+```
+
+Each client has its own session, capabilities, and encryption keys.

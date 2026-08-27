@@ -1,0 +1,459 @@
+#!/usr/bin/env node
+/**
+ * Crosslink Chat Demo — Web App (Host) + Mobile Client
+ *
+ * Architecture:
+ *   Web app (this server) runs the Crosslink host, serves a chat UI + QR code.
+ *   Mobile client (opened by scanning QR) runs the Crosslink browser SDK,
+ *   auto-pairs, and chats with the web app through encrypted RPC.
+ *
+ *   Both directions flow through Crosslink:
+ *     Mobile  → RPC chat.send → Server → SSE broadcast → Web UI
+ *     Web UI  → POST /api/send → Server → RPC chat.new_message → Mobile
+ *
+ * Usage:
+ *   npm run stack        # start signaling + relay
+ *   npm run demo:chat    # start this server (port 8100)
+ */
+import http from "node:http";
+import os from "node:os";
+import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+import QRCode from "qrcode";
+
+import { startTunnel } from "untun";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, "..", "public");
+const port = Number(process.env.PORT ?? 8100);
+
+function getLanAddress(): string {
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const nic of list ?? []) {
+      if (nic.family === "IPv4" && !nic.internal) return nic.address;
+    }
+  }
+  return "127.0.0.1";
+}
+
+const signalingUrl = process.env.CROSSLINK_SIGNALING_URL;
+const relayUrl = process.env.CROSSLINK_RELAY_URL;
+
+let activePublicUrl: string | null = process.env.CROSSLINK_PUBLIC_URL?.replace(/\/+$/, "") ?? null;
+let cachedWanIp: string | null = process.env.CROSSLINK_PUBLIC_IP ?? null;
+
+let activeCloudflareTunnel: { getURL: () => Promise<string>; close: () => Promise<void> } | null = null;
+let activeCloudflareUrl: string | null = null;
+
+let activeNgrokProcess: any = null;
+let activeNgrokUrl: string | null = null;
+
+async function stopCloudflareTunnel(): Promise<void> {
+  if (activeCloudflareTunnel) {
+    try {
+      await activeCloudflareTunnel.close();
+    } catch {}
+    activeCloudflareTunnel = null;
+    activeCloudflareUrl = null;
+    console.log("  [tunnel] Cloudflare tunnel stopped.");
+  }
+}
+
+async function stopNgrokTunnel(): Promise<void> {
+  if (activeNgrokProcess) {
+    try {
+      activeNgrokProcess.kill("SIGTERM");
+    } catch {}
+    activeNgrokProcess = null;
+    activeNgrokUrl = null;
+    console.log("  [tunnel] ngrok tunnel stopped.");
+  }
+}
+
+async function ensureCloudflareTunnel(localPort: number): Promise<string | null> {
+  if (activeCloudflareUrl) return activeCloudflareUrl;
+  await stopNgrokTunnel();
+  console.log(`\n  [tunnel] Starting zero-cost Cloudflare Quick Tunnel on port ${localPort}...`);
+  try {
+    const tunnel = await startTunnel({ port: localPort });
+    if (tunnel) {
+      activeCloudflareTunnel = tunnel;
+      const url = await tunnel.getURL();
+      if (url) {
+        activeCloudflareUrl = url.replace(/\/+$/, "");
+        console.log(`  \x1b[32m✔ Cloudflare Quick Tunnel Active:\x1b[0m ${activeCloudflareUrl}`);
+        console.log(`  \x1b[32m✔ Direct Mobile Access: "Add to Home Screen" screen is SKIPPED\x1b[0m\n`);
+        return activeCloudflareUrl;
+      }
+    }
+  } catch (err) {
+    console.warn(`  [tunnel] Cloudflare tunnel failed: ${(err as Error).message}`);
+  }
+  return null;
+}
+
+async function ensureNgrokTunnel(localPort: number): Promise<string | null> {
+  if (activeNgrokUrl) return activeNgrokUrl;
+  await stopCloudflareTunnel();
+
+  // Check if ngrok is already running and exposing a tunnel
+  try {
+    const res = await fetch("http://127.0.0.1:4040/api/tunnels", { signal: AbortSignal.timeout(1000) });
+    if (res.ok) {
+      const data = await res.json();
+      const t = data.tunnels?.find((x: any) => x.proto === "https") || data.tunnels?.[0];
+      if (t?.public_url) {
+        activeNgrokUrl = t.public_url.replace(/\/+$/, "");
+        console.log(`\n  \x1b[32m✔ Connected to active ngrok tunnel:\x1b[0m ${activeNgrokUrl}\n`);
+        return activeNgrokUrl;
+      }
+    }
+  } catch {}
+
+  console.log(`\n  [tunnel] Spawning ngrok http ${localPort}...`);
+  try {
+    activeNgrokProcess = spawn("ngrok", ["http", String(localPort), "--log=stdout", "--log-format=json"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    activeNgrokProcess.on("exit", () => {
+      activeNgrokProcess = null;
+      activeNgrokUrl = null;
+    });
+
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        const res = await fetch("http://127.0.0.1:4040/api/tunnels", { signal: AbortSignal.timeout(800) });
+        if (res.ok) {
+          const data = await res.json();
+          const t = data.tunnels?.find((x: any) => x.proto === "https") || data.tunnels?.[0];
+          if (t?.public_url) {
+            activeNgrokUrl = t.public_url.replace(/\/+$/, "");
+            console.log(`  \x1b[32m✔ ngrok Tunnel Active:\x1b[0m ${activeNgrokUrl}\n`);
+            return activeNgrokUrl;
+          }
+        }
+      } catch {}
+    }
+  } catch (err) {
+    console.warn(`  [tunnel] ngrok spawn failed: ${(err as Error).message}`);
+  }
+  return null;
+}
+
+async function getPublicWanIp(): Promise<string | null> {
+  if (cachedWanIp) return cachedWanIp;
+  try {
+    const res = await fetch("https://api.ipify.org?format=json", { signal: AbortSignal.timeout(2500) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.ip) {
+        cachedWanIp = data.ip;
+        return cachedWanIp;
+      }
+    }
+  } catch {}
+  try {
+    const res = await fetch("https://icanhazip.com", { signal: AbortSignal.timeout(2500) });
+    if (res.ok) {
+      const text = (await res.text()).trim();
+      if (text) {
+        cachedWanIp = text;
+        return cachedWanIp;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function getPublicOrLanUrl(): string {
+  if (activePublicUrl) return activePublicUrl;
+  if (activeCloudflareUrl) return activeCloudflareUrl;
+  if (activeNgrokUrl) return activeNgrokUrl;
+  return `http://${getLanAddress()}:${port}`;
+}
+
+// ─── state ──────────────────────────────────────────────────────────────
+interface ChatMsg {
+  id: string;
+  sender: string;
+  text: string;
+  at: number;
+}
+const messages: ChatMsg[] = [];
+const sseClients = new Set<http.ServerResponse>();
+
+function broadcast(event: string, data: unknown) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) {
+    res.write(payload);
+  }
+}
+
+// ─── crosslink host ─────────────────────────────────────────────────────
+let latestPairingUri: string | null = null;
+
+const host = createCrosslinkServer({
+  application: { id: "com.crosslink.chat", name: "Crosslink Chat", version: "1.0.0" },
+  capabilities: [
+    { id: "chat.send", title: "Send messages", risk: "low" },
+    { id: "chat.read", title: "Read messages", risk: "low" },
+  ],
+  signalingUrl,
+  relayUrl,
+  lan: { enabled: true, bind: "all" },
+  pairing: { autoApprove: true },
+  resolvePresenceUrl: (url, _ctx) => {
+    // Rewrite 127.0.0.1 / localhost to the LAN IP so phone clients can reach
+    // the relay as a fallback when the direct LAN transport doesn't work.
+    return url
+      .replace(/127\.0\.0\.1/g, getLanAddress())
+      .replace(/localhost/g, getLanAddress());
+  },
+});
+
+host
+  .expose("chat.send", (input) => {
+    const { sender = "mobile", text = "" } = (input ?? {}) as { sender?: string; text?: string };
+    if (!text || typeof text !== "string") throw new Error("text is required");
+    const msg: ChatMsg = {
+      id: crypto.randomUUID().slice(0, 8),
+      sender,
+      text: text.slice(0, 2000),
+      at: Date.now(),
+    };
+    messages.push(msg);
+    broadcast("chat.update", { messages });
+    return { ok: true, id: msg.id };
+  }, { capability: "chat.send" })
+  .expose("chat.history", () => ({ messages }), { capability: "chat.read" })
+  .expose("chat.info", () => ({
+    name: "Crosslink Chat",
+    appId: "com.crosslink.chat",
+    messages: messages.length,
+  }));
+
+host.on("deviceConnected", (info) => {
+  broadcast("status", { mobile: true, deviceId: info.deviceId });
+});
+host.on("deviceDisconnected", (info) => {
+  broadcast("status", { mobile: false, deviceId: info.deviceId });
+});
+
+try {
+  await host.start();
+} catch (err) {
+  console.warn(`\n  \x1b[33m[Crosslink Host]\x1b[0m Failed to connect to local signaling/relay: ${(err as Error).message}`);
+  console.warn(`  Ensure \`npm run stack\` is active.\n`);
+}
+
+// ─── http server ────────────────────────────────────────────────────────
+const securityHeaders: Record<string, string> = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "cross-origin-opener-policy": "same-origin",
+};
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webmanifest": "application/manifest+json",
+};
+
+function respond(res: http.ServerResponse, status: number, ct: string, body: string | Buffer) {
+  for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
+  res.writeHead(status, { "content-type": ct });
+  res.end(body);
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+  const pathname = url.pathname;
+
+  // ── API: pairing QR ──
+  if (pathname === "/api/pair" && req.method === "GET") {
+    try {
+      const modeParam = (url.searchParams.get("mode") || "local").toLowerCase();
+      const code = await host.getPairingCode();
+      latestPairingUri = code.uri;
+
+      let baseUrl = `http://${getLanAddress()}:${port}`;
+      let skipParam = "";
+      let effectiveMode = "local";
+
+      if (modeParam === "cloudflare" || modeParam === "open-lan-cloudflared" || modeParam === "cloudflared") {
+        effectiveMode = "cloudflare";
+        const cfUrl = await ensureCloudflareTunnel(port);
+        if (cfUrl) {
+          baseUrl = cfUrl;
+          skipParam = "&skip_install=1";
+        }
+      } else if (modeParam === "ngrok") {
+        effectiveMode = "ngrok";
+        const ngUrl = await ensureNgrokTunnel(port);
+        if (ngUrl) {
+          baseUrl = ngUrl;
+        }
+      } else if (modeParam === "open-lan" || modeParam === "open-lan-remote" || modeParam === "remote") {
+        effectiveMode = "open-lan";
+        await stopCloudflareTunnel();
+        await stopNgrokTunnel();
+        const wanIp = await getPublicWanIp();
+        baseUrl = wanIp ? `http://${wanIp}:${port}` : `http://${getLanAddress()}:${port}`;
+      } else {
+        // Default: local Wi-Fi / LAN
+        effectiveMode = "local";
+        await stopCloudflareTunnel();
+        await stopNgrokTunnel();
+        baseUrl = `http://${getLanAddress()}:${port}`;
+        skipParam = "&skip_install=1";
+      }
+
+      const mobileUrl = `${baseUrl}/mobile.html?pair=${encodeURIComponent(code.uri!)}${skipParam}`;
+      const mobileQr = await QRCode.toString(mobileUrl, { type: "svg", margin: 1, width: 280 });
+      respond(res, 200, "application/json", JSON.stringify({
+        code: code.code,
+        mobileUrl,
+        mobileQr,
+        expiresAt: code.expiresAt,
+        mode: effectiveMode,
+      }));
+    } catch (err) {
+      respond(res, 500, "application/json", JSON.stringify({ error: (err as Error).message }));
+    }
+    return;
+  }
+
+  // ── API: send message (from web UI) ──
+  if (pathname === "/api/send" && req.method === "POST") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    try {
+      const { sender = "web", text } = JSON.parse(body);
+      if (!text || typeof text !== "string") {
+        respond(res, 400, "application/json", JSON.stringify({ error: "text required" }));
+        return;
+      }
+      const msg: ChatMsg = {
+        id: crypto.randomUUID().slice(0, 8),
+        sender,
+        text: text.slice(0, 2000),
+        at: Date.now(),
+      };
+      messages.push(msg);
+      broadcast("chat.update", { messages });
+      // notify mobile via crosslink event
+      host.emit("chat.new_message", msg);
+      respond(res, 200, "application/json", JSON.stringify({ ok: true, id: msg.id }));
+    } catch {
+      respond(res, 400, "application/json", JSON.stringify({ error: "invalid json" }));
+    }
+    return;
+  }
+
+  // ── API: SSE stream ──
+  if (pathname === "/api/events" && req.method === "GET") {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write(`data: ${JSON.stringify({ messages })}\n\n`);
+    sseClients.add(res);
+    req.on("close", () => sseClients.delete(res));
+    return;
+  }
+
+  // ── API: health ──
+  if (pathname === "/api/health") {
+    const st = host.status() as Record<string, any>;
+    respond(res, 200, "application/json", JSON.stringify({
+      started: st.started,
+      transports: st.transports,
+      devices: st.devices,
+      messages: messages.length,
+    }));
+    return;
+  }
+
+  // ── mobile page (inject pairing URI) ──
+  if (pathname === "/mobile" || pathname === "/mobile.html") {
+    try {
+      const html = await readFile(path.join(root, "mobile.html"), "utf8");
+      const mobileHtml = html.replace("/*__PAIRING_URI__*/", `"${latestPairingUri ?? ""}"`);
+      respond(res, 200, MIME[".html"], mobileHtml);
+    } catch {
+      respond(res, 404, "text/plain", "mobile.html not found");
+    }
+    return;
+  }
+
+  // ── static files ──
+  let filePath: string;
+  if (pathname === "/") {
+    filePath = path.join(root, "index.html");
+  } else {
+    filePath = path.join(root, pathname);
+  }
+
+  // prevent path traversal
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(root)) {
+    respond(res, 403, "text/plain", "forbidden");
+    return;
+  }
+
+  try {
+    const data = await readFile(resolved);
+    const ext = path.extname(resolved);
+    const ct = MIME[ext] ?? "application/octet-stream";
+    const cache = "no-cache, no-store, must-revalidate";
+    for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
+    res.writeHead(200, { "content-type": ct, "cache-control": cache });
+    res.end(data);
+  } catch {
+    respond(res, 404, "text/plain", "not found");
+  }
+});
+
+server.listen(port, "0.0.0.0", () => {
+  const lan = getLanAddress();
+  console.log(`\n  Crosslink Chat Demo`);
+  console.log(`  ────────────────────`);
+  console.log(`  Web app  → http://localhost:${port}`);
+  console.log(`  Local IP → http://${lan}:${port}`);
+  console.log(`  Mobile   → http://${lan}:${port}/mobile.html`);
+  console.log(`\n  Open the web app on your computer, click "Show QR Code",`);
+  console.log(`  then scan it with your phone to start chatting.\n`);
+  const st = host.status() as Record<string, any>;
+  if (st.transports.lan) console.log(`  LAN       ✓ ${st.transports.lan.url}`);
+  if (st.transports.relay) console.log(`  Relay     ✓ ${st.transports.relay.url}`);
+  if (st.transports.signaling) console.log(`  Signaling ✓ ${st.transports.signaling.url}`);
+  console.log();
+});
+
+process.on("SIGINT", async () => {
+  console.log("\nShutting down…");
+  await stopCloudflareTunnel();
+  await stopNgrokTunnel();
+  await host.stop();
+  server.close();
+  process.exit(0);
+});
+process.on("SIGTERM", async () => {
+  await stopCloudflareTunnel();
+  await stopNgrokTunnel();
+  await host.stop();
+  server.close();
+  process.exit(0);
+});

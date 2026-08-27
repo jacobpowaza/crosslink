@@ -1,0 +1,155 @@
+---
+title: Authentication
+description: How devices prove their identity
+---
+
+## Identity model
+
+Every Crosslink device (host or client) has a long-term Ed25519 identity:
+
+```text
+Identity = {
+  privateKey: Ed25519 private key (32 bytes)
+  publicKey:  Ed25519 public key (32 bytes)
+  deviceId:   SHA-256(publicKey)[:16] (hex, 16 chars)
+}
+```
+
+The identity is:
+- Generated once per installation
+- Persisted across restarts
+- Used to sign all key material
+- Verifiable by any peer
+
+## Pairing authentication
+
+### Step 1: Code generation
+
+The host generates a single-use pairing code:
+
+```text
+code = random 9-digit number
+record = {
+  code,
+  hostFingerprint: SHA-256(hostPublicKey)[:16],
+  expires: now + 2 minutes,
+  used: false
+}
+```
+
+### Step 2: Code resolution
+
+The client sends the code to the signaling service:
+
+```text
+Client -> Signaling: { code }
+Signaling -> Client: { hostConnId, app, psid }
+```
+
+### Step 3: Fingerprint verification
+
+The client verifies the host fingerprint from the QR code matches:
+
+```text
+if (!hostFingerprint.startsWith(qrFingerprint16)) {
+  throw new Error("SECURITY: host fingerprint does not match");
+}
+```
+
+<Warning>
+This is the primary MITM defense during pairing. If the fingerprints don't match, an attacker is likely intercepting the signaling traffic.
+</Warning>
+
+### Step 4: Signed claims
+
+Both parties exchange signed public keys:
+
+```text
+Client -> Host: {
+  kind: "claim",
+  deviceId: clientDeviceId,
+  publicKey: clientPublicKey,
+  signature: Ed25519_sign(clientPrivateKey, claimData)
+}
+```
+
+### Step 5: Challenge-response
+
+The host sends a challenge, and the client signs it:
+
+```text
+Host -> Client: { kind: "challenge", nonce: random }
+Client -> Host: { kind: "challenge_response", signature: Ed25519_sign(clientPrivateKey, nonce) }
+```
+
+### Step 6: SAS verification
+
+Both parties derive the same Short Authentication String:
+
+```text
+sas = HKDF-SHA256(
+  IKM: X25519(hostEphemeral, clientEphemeral),
+  salt: hostIdentity || clientIdentity,
+  info: "crosslink-sas"
+)[:6]  // 6 digits
+```
+
+The user must visually confirm both sides show the same digits.
+
+## Session authentication
+
+Once paired, sessions are authenticated via:
+
+1. **Encrypted frames** -- Only parties with the session key can read/write
+2. **Sequence numbers** -- Prevent replay attacks
+3. **Nonce uniqueness** -- Prevent frame substitution
+
+```text
+Frame authentication:
+  valid = XChaCha20_Poly1305_verify(key, nonce, ciphertext, tag)
+```
+
+## Key hierarchy
+
+```text
+Long-term identity (Ed25519)
+        |
+Ephemeral keys (X25519)
+        |
+Shared secret (ECDH)
+        |
+HKDF-SHA256
+        |
+Session key (XChaCha20-Poly1305)
+        |
+Frame encryption
+```
+
+## Revocation
+
+### Host revocation
+
+The host can revoke a client's access by:
+
+1. Calling `server.revoke(deviceId)`
+2. This prevents future sessions from being established
+3. Existing sessions are not immediately terminated (use disconnect)
+
+### Client revocation
+
+The client can forget a paired host by:
+
+1. Calling `client.forget(appId)`
+2. This removes the paired-app record
+3. Future pairing requires a new QR scan
+
+## Security properties
+
+| Property | Mechanism |
+| --- | --- |
+| **Authentication** | Ed25519 signatures |
+| **Forward secrecy** | Ephemeral X25519 keys |
+| **Key confirmation** | Both derive same session keys |
+| **Replay protection** | Nonces + sequence numbers |
+| **MITM detection** | SAS verification + fingerprint pinning |
+| **Revocation** | Per-device revocation lists |

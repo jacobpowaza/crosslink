@@ -1,0 +1,25 @@
+{
+  "name": "@crosslink/webrtc-adapter",
+  "version": "0.1.0",
+  "description": "Crosslink WebRTC data-channel transport adapter (interface + roadmap)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crosslink/core": "*",
+    "@crosslink/protocol": "*"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.6",
+    "typescript": "^5.6.3"
+  }
+}

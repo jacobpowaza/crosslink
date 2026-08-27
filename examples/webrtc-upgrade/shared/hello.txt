@@ -1,0 +1,4 @@
+This file lives on the host machine.
+
+Reading it from another network goes through the relay; after an upgrade the
+same call travels directly between the two devices.

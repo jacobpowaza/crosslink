@@ -1,0 +1,104 @@
+---
+title: Links
+description: Encrypted connections between devices
+---
+
+## What is a link?
+
+A link is an established encrypted connection between a host and a client. It represents the active session over which RPC calls and events flow.
+
+## Link lifecycle
+
+```text
+1. Pairing     -- QR scan, identity exchange, SAS verification
+2. Connection  -- E25519 key exchange, session key derivation
+3. Active      -- RPC calls, events, streaming
+4. Disconnect  -- Graceful shutdown or network loss
+5. Reconnect   -- Automatic reconnection with backoff
+```
+
+## Link states
+
+| State | Description |
+| --- | --- |
+| `idle` | Not connected, no active session |
+| `connecting` | Establishing connection |
+| `connected` | Active session, RPC available |
+| `reconnecting` | Lost connection, attempting to restore |
+| `disconnected` | Intentionally disconnected |
+| `error` | Connection failed |
+
+## Creating a link
+
+### From host perspective
+
+```js
+// Server automatically manages links
+const server = createCrosslinkServer({ /* ... */ });
+
+// Listen for connections
+server.on("clientConnected", (event) => {
+  console.log(`Client ${event.deviceId} connected`);
+});
+
+// List active links
+const links = server.getLinks();
+```
+
+### From client perspective
+
+```js
+const client = await CrosslinkClient.create({ /* ... */ });
+
+// Pair and connect
+await client.pairFromQr(uri, ["app.control"]);
+const rpc = await client.connect(["app.control"]);
+
+// Monitor connection state
+client.onStateChange((state) => {
+  console.log("State:", state);
+});
+```
+
+## Multiple links
+
+A host can maintain multiple simultaneous links:
+
+```text
+Host
+├── Link 1: Client A (phone) -- WebSocket
+├── Link 2: Client B (tablet) -- WebRTC
+└── Link 3: Client C (laptop) -- relay
+```
+
+Each link has its own:
+- Encryption keys
+- Granted capabilities
+- Sequence counters
+- Connection state
+
+## Link persistence
+
+Links persist across network interruptions:
+- The session key remains valid
+- Reconnection uses exponential backoff
+- RPC calls queue during disconnection
+- Subscriptions restore automatically
+
+## Security per link
+
+Each link has independent security:
+- Unique session key (forward secrecy)
+- Independent capability grants
+- Separate sequence counters
+- Isolated error handling
+
+## Link events
+
+| Event | Description |
+| --- | --- |
+| `connected` | Link established |
+| `disconnected` | Link closed |
+| `error` | Link error occurred |
+| `reconnecting` | Reconnection attempt started |
+| `reconnected` | Reconnection successful |

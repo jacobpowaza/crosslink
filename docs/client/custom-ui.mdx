@@ -1,0 +1,169 @@
+---
+title: Custom UI
+description: Building your own client interface
+---
+
+While Crosslink provides a demo PWA, you can build any client interface you want.
+
+## Basic client setup
+
+```ts
+import { CrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await CrosslinkClient.create({
+  deviceName: "My Device",
+  onStateChange: handleStateChange,
+  onConfirmPairing: handlePairingConfirm
+});
+```
+
+## Pairing UI
+
+Build a pairing screen that handles the QR scan:
+
+```tsx
+function PairingScreen() {
+  const [uri, setUri] = useState("");
+  const [error, setError] = useState(null);
+
+  const handlePair = async () => {
+    try {
+      const record = await client.pairFromQr(uri, requestedCaps);
+      navigateTo("/connected");
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div>
+      <h2>Pair with Host</h2>
+      <input
+        value={uri}
+        onChange={(e) => setUri(e.target.value)}
+        placeholder="Paste crosslink://pair?... URI"
+      />
+      <button onClick={handlePair}>Pair</button>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+```
+
+## SAS confirmation
+
+Build a screen that shows SAS digits for verification:
+
+```tsx
+function SasConfirmScreen({ sas, hostName, grantedCaps, onConfirm }) {
+  return (
+    <div>
+      <h2>Confirm Pairing</h2>
+      <p>Pairing with: <strong>{hostName}</strong></p>
+      <div className="sas-digits">
+        {sas.split(" ").map((group, i) => (
+          <span key={i} className="sas-group">{group}</span>
+        ))}
+      </div>
+      <p>Verify these digits match on the host device.</p>
+      <p>Capabilities: {grantedCaps.join(", ")}</p>
+      <button onClick={() => onConfirm(true)}>Confirm</button>
+      <button onClick={() => onConfirm(false)}>Reject</button>
+    </div>
+  );
+}
+```
+
+## Connection state UI
+
+```tsx
+function ConnectionStatus({ state }) {
+  const states = {
+    offline: { color: "gray", label: "Disconnected" },
+    connecting: { color: "yellow", label: "Connecting..." },
+    lan: { color: "green", label: "Connected (LAN)" },
+    "crosslink-relayed": { color: "blue", label: "Connected (Relay)" },
+    "webrtc-direct": { color: "green", label: "Connected (Direct)" },
+    reconnecting: { color: "yellow", label: "Reconnecting..." },
+  };
+
+  const { color, label } = states[state] || states.offline;
+
+  return (
+    <div className={`status status-${color}`}>
+      <span className="dot" />
+      {label}
+    </div>
+  );
+}
+```
+
+## RPC calls
+
+```tsx
+function DataViewer() {
+  const [data, setData] = useState(null);
+
+  const fetchData = async () => {
+    const rpc = client.rpc();
+    const result = await rpc.call("data.get");
+    setData(result);
+  };
+
+  return (
+    <div>
+      <button onClick={fetchData}>Refresh</button>
+      <pre>{JSON.stringify(data, null, 2)}</pre>
+    </div>
+  );
+}
+```
+
+## Event subscriptions
+
+```tsx
+function EventLog() {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    const rpc = client.rpc();
+    const unsub = rpc.subscribe("data.changed", (payload) => {
+      setEvents(prev => [...prev, { time: Date.now(), payload }]);
+    });
+    return unsub;
+  }, []);
+
+  return (
+    <ul>
+      {events.map((e, i) => (
+        <li key={i}>{JSON.stringify(e.payload)}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+## Error handling
+
+```ts
+try {
+  const result = await rpc.call("data.get");
+} catch (err) {
+  if (err.code === "capability_denied") {
+    showUpgradePrompt();
+  } else if (err.code === "device_revoked") {
+    showRevokeMessage();
+  } else if (err.code === "grant_expired") {
+    showRenewalPrompt();
+  }
+}
+```
+
+## Styling
+
+Crosslink doesn't enforce any styling. Use whatever framework you prefer:
+
+- **React** -- See the [React guide](/guides/react)
+- **Vue** -- Same SDK, different component syntax
+- **Svelte** -- Same SDK, reactive stores
+- **Vanilla JS** -- Direct DOM manipulation

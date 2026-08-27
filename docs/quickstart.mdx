@@ -1,0 +1,180 @@
+---
+title: Quickstart
+description: Get a working connection in under 5 minutes
+---
+
+This guide gets you from zero to a working encrypted connection between a host app and a browser client.
+
+## Prerequisites
+
+- Node.js >= 20 (22 recommended)
+- npm
+
+## Step 1: Install the packages
+
+```bash
+mkdir my-crosslink-app && cd my-crosslink-app
+npm init -y
+npm install @crosslink/sdk-node @crosslink/sdk-browser
+```
+
+## Step 2: Start the services
+
+Crosslink uses two small services for pairing and cross-network connectivity:
+
+```bash
+# In a separate terminal, from the crosslink repo root
+npm run stack
+```
+
+This starts:
+- **Signaling** on `ws://127.0.0.1:8081` -- helps devices find each other
+- **Relay** on `http://127.0.0.1:8082` -- forwards encrypted traffic across networks
+
+<Note>
+Both services are optional for LAN-only pairing. For cross-network use, you need both.
+</Note>
+
+## Step 3: Create a host
+
+Create `host.mjs`:
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const server = createCrosslinkServer({
+  application: { id: "com.example.myapp", name: "My App", version: "1.0.0" },
+  capabilities: [
+    { id: "app.control", title: "Control the app", risk: "medium" },
+    { id: "app.destroy", title: "Delete everything", risk: "high" }
+  ],
+  signalingUrl: process.env.CROSSLINK_SIGNALING_URL ?? "http://127.0.0.1:8081",
+  relayUrl: process.env.CROSSLINK_RELAY_URL ?? "http://127.0.0.1:8082",
+  lan: { bind: "loopback" },
+  pairing: {
+    approve: async (req) => {
+      console.log(`Pairing request from "${req.deviceName}" -- SAS ${req.sas}`);
+      console.log(`Requested caps: ${req.requestedCaps.join(", ")}`);
+      return true; // auto-approve for demo; use a real prompt in production
+    }
+  }
+});
+
+server.expose("app.status", () => ({ ok: true }), { capability: "app.control" });
+server.declareEvent("app.tick");
+
+await server.start();
+const info = await server.getPairingCode();
+console.log("Code:", info.code);
+console.log("URI:", info.uri);
+
+// Emit an event every 5 seconds
+setInterval(() => server.emit("app.tick", { t: Date.now() }), 5000);
+```
+
+Run it:
+
+```bash
+CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
+CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
+node host.mjs
+```
+
+The host prints a pairing code and URI. Identity persists in `.crosslink-data/com.example.myapp/` -- restart freely.
+
+## Step 4: Connect a client
+
+Create `client.mjs`:
+
+```js
+import { createCrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = createCrosslinkClient({
+  deviceName: "My Phone",
+  onStateChange: (state) => console.log("State:", state),
+  onConfirmPairing: async ({ sas, grantedCaps }) => {
+    console.log(`SAS: ${sas}`);
+    console.log(`Capabilities: ${grantedCaps.join(", ")}`);
+    return true; // auto-approve for demo
+  }
+});
+
+// Pair using the URI from the host
+const uri = process.argv[2]; // pass the crosslink://pair?... URI
+await client.pairFromQr(uri, ["app.control"]);
+
+// Connect -- this auto-reconnects forever
+const rpc = await client.connect();
+
+// Call an RPC method
+const status = await rpc.call("app.status");
+console.log("Status:", status);
+
+// Subscribe to events
+rpc.subscribe("app.tick", (payload) => {
+  console.log("Tick:", payload);
+});
+```
+
+Run it (pass the URI from the host):
+
+```bash
+node client.mjs "crosslink://pair?v=1&s=http://127.0.0.1:8081&c=123456789&a=com.example.myapp&n=My%20App&f=..."
+```
+
+## Step 5: Verify
+
+You should see:
+
+1. The host prints the pairing code and SAS digits
+2. The client connects, confirms SAS, and pairs
+3. The client receives `app.status` responses
+4. The client receives `app.tick` events every 5 seconds
+
+That's it -- you have an end-to-end encrypted connection.
+
+## What just happened?
+
+```text
+1. Host generated a pairing code (single-use, 2-minute TTL)
+2. Client resolved the code via the signaling service
+3. Both devices exchanged signed key material (CLX1 handshake)
+4. User confirmed matching SAS digits (MITM defense)
+5. Encrypted session established (XChaCha20-Poly1305)
+6. RPC methods became available over the encrypted channel
+```
+
+## Pairing code format
+
+The pairing URI has this structure:
+
+```
+crosslink://pair?v=1&s=<signalingUrl>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>&e=<expiryMs>
+```
+
+| Parameter | Description |
+| --- | --- |
+| `v` | Protocol version (always `1`) |
+| `s` | Signaling server URL |
+| `c` | 9-digit pairing code |
+| `a` | Application ID |
+| `n` | Application name (URL-encoded) |
+| `f` | First 16 hex chars of host fingerprint (MITM pin) |
+| `e` | Expiry timestamp in ms |
+
+## Next steps
+
+<CardGroup>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how the pieces fit together
+  </Card>
+  <Card title="Permissions" icon="lock" href="/concepts/permissions">
+    Learn about capability-based access control
+  </Card>
+  <Card title="React Integration" icon="react" href="/guides/react">
+    Use Crosslink in a React app
+  </Card>
+  <Card title="Self-Hosting" icon="server" href="/guides/self-hosting">
+    Deploy your own signaling and relay
+  </Card>
+</CardGroup>

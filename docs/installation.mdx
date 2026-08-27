@@ -1,0 +1,162 @@
+---
+title: Installation
+description: How to install and set up Crosslink
+---
+
+## Requirements
+
+- **Node.js** >= 20 (22 recommended)
+- **npm** >= 9
+
+## Install packages
+
+```bash
+npm install @crosslink/sdk-node @crosslink/sdk-browser
+```
+
+## Install the services
+
+Crosslink's signaling and relay services are stateless and can run anywhere:
+
+### Local development
+
+```bash
+# Clone the crosslink repo
+git clone https://github.com/anthropics/crosslink.git
+cd crosslink
+npm install
+npm run stack
+```
+
+This starts both services on localhost.
+
+### Docker
+
+```bash
+docker compose up -d
+```
+
+### Docker Compose (standalone)
+
+```yaml
+version: "3.9"
+services:
+  signaling:
+    image: crosslink/signaling:latest
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+    restart: unless-stopped
+
+  relay:
+    image: crosslink/relay:latest
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+    restart: unless-stopped
+```
+
+### Standalone binaries
+
+Download from the [releases page](https://github.com/anthropics/crosslink/releases) for your platform.
+
+## Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CROSSLINK_SIGNALING_URL` | `http://127.0.0.1:8081` | Signaling server URL |
+| `CROSSLINK_RELAY_URL` | `http://127.0.0.1:8082` | Relay server URL |
+| `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted file storage (host fallback) |
+
+## Verify installation
+
+```bash
+node -e "
+  const { createCrosslinkServer } = require('@crosslink/sdk-node');
+  console.log('Host SDK loaded');
+"
+```
+
+## TypeScript support
+
+Both SDKs ship with full TypeScript declarations. No `@types` packages needed.
+
+```ts
+import type { CreateCrosslinkServerOptions } from "@crosslink/sdk-node";
+```
+
+## Framework-specific setup
+
+### Vite / React
+
+```bash
+npm create vite@latest my-app -- --template react
+cd my-app
+npm install @crosslink/sdk-browser
+```
+
+### Next.js
+
+```bash
+npx create-next-app@latest my-app
+cd my-app
+npm install @crosslink/sdk-browser
+```
+
+### Electron
+
+```bash
+npm install @crosslink/sdk-node  # In main process
+npm install @crosslink/sdk-browser  # In renderer (if needed)
+```
+
+### Tauri
+
+```bash
+npm install @crosslink/sdk-browser  # In frontend
+```
+
+## Node.js requirements by platform
+
+| Platform | Minimum | Notes |
+| --- | --- | --- |
+| Linux | 20 | Keytar requires `libsecret-dev` for OS keychain |
+| macOS | 20 | Native Keychain access works out of the box |
+| Windows | 20 | Native Credential Vault access works out of the box |
+| Docker | 20 | Use `node:20-slim` or `node:20-alpine` |
+
+## Troubleshooting
+
+### `keytar` fails to load
+
+Install the native dependency for your OS:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libsecret-1-dev
+
+# RHEL/Fedora
+sudo dnf install libsecret-devel
+
+# macOS (usually works, but if not)
+brew install pkg-config
+```
+
+### WebCrypto unavailable
+
+Ensure you're serving from a **secure context** (HTTPS or localhost). WebCrypto is not available on `http://` origins.
+
+### Module not found
+
+Ensure you're using ESM:
+
+```json
+// package.json
+{
+  "type": "module"
+}
+```
+
+Or rename files to `.mjs`.

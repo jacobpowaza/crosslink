@@ -1,0 +1,38 @@
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+
+# ── Build output ──────────────────────────────────────────────
+dist/
+*.tsbuildinfo
+coverage/
+
+# ── Crosslink runtime data (identity seeds, device records, tokens) ──
+.crosslink-data/
+
+# ── Tunnels / dev servers ─────────────────────────────────────
+.tunnel-urls.json
+.tunnel/
+
+# ── OS / editor ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/settings.json
+.idea/
+
+# ── Demos / output (lives in separate repos) ──────────────────
+brag-output/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Secrets (never commit these) ─────────────────────────────
+*.pem
+*.key
+*.cert
+*.p12
+.env
+.env.*

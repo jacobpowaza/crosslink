@@ -1,0 +1,136 @@
+---
+title: Electron Integration
+description: Using Crosslink in Electron applications
+---
+
+## Setup
+
+```bash
+npm install @crosslink/sdk-node @crosslink/sdk-browser
+```
+
+- `@crosslink/sdk-node` in the **main process**
+- `@crosslink/sdk-browser` in the **renderer** (optional)
+
+## Main process
+
+```js
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+import { app, ipcMain } from "electron";
+
+let server;
+
+app.whenReady().then(async () => {
+  server = createCrosslinkServer({
+    application: {
+      id: "com.example.myelectron",
+      name: "My Electron App",
+      version: app.getVersion()
+    },
+    capabilities: [
+      { id: "app.control", title: "Control the app", risk: "medium" }
+    ],
+    signalingUrl: "http://127.0.0.1:8081",
+    relayUrl: "http://127.0.0.1:8082",
+    lan: { bind: "loopback" },
+    pairing: {
+      approve: async (req) => {
+        // Forward to renderer for user confirmation
+        return ipcMain.handleOnce("pairing-approve", () => req);
+      }
+    }
+  });
+
+  server.expose("app.status", () => ({
+    version: app.getVersion(),
+    uptime: process.uptime()
+  }));
+
+  await server.start();
+});
+
+// Expose pairing code to renderer
+ipcMain.handle("get-pairing-code", async () => {
+  return server.getPairingCode();
+});
+
+// Cleanup
+app.on("will-quit", () => {
+  server?.stop();
+});
+```
+
+## Renderer process
+
+```js
+const { contextBridge, ipcRenderer } = require("electron");
+
+// Expose Crosslink to renderer
+contextBridge.exposeInMainWorld("crosslink", {
+  getPairingCode: () => ipcRenderer.invoke("get-pairing-code"),
+  approvePairing: (approve) => ipcRenderer.handle("pairing-approve", approve)
+});
+```
+
+## Using safeStorage
+
+Electron's `safeStorage` provides OS-level encryption:
+
+```js
+import safeStorage from "electron";
+
+// Encrypt
+const encrypted = safeStorage.encryptString("my-secret");
+
+// Decrypt
+const decrypted = safeStorage.decryptString(encrypted);
+```
+
+## Preload script
+
+```js
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("electronCrosslink", {
+  // Pairing
+  getPairingCode: () => ipcRenderer.invoke("crosslink:get-pairing-code"),
+  approvePairing: (req) => ipcRenderer.invoke("crosslink:approve-pairing", req),
+
+  // Status
+  onStateChange: (cb) => ipcRenderer.on("crosslink:state-change", cb),
+  onClientConnected: (cb) => ipcRenderer.on("crosslink:client-connected", cb),
+  onClientDisconnected: (cb) => ipcRenderer.on("crosslink:client-disconnected", cb)
+});
+```
+
+## Security considerations
+
+- The main process holds the identity key in the OS keychain via keytar or safeStorage
+- The renderer process does not have direct access to the keychain
+- Use IPC to communicate between main and renderer
+- Consider disabling Node integration in the renderer for security
+
+```js
+// BrowserWindow options
+{
+  webPreferences: {
+    nodeIntegration: false,
+    contextIsolation: true,
+    preload: path.join(__dirname, "preload.js")
+  }
+}
+```
+
+## Auto-updates
+
+When updating your Electron app, the identity key persists:
+
+```js
+// After update, the host can reconnect to existing clients
+// because the identity key hasn't changed
+app.whenReady().then(async () => {
+  // Server starts with existing identity
+  await server.start();
+  // Existing clients can reconnect
+});
+```

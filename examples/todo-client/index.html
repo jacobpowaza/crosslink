@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Todo">
+  <meta name="description" content="Secure encrypted todo list — pairs with a Crosslink host">
+  <title>Crosslink Todo</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ============================================================ -->
+  <!-- SCREEN: Install gate                                          -->
+  <!-- ============================================================ -->
+  <div id="install-screen" class="screen install-screen">
+    <div class="container">
+      <div class="icon">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="4" y="8" width="32" height="28" rx="4" stroke="white" stroke-width="2.5"/><path d="M14 20l4 4 8-8" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <h1>Crosslink Todo</h1>
+      <p>An encrypted, peer-to-peer todo list. Add this app to your homescreen to get started.</p>
+
+      <div class="install-steps">
+        <div class="install-step" id="step-tap">
+          <span class="num">1</span>
+          <span>Tap the <strong>Share</strong> button in your browser</span>
+        </div>
+        <div class="install-step" id="step-add">
+          <span class="num">2</span>
+          <span>Select <strong>"Add to Home Screen"</strong></span>
+        </div>
+        <div class="install-step" id="step-browser">
+          <span class="num">3</span>
+          <span>Open the app from your homescreen</span>
+        </div>
+      </div>
+
+      <button id="install-btn" onclick="installApp()">Add to Home Screen</button>
+
+      <div id="manual-instructions" class="hidden" style="margin-top:16px;">
+        <div class="card" style="text-align:left;">
+          <h2>Manual install</h2>
+          <p style="margin-bottom:8px;">Your browser doesn't support automatic installation. To install manually:</p>
+          <p style="font-size:12px;color:var(--muted);">
+            <strong>iOS Safari:</strong> Tap Share > Add to Home Screen<br>
+            <strong>Android Chrome:</strong> Tap menu (3 dots) > Add to Home Screen<br>
+            <strong>Desktop:</strong> Click the install icon in the address bar
+          </p>
+        </div>
+      </div>
+
+      <div class="install-skip">
+        <button onclick="skipInstall()">Continue in browser instead</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- SCREEN: Network mode selector                                 -->
+  <!-- ============================================================ -->
+  <div id="mode-screen" class="screen mode-screen">
+    <div class="container">
+      <h1>How will you connect?</h1>
+      <p class="subtitle">Choose based on where your host is running</p>
+
+      <div class="mode-options">
+        <div id="mode-local" class="mode-card" onclick="selectMode('local')">
+          <div class="badge">Simple</div>
+          <h3>Same WiFi network</h3>
+          <p>Phone and computer on the same local network. No internet needed. Fastest connection.</p>
+        </div>
+        <div id="mode-relay" class="mode-card" onclick="selectMode('relay')">
+          <div class="badge">Anywhere</div>
+          <h3>Any network</h3>
+          <p>Works over cellular, remote, or different networks. Requires the host to have relay + signaling set up.</p>
+        </div>
+      </div>
+
+      <button id="mode-next" disabled onclick="goToPairing()">Continue</button>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- SCREEN: Pairing                                               -->
+  <!-- ============================================================ -->
+  <div id="pair-screen" class="screen pair-screen">
+    <div class="container">
+      <div class="card pairing-section">
+        <h2>Pair with Host</h2>
+        <p id="pair-hint" class="subtitle">Paste the pairing URI from the host CLI</p>
+        <textarea id="pair-uri" placeholder="crosslink://pair?v=1&s=...&c=..."></textarea>
+        <button id="pair-btn" onclick="pair()">Connect</button>
+        <p id="pair-status" class="status"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- SCREEN: Server off / offline placeholder                      -->
+  <!-- ============================================================ -->
+  <div id="offline-screen" class="screen offline-screen">
+    <div class="container">
+      <div class="pulse"></div>
+      <h1 style="font-size:18px;margin-bottom:6px;">Host Offline</h1>
+      <p id="offline-reason" style="color:var(--muted);font-size:13px;margin-bottom:4px;">The host is not reachable right now.</p>
+
+      <div class="offline-menu">
+        <button onclick="retryConnection()">Try Reconnecting</button>
+        <button class="secondary" onclick="goOfflinePair()">Pair with a Different Host</button>
+      </div>
+
+      <div class="card" style="margin-top:24px;text-align:left;">
+        <h2 style="font-size:14px;">Troubleshooting</h2>
+        <p style="font-size:12px;margin-top:6px;">
+          <strong>Local mode:</strong> Make sure the host is running and your device is on the same WiFi.<br><br>
+          <strong>Relay mode:</strong> Make sure the host has started with signaling and relay services. Try generating a new pairing code on the host.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- SCREEN: Main app                                              -->
+  <!-- ============================================================ -->
+  <div id="app-screen" class="screen">
+    <div class="container">
+      <div class="app-header">
+        <h1>
+          Todo
+          <span id="notif-badge" class="notif-badge hidden">0</span>
+        </h1>
+        <span id="conn-status" class="status-pill offline">offline</span>
+      </div>
+
+      <div class="card">
+        <div class="todo-input">
+          <input id="new-todo" placeholder="New todo..." onkeydown="if(event.key==='Enter')createTodo()">
+          <button onclick="createTodo()" class="small" style="width:auto;padding:10px 16px">+</button>
+        </div>
+        <ul class="todo-list" id="todo-list"></ul>
+      </div>
+
+      <div class="card">
+        <h2 style="font-size:14px;">Notifications</h2>
+        <div id="notif-log" class="notif-log" style="margin-top:8px;">
+          <div class="notif-entry" style="color:var(--muted);">No notifications yet</div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <button onclick="if(window._clientRef()){window._clientRef().close();}showScreen('mode-screen')">Switch Host</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast">
+    <div class="toast-title"></div>
+    <div class="toast-body"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

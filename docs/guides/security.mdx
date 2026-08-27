@@ -1,0 +1,43 @@
+---
+title: "Security & Encryption Architecture"
+description: "How Crosslink secures remote and local connections with zero-trust end-to-end encryption."
+---
+
+# Security & Encryption Architecture
+
+Crosslink is designed under a **zero-trust model**: even when traffic traverses third-party tunnels (like Cloudflare, localtunnel, or ngrok) or public relay brokers, **no intermediary server ever has access to plaintext data**.
+
+---
+
+## 1. End-to-End Cryptographic Primitives
+
+- **Handshake Protocol (CLX1):** Authenticated key exchange using **X25519** ECDH combined with **Ed25519** signatures.
+- **Symmetric Frame Encryption:** All message frames and RPC invocations are encrypted with **XChaCha20-Poly1305 AEAD** (Authenticated Encryption with Associated Data).
+- **Key Derivation:** **HKDF-SHA256** derives independent transmit and receive session keys.
+
+---
+
+## 2. Host Key Fingerprint Pinning
+
+Every desktop host generates a persistent Ed25519 identity key.
+- The 16-character hexadecimal fingerprint is embedded in the QR code:
+  `https://.../mobile.html?pair=crosslink://pair?...&f=9a4f2e1c7b8d30e5`
+- When the phone camera scans the QR code, the browser client **pins the host fingerprint**.
+- If a man-in-the-middle (MITM) attacker attempts to intercept the signaling or relay server, the handshake fails immediately before any RPC payload is sent.
+
+---
+
+## 3. Short Authentication String (SAS) Human Verification
+
+To guarantee that the physical device scanning the screen is the one pairing:
+- During pairing, a 9-digit pairing code with a **120-second TTL** is generated.
+- A 3-digit human-readable **Short Authentication String (SAS)** is computed from the mutual handshake exchange.
+- The user visually confirms the 3 digits displayed on their phone screen match the desktop widget before granting capability permissions.
+
+---
+
+## 4. Capability-Gated Permissions
+
+Unlike raw sockets, mobile devices in Crosslink only receive access to explicitly declared capabilities (e.g. `chat.send`, `chat.read`, `notes.sync`).
+- Capabilities can be revoked individually at any time from the desktop.
+- When a device is revoked, its session keys and authentication tokens are immediately invalidated on both local and relayed connections.

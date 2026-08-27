@@ -1,0 +1,20 @@
+{
+  "name": "@crosslink/example-notes-host",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "notes-host": "./dist/cli.js" },
+  "scripts": {
+    "build": "tsup src/cli.ts --format esm --clean --external @crosslink/sdk-node,qrcode",
+    "typecheck": "tsc --noEmit",
+    "dev": "node src/cli.ts"
+  },
+  "dependencies": {
+    "@crosslink/sdk-node": "*",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "tsup": "^8.3.6"
+  }
+}
