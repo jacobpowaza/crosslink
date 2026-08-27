@@ -4931,6 +4931,7 @@ function parsePairingUri(text) {
   const appId = params.get("a");
   const appName = params.get("n") ?? appId ?? "";
   const fp16 = (params.get("f") ?? "").toLowerCase();
+  const transport = params.get("t") ?? void 0;
   if (version !== "1") throw new Error(`unsupported pairing uri version: ${String(version)}`);
   if (!signalingUrl || !/^https?:\/\//i.test(signalingUrl)) {
     throw new Error("pairing uri missing valid signaling url");
@@ -4939,7 +4940,7 @@ function parsePairingUri(text) {
     throw new Error("pairing uri missing valid app id");
   }
   if (!/^[0-9a-f]{16}$/.test(fp16)) throw new Error("pairing uri missing fingerprint");
-  return { signalingUrl, code, appId, appName, fp16 };
+  return { signalingUrl, code, appId, appName, fp16, transport };
 }
 function normalizeCode(input) {
   const digits = input.replace(/\D/g, "");

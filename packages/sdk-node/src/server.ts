@@ -577,7 +577,16 @@ export class CrosslinkServer extends EventEmitter {
 
     // Build the pairing URI and QR regardless of signaling state — the URI
     // is needed for local (in-app) pairing and for tests.
-    const signalingUrl = this._signalingUrl || (this.config.signalingUrl ?? "");
+    // When no explicit signaling URL is configured, the framework provides
+    // default bootstrap/signaling services so pairing works out of the box.
+    const resolved = resolveServiceUrls({
+      signalingUrl: this.config.signalingUrl,
+      relayUrl: this.config.relayUrl,
+      signalingEnv: process.env.CROSSLINK_SIGNALING_URL,
+      relayEnv: process.env.CROSSLINK_RELAY_URL,
+    });
+    const signalingUrl =
+      this._signalingUrl || this.config.signalingUrl || (resolved?.signalingUrl ?? "https://signal.crosslink.app");
     const uri = buildPairingUri({
       signalingUrl,
       code: session.code,

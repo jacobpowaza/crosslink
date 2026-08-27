@@ -185,7 +185,7 @@ export function writeStackConfig(
  * Resolve signaling and relay URLs, checking (in order):
  *   1. Explicit config values / env vars
  *   2. Stack config written by running services (.crosslink-data/stack.json)
- *   3. null (no config found, caller should skip connection)
+ *   3. Default framework-provided URLs (for zero-config pairing)
  */
 export function resolveServiceUrls(opts: {
   signalingUrl?: string;
@@ -206,12 +206,29 @@ export function resolveServiceUrls(opts: {
   const signalingUrl =
     opts.signalingUrl ??
     opts.signalingEnv ??
-    (stack ? `${defaultHost}:${stack.signaling.port}` : `${defaultHost}:8081`);
+    (stack ? `${defaultHost}:${stack.signaling.port}` : "");
 
   const relayUrl =
     opts.relayUrl ??
     opts.relayEnv ??
-    (stack ? `${defaultHost}:${stack.relay.port}` : `${defaultHost}:8082`);
+    (stack ? `${defaultHost}:${stack.relay.port}` : "");
 
-  return { signalingUrl, relayUrl };
+  // When neither explicit config nor stack config provides URLs, fall back
+  // to framework default public bootstrap/signaling services. This ensures
+  // pairing works out of the box (zero-config) without requiring manual
+  // signaling server setup. The pairing layer uses this as a bootstrap
+  // endpoint; actual encrypted traffic can still travel over LAN/relay.
+  const useDefaults = !signalingUrl && !relayUrl;
+  if (useDefaults) {
+    return {
+      signalingUrl: "https://signal.crosslink.app",
+      relayUrl: "https://relay.crosslink.app",
+    };
+  }
+
+  // If at least one is configured, return both (empty string for missing one)
+  return {
+    signalingUrl: signalingUrl || "https://signal.crosslink.app",
+    relayUrl: relayUrl || "https://relay.crosslink.app",
+  };
 }

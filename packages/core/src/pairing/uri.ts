@@ -19,6 +19,8 @@ export interface ParsedPairingUri {
   appName: string;
   /** first 16 hex chars of host fingerprint */
   fp16: string;
+  /** Connection transport intended for pairing: auto | lan | relay | webrtc */
+  transport?: string;
 }
 
 /** First 16 hex chars of the host identity fingerprint (QR pin). */
@@ -32,6 +34,7 @@ export function buildPairingUri(input: {
   appId: string;
   appName: string;
   hostPubEdB64: string;
+  transport?: string;
 }): string {
   const cleanCode = (input.code ?? "").replace(/\s/g, "");
   const params = new URLSearchParams({
@@ -40,7 +43,8 @@ export function buildPairingUri(input: {
     ...(cleanCode ? { c: cleanCode } : {}),
     a: input.appId,
     n: input.appName,
-    f: fingerprint16(input.hostPubEdB64)
+    f: fingerprint16(input.hostPubEdB64),
+    ...(input.transport ? { t: input.transport } : {}),
   });
   return `${PAIRING_URI_SCHEME}?${params.toString()}`;
 }
@@ -68,6 +72,7 @@ export function parsePairingUri(text: string): ParsedPairingUri {
   const appId = params.get("a");
   const appName = params.get("n") ?? appId ?? "";
   const fp16 = (params.get("f") ?? "").toLowerCase();
+  const transport = params.get("t") ?? undefined;
 
   if (version !== "1") throw new Error(`unsupported pairing uri version: ${String(version)}`);
   if (!signalingUrl || !/^https?:\/\//i.test(signalingUrl)) {
@@ -78,7 +83,7 @@ export function parsePairingUri(text: string): ParsedPairingUri {
   }
   if (!/^[0-9a-f]{16}$/.test(fp16)) throw new Error("pairing uri missing fingerprint");
 
-  return { signalingUrl, code, appId, appName, fp16 };
+  return { signalingUrl, code, appId, appName, fp16, transport };
 }
 
 /** Accepts "483921004", "483 921 004", "483-921-004". */
