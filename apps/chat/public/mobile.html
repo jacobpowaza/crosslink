@@ -295,6 +295,27 @@
   </style>
 </head>
 <body>
+  <!-- Screen A: Pairing code entry -->
+  <div id="pairCodeScreen" style="display:none; position:fixed; inset:0; z-index:200; background:#000; flex-direction:column; align-items:center; justify-content:center; gap:24px;">
+    <div style="text-align:center;">
+      <img src="./crosslink-mark.svg" alt="Crosslink" style="width:120px; opacity:0.9;" />
+      <h2 style="font-size:20px; font-weight:600; margin-top:16px; color:#fff;">Enter pairing code</h2>
+      <p style="font-size:13px; color:#94a3b8; margin-top:6px;">Type the 9 digits shown on your computer</p>
+    </div>
+    <div id="pairCodeGrid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:260px;">
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
+    </div>
+    <p id="pairCodeErr" style="color:#f87171; font-size:13px; min-height:20px; margin:0;">&nbsp;</p>
+  </div>
+
   <div id="bootstrap" class="hidden">
     <img class="mark" src="./crosslink-mark.svg" alt="Crosslink" />
     <button class="continue-btn" id="continueBrowserBtn">Continue in browser &rarr;</button>
@@ -537,6 +558,78 @@
         sendMsg();
       }
     });
+
+    // ── Screen A: Pairing code entry wiring ─────────────
+    const pairDigits = document.querySelectorAll('.pairDigit');
+    const pairErrEl = $("pairCodeErr");
+    let pairCodeValue = "";
+
+    function showScreenA() {
+      $("pairCodeScreen").style.display = "flex";
+      $("bootstrap").classList.add("hidden");
+      document.body.classList.remove("pre-install");
+    }
+
+    function hideScreenA() {
+      $("pairCodeScreen").style.display = "none";
+    }
+
+    pairDigits.forEach((input, idx) => {
+      input.addEventListener("input", () => {
+        const val = input.value.replace(/\D/g, "");
+        input.value = val ? val[0] : "";
+        if (val && idx < pairDigits.length - 1) pairDigits[idx + 1].focus();
+        pairCodeValue = Array.from(pairDigits).map(i => i.value.replace(/\D/g, "")).join("");
+        // Auto-proceed when 9 digits entered
+        if (pairCodeValue.length === 9) {
+          verifyPairCode(pairCodeValue);
+        }
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Backspace" && !input.value && idx > 0) pairDigits[idx - 1].focus();
+      });
+      input.addEventListener("paste", (e) => {
+        e.preventDefault();
+        const pasted = (e.clipboardData || window.clipboardData).getData("text").replace(/\D/g, "").slice(0, 9);
+        for (let i = 0; i < pasted.length && i < pairDigits.length; i++) {
+          pairDigits[i].value = pasted[i];
+        }
+        pairCodeValue = pasted;
+        if (pairCodeValue.length === 9) verifyPairCode(pairCodeValue);
+      });
+    });
+
+    async function verifyPairCode(code) {
+      pairErrEl.textContent = "Verifying…";
+      pairErrEl.style.color = "#94a3b8";
+      try {
+        const res = await fetch(`/api/pair?mode=local`);
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        // Compare entered code with server pairing code
+        if (data.code && String(data.code).replace(/\D/g, "") === code) {
+          pairErrEl.textContent = "";
+          hideScreenA();
+          // After pairing confirmed, show bootstrap (Screen B) or start pairing (Screen C)
+          if (!isStandalone() && !skipInstall) {
+            document.body.classList.add("pre-install");
+            $("bootstrap").classList.remove("hidden");
+          } else if (pairingUri) {
+            startPairing();
+          }
+        } else {
+          pairErrEl.textContent = "Incorrect pairing code. Try again.";
+          pairErrEl.style.color = "#f87171";
+        }
+      } catch (err) {
+        pairErrEl.textContent = "Network error — check connection.";
+        pairErrEl.style.color = "#f87171";
+      }
+    }
+
+    // Show Screen A by default; hide pairing spinner initially
+    $("pairing").classList.add("hidden");
+    showScreenA();
 
     // ── start ───────────────────────────────────────────
     if (!isStandalone() && !skipInstall) {
