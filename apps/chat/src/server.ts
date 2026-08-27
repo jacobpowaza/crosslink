@@ -23,7 +23,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCrosslinkServer } from "@crosslink/sdk-node";
-import { buildPairingUri } from "@crosslink/core";
+import { buildPairingUri, parsePairingUri } from "@crosslink/core";
 import { bytesToBase64 } from "@crosslink/protocol";
 import QRCode from "qrcode";
 
