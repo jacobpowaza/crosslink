@@ -599,6 +599,14 @@ export class CrosslinkServer extends EventEmitter {
       pairingSignalingUrl = this.lan.url().replace(/^http/, "ws");
     }
 
+    // Rewrite localhost URLs to the LAN/reachable address so the mobile
+    // client (scanning from a different device) can actually reach the
+    // signaling service. Without this, ws://127.0.0.1:8081/ws refers to the
+    // phone's own loopback, not the desktop hosting Crosslink.
+    pairingSignalingUrl = pairingSignalingUrl
+      .replace(/127\.0\.0\.1/g, (this.lan?.address ?? resolveLanHost()) || "localhost")
+      .replace(/localhost/g, (this.lan?.address ?? resolveLanHost()) || "localhost");
+
     const signalingUrl = pairingSignalingUrl || "";
     const uri = buildPairingUri({
       signalingUrl,
