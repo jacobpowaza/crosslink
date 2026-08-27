@@ -354,7 +354,33 @@ const server = http.createServer(async (req, res) => {
         await stopCloudflareTunnel();
         await stopNgrokTunnel();
         const wanIp = await getPublicWanIp();
-        baseUrl = wanIp ? `http://${wanIp}:${port}` : `http://${getLanAddress()}:${port}`;
+        const candidateUrl = wanIp ? `http://${wanIp}:${port}` : `http://${getLanAddress()}:${port}`;
+        // Verify the endpoint is actually reachable from the WAN before advertising it.
+        // Just knowing the router's public IP is not enough; the router must map
+        // the port to this machine (UPnP/NAT-PMP/PCP) or a tunnel must be active.
+        let reachable = false;
+        if (wanIp) {
+          try {
+            // Quick self-check: try to reach our own public endpoint from outside
+            // perspective (at least confirms routing/firewall allows it).
+            const check = await fetch(`${candidateUrl}/api/health`, {
+              signal: AbortSignal.timeout(2000),
+              // Disable redirect following to avoid false positives.
+            });
+            reachable = check.ok;
+          } catch {
+            reachable = false;
+          }
+        }
+        if (!reachable && wanIp) {
+          // The public IP is known but not actually reachable (no port mapping).
+          // Fall back to LAN address with a clear note rather than a broken QR.
+          baseUrl = `http://${getLanAddress()}:${port}`;
+          skipParam = "&skip_install=1";
+          console.warn(`  [pair] WAN IP ${wanIp}:${port} not reachable externally — no router port mapping detected. Falling back to LAN.`);
+        } else {
+          baseUrl = candidateUrl;
+        }
       } else {
         // Default: local Wi-Fi / LAN
         effectiveMode = "local";

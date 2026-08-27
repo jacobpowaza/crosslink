@@ -607,7 +607,7 @@ export class PairingCard {
         <div class="cl-info-knob-wrap">
           <button type="button" class="cl-info-knob" aria-label="Info">ℹ</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Uses your machine's public WAN IP address directly with port forwarding / UPnP for remote pairing.<br>
+            <strong>How it works:</strong> Uses your public WAN IP with automatic router port mapping (UPnP / NAT-PMP / PCP). If no mapping exists, falls back to LAN. Only displays a public QR after verifying reachability.<br>
             <strong>Security:</strong> End-to-end encrypted (XChaCha20-Poly1305). Only ciphertext travels over public internet.
             <a href="${secUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
