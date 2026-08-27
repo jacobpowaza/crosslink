@@ -31,9 +31,50 @@ function isDevTokens(value: unknown): value is DevTokens {
   return typeof v.relayToken === "string" && typeof v.signalingToken === "string";
 }
 
+/**
+ * Locate the .crosslink-data directory across monorepo workspaces and sub-apps.
+ */
+export function findCrosslinkDataDir(customDir?: string): string {
+  if (customDir && customDir !== DEFAULT_DIR) {
+    return path.resolve(customDir);
+  }
+  if (process.env.CROSSLINK_DATA_DIR) {
+    return path.resolve(process.env.CROSSLINK_DATA_DIR);
+  }
+  // Walk up from cwd to find an existing .crosslink-data, or the workspace root (.git or package.json with workspaces)
+  let curr = path.resolve(process.cwd());
+  let rootWithPackage: string | null = null;
+  while (true) {
+    const candidate = path.join(curr, DEFAULT_DIR);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const pkgPath = path.join(curr, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        if (pkg.workspaces || pkg.name === "crosslink-monorepo") {
+          rootWithPackage = curr;
+        }
+      } catch {}
+    }
+    const gitPath = path.join(curr, ".git");
+    if (existsSync(gitPath) && !rootWithPackage) {
+      rootWithPackage = curr;
+    }
+    const parent = path.dirname(curr);
+    if (parent === curr) break;
+    curr = parent;
+  }
+  if (rootWithPackage) {
+    return path.join(rootWithPackage, DEFAULT_DIR);
+  }
+  return path.resolve(DEFAULT_DIR);
+}
+
 /** Stable per-machine dev tokens; generated once per data dir. */
 export function loadOrCreateDevTokens(dir = DEFAULT_DIR): DevTokens {
-  const root = path.resolve(dir);
+  const root = findCrosslinkDataDir(dir);
   const file = path.join(root, DEV_TOKENS_FILE);
   if (existsSync(file)) {
     try {
@@ -99,7 +140,8 @@ function isStackConfig(value: unknown): value is StackConfig {
  * config exists or it is unreadable — callers should fall back to defaults.
  */
 export function loadStackConfig(dir = DEFAULT_DIR): StackConfig | null {
-  const file = path.resolve(dir, STACK_FILE);
+  const root = findCrosslinkDataDir(dir);
+  const file = path.join(root, STACK_FILE);
   if (!existsSync(file)) return null;
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -116,7 +158,7 @@ export function writeStackConfig(
   patch: Partial<StackConfig>,
   dir = DEFAULT_DIR
 ): StackConfig {
-  const root = path.resolve(dir);
+  const root = findCrosslinkDataDir(dir);
   mkdirSync(root, { recursive: true });
   const file = path.join(root, STACK_FILE);
 
@@ -164,16 +206,12 @@ export function resolveServiceUrls(opts: {
   const signalingUrl =
     opts.signalingUrl ??
     opts.signalingEnv ??
-    (stack ? `${defaultHost}:${stack.signaling.port}` : null);
+    (stack ? `${defaultHost}:${stack.signaling.port}` : `${defaultHost}:8081`);
 
   const relayUrl =
     opts.relayUrl ??
     opts.relayEnv ??
-    (stack ? `${defaultHost}:${stack.relay.port}` : null);
+    (stack ? `${defaultHost}:${stack.relay.port}` : `${defaultHost}:8082`);
 
-  if (signalingUrl && relayUrl) {
-    return { signalingUrl, relayUrl };
-  }
-
-  return null;
+  return { signalingUrl, relayUrl };
 }

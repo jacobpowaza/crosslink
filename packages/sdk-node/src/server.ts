@@ -32,7 +32,7 @@ import {
   type TrustedDeviceRecord,
 } from "@crosslink/core";
 import { bytesToBase64, type Json } from "@crosslink/protocol";
-import { isLocalUrl, loadOrCreateDevTokens, resolveServiceUrls } from "@crosslink/dev-tokens";
+import { findCrosslinkDataDir, isLocalUrl, loadOrCreateDevTokens, resolveServiceUrls } from "@crosslink/dev-tokens";
 import {
   FileHostDeviceStore,
   loadOrCreateIdentitySecurely,
@@ -367,7 +367,7 @@ export class CrosslinkServer extends EventEmitter {
     if (this.started) return this;
     const appId = this.config.application.id;
     this.storageDir =
-      this.config.storageDir ?? path.resolve(`.crosslink-data/${sanitizeAppId(appId)}`);
+      this.config.storageDir ?? path.join(findCrosslinkDataDir(), sanitizeAppId(appId));
 
     // Auto-discover signaling/relay URLs from stack config when not explicit
     const resolved = resolveServiceUrls({
@@ -454,7 +454,16 @@ export class CrosslinkServer extends EventEmitter {
 
     // Relay channel (optional, disabled in local-only mode)
     if (this._relayUrl && this.config.networkMode !== "local-only") {
-      await this.connectRelay(this._relayUrl);
+      try {
+        await this.connectRelay(this._relayUrl);
+      } catch (err) {
+        const msg = (err as Error)?.message ?? String(err);
+        if (/auth|token|unauthorized|forbidden|401|403/i.test(msg)) {
+          throw err;
+        }
+        this.log.warn("server.relay-start-failed", { error: err });
+        this.scheduleRelayReconnect(true);
+      }
     }
 
     // Signaling presence (optional but recommended, disabled in local-only mode)
@@ -826,22 +835,25 @@ export class CrosslinkServer extends EventEmitter {
    * unreachable from off-network while still appearing online.
    */
   private scheduleRelayReconnect(needsReallocation: boolean, attempt = 0): void {
-    if (this.stopping || !this.relay) return;
+    if (this.stopping) return;
     clearTimeout(this.relayRetry);
     const delay = Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5));
     this.relayRetry = setTimeout(() => {
       void (async () => {
-        if (this.stopping || !this.relay) return;
+        if (this.stopping) return;
         try {
-          if (needsReallocation) {
+          if (!this.relay && this._relayUrl) {
+            await this.connectRelay(this._relayUrl);
+            this.signaling?.refreshPresence();
+          } else if (this.relay && needsReallocation) {
             await this.relay.reallocate();
-            // Presence carries the channel id; republish so clients dial the
-            // new one instead of the id that just expired.
             this.signaling?.refreshPresence();
           }
-          await this.relay.connect();
-          this.log.info("relay.reconnected", { channel: this.relay.channelId });
-          this.emitConnectivity("relay-reconnected");
+          if (this.relay) {
+            await this.relay.connect();
+            this.log.info("relay.reconnected", { channel: this.relay.channelId });
+            this.emitConnectivity("relay-reconnected");
+          }
         } catch (err) {
           this.log.warn("relay.reconnect-failed", { attempt: attempt + 1, error: err });
           this.scheduleRelayReconnect(needsReallocation, attempt + 1);

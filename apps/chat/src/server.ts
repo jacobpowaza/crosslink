@@ -347,9 +347,14 @@ const server = http.createServer(async (req, res) => {
       const modeParam = (url.searchParams.get("mode") || "local").toLowerCase();
 
       // Ensure host is ready before generating pairing codes.
-      const st = host.status() as Record<string, any>;
+      let st = host.status() as Record<string, any>;
       if (!st.started) {
-        throw new Error("Crosslink host has not finished starting. Ensure `npm run stack` (signaling + relay) is active and this server has started fully.");
+        try {
+          await host.start();
+          st = host.status() as Record<string, any>;
+        } catch (startErr) {
+          throw new Error("Crosslink host has not finished starting: " + (startErr as Error).message);
+        }
       }
 
       const code = await host.getPairingCode();

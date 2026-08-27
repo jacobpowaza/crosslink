@@ -325,10 +325,13 @@
       } catch (err) {
         let msg = 'Failed to generate pairing QR.<br><code style="font-size:11px">npm run stack</code>';
         try {
-          const text = await res.text();
-          const parsed = JSON.parse(text);
+          const raw = (err && err.message) ? err.message : String(err);
+          const parsed = JSON.parse(raw);
           if (parsed?.error) msg = `Failed: ${parsed.error}`;
-        } catch {}
+          else if (raw) msg = `Failed: ${raw}`;
+        } catch {
+          if (err && err.message) msg = `Failed: ${err.message}`;
+        }
         pairingCard.update({
           error: msg,
           loading: false
