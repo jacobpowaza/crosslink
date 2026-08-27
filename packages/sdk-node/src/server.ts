@@ -577,16 +577,29 @@ export class CrosslinkServer extends EventEmitter {
 
     // Build the pairing URI and QR regardless of signaling state — the URI
     // is needed for local (in-app) pairing and for tests.
-    // When no explicit signaling URL is configured, the framework provides
-    // default bootstrap/signaling services so pairing works out of the box.
+    // Crosslink requires $0 and fully local hosting — pairing uses the local
+    // stack service (npm run stack) or direct LAN connections. No framework
+    // default public URLs exist; everything runs on the user's machine.
     const resolved = resolveServiceUrls({
       signalingUrl: this.config.signalingUrl,
       relayUrl: this.config.relayUrl,
       signalingEnv: process.env.CROSSLINK_SIGNALING_URL,
       relayEnv: process.env.CROSSLINK_RELAY_URL,
     });
-    const signalingUrl =
-      this._signalingUrl || this.config.signalingUrl || (resolved?.signalingUrl ?? "https://signal.crosslink.app");
+    // When local stack is running, resolved provides localhost URLs.
+    // When no external services are configured (local-only mode), pairing
+    // must work through LAN/direct transport. Use the LAN endpoint URL
+    // (e.g., ws://192.168.1.83:port) so the mobile client can pair directly.
+    let pairingSignalingUrl =
+      this._signalingUrl || this.config.signalingUrl || resolved?.signalingUrl || "";
+
+    // For fully local pairing with no signaling/relay services configured,
+    // fall back to the LAN WebSocket endpoint so pairing works $0 locally.
+    if (!pairingSignalingUrl && this.lan) {
+      pairingSignalingUrl = this.lan.url().replace(/^http/, "ws");
+    }
+
+    const signalingUrl = pairingSignalingUrl || "";
     const uri = buildPairingUri({
       signalingUrl,
       code: session.code,

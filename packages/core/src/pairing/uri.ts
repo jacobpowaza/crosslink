@@ -75,7 +75,7 @@ export function parsePairingUri(text: string): ParsedPairingUri {
   const transport = params.get("t") ?? undefined;
 
   if (version !== "1") throw new Error(`unsupported pairing uri version: ${String(version)}`);
-  if (!signalingUrl || !/^https?:\/\//i.test(signalingUrl)) {
+  if (!signalingUrl || !/^(https?|wss?):\/\//i.test(signalingUrl)) {
     throw new Error("pairing uri missing valid signaling url");
   }
   if (!appId || appId.length > 256 || !/^[\w.@:/-]+$/.test(appId)) {
