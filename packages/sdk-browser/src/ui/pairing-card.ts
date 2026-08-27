@@ -354,9 +354,10 @@ const PAIRING_CARD_STYLES = `
   color: #f87171;
 }
 .cl-pair-code-pills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-width: 200px;
   justify-content: center;
   min-height: 44px;
   align-items: center;
@@ -365,14 +366,14 @@ const PAIRING_CARD_STYLES = `
   background: var(--cl-pill);
   color: var(--cl-pill-text);
   font-family: "SF Mono", "Fira Code", monospace;
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 700;
   line-height: 1;
-  border-radius: 999px;
-  padding: 12px 6px;
-  min-width: 32px;
+  border-radius: 12px;
+  padding: 14px 8px;
+  min-width: 44px;
   text-align: center;
-  display: inline-block;
+  display: block;
 }
 .cl-pair-hint {
   font-size: 11px;
