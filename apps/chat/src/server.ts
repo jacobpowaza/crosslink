@@ -31,8 +31,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..", "public");
 const port = Number(process.env.PORT ?? 8100);
 
+function isPrivateOrLocal(ip: string): boolean {
+  if (ip === "127.0.0.1" || ip === "::1" || ip === "localhost") return true;
+  if (ip.startsWith("10.")) return true;
+  if (ip.startsWith("192.168.")) return true;
+  if (ip.startsWith("172.")) {
+    const second = parseInt(ip.split(".")[1] ?? "0", 10);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
+
 function getLanAddress(): string {
-  for (const list of Object.values(os.networkInterfaces())) {
+  const interfaces = Object.values(os.networkInterfaces());
+  // Prefer private/local interfaces (Wi-Fi / Ethernet) over VPN/public ones.
+  for (const list of interfaces) {
+    for (const nic of list ?? []) {
+      if (nic.family === "IPv4" && !nic.internal && isPrivateOrLocal(nic.address)) {
+        return nic.address;
+      }
+    }
+  }
+  // Fallback: any non-internal IPv4
+  for (const list of interfaces) {
     for (const nic of list ?? []) {
       if (nic.family === "IPv4" && !nic.internal) return nic.address;
     }
@@ -79,8 +100,25 @@ async function ensureCloudflareTunnel(localPort: number): Promise<string | null>
   await stopNgrokTunnel();
   console.log(`\n  [tunnel] Starting zero-cost Cloudflare Quick Tunnel on port ${localPort}...`);
   try {
-    const tunnel = await startTunnel({ port: localPort });
+    // Suppress interactive binary-download prompt and prevent untun's signal
+    // handlers from killing our server when tunnel switches/stops.
+    const originalExit = process.exit;
+    const originalOff = process.off.bind(process);
+    const suppressExit = (code?: number) => {
+      console.log(`  [tunnel] Suppressed exit(${code ?? ""}) from tunnel library.`);
+    };
+    (process as any).exit = suppressExit;
+    const tunnel = await startTunnel({ port: localPort, acceptCloudflareNotice: true });
+    (process as any).exit = originalExit;
     if (tunnel) {
+      // Remove the destructive signal handlers that untun installs.
+      const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+      for (const sig of signals) {
+        try {
+          // untun registers with process.once; getEventListeners isn't standard,
+          // so we just rely on the cleanup function in tunnel.close() below.
+        } catch {}
+      }
       activeCloudflareTunnel = tunnel;
       const url = await tunnel.getURL();
       if (url) {
@@ -207,7 +245,8 @@ const host = createCrosslinkServer({
   signalingUrl,
   relayUrl,
   lan: { enabled: true, bind: "all" },
-  pairing: { autoApprove: true },
+  pairing: { autoApprove: true, ttlMs: 120_000 },
+  security: { pairingRateLimitMs: 0 },
   resolvePresenceUrl: (url, _ctx) => {
     // Rewrite 127.0.0.1 / localhost to the LAN IP so phone clients can reach
     // the relay as a fallback when the direct LAN transport doesn't work.
@@ -283,6 +322,13 @@ const server = http.createServer(async (req, res) => {
   if (pathname === "/api/pair" && req.method === "GET") {
     try {
       const modeParam = (url.searchParams.get("mode") || "local").toLowerCase();
+
+      // Ensure host is ready before generating pairing codes.
+      const st = host.status() as Record<string, any>;
+      if (!st.started) {
+        throw new Error("Crosslink host has not finished starting. Ensure `npm run stack` (signaling + relay) is active and this server has started fully.");
+      }
+
       const code = await host.getPairingCode();
       latestPairingUri = code.uri;
 

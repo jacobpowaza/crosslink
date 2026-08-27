@@ -291,8 +291,14 @@
         clearTimeout(generatePair._timer);
         generatePair._timer = setTimeout(() => generatePair(currentMode), 105_000);
       } catch (err) {
+        let msg = 'Failed to generate pairing QR.<br><code style="font-size:11px">npm run stack</code>';
+        try {
+          const text = await res.text();
+          const parsed = JSON.parse(text);
+          if (parsed?.error) msg = `Failed: ${parsed.error}`;
+        } catch {}
         pairingCard.update({
-          error: 'Failed to generate.<br>Is the signaling server running?<br><code style="font-size:12px">npm run stack</code>',
+          error: msg,
           loading: false
         });
       }
