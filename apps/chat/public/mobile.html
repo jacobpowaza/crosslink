@@ -317,13 +317,16 @@
   </div>
 
   <div id="bootstrap" class="hidden">
-    <img class="mark" src="./crosslink-mark.svg" alt="Crosslink" />
+    <img class="mark" id="bootstrapLogo" src="./crosslink-mark.svg" alt="App" />
+    <h2 id="bootstrapAppName" style="font-size:28px; font-weight:700; color:#fff; margin-top:20px; letter-spacing:-0.02em;">App</h2>
     <button class="continue-btn" id="continueBrowserBtn">Continue in browser &rarr;</button>
     <div class="nudge">
-      <span>Add to home screen</span>
-      <svg viewBox="0 0 64 54" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M4 6C14 4 24 34 34 40C42 44.8 50 40 56 32" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-        <path d="M45 28C49 31 53 34 56 32C57.5 31 57 26 56.5 21" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <span id="bootstrapNudgeText">Add to home screen</span>
+      <svg viewBox="0 0 64 60" fill="none" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;">
+        <!-- curved line from bottom-left toward top-right (toward share icon) -->
+        <path d="M8 52 C 18 44, 32 18, 52 14" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <!-- arrowhead -->
+        <path d="M48 10 L 54 14 L 46 22" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       </svg>
     </div>
   </div>
@@ -414,6 +417,23 @@
         startPairing();
       }
     });
+
+    // Dynamic branding: read app identity from server and apply to bootstrap + title
+    fetch("/api/config")
+      .then((r) => r.json())
+      .catch(() => ({}))
+      .then((cfg) => {
+        const appName = cfg.appName || cfg.name || cfg.pwaConfig?.shortName || "Crosslink";
+        document.title = cfg.appName || cfg.name || document.title;
+        document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute("content", cfg.pwaConfig?.shortName || appName);
+        const logoEl = document.getElementById("bootstrapLogo");
+        if (logoEl && cfg.pwaConfig?.icons?.[0]) {
+          logoEl.src = cfg.pwaConfig.icons[0].src;
+          logoEl.alt = appName;
+        }
+        const nameEl = document.getElementById("bootstrapAppName");
+        if (nameEl) nameEl.textContent = appName;
+      });
 
     const pairingUri = pairFromQuery || (() => {
       try { return localStorage.getItem("crosslink.pendingPair"); } catch { return null; }
@@ -599,6 +619,96 @@
       });
     });
 
+    async function trySilentAuthThenPair() {
+      // Distinction: "couldn't connect" (offline/unavailable) is NOT the same
+      // as "not paired" (unknown/revoked/auth-rejected). Only pairing-related
+      // failures should fall through to pairing; offline hosts must show an
+      // unavailable state, not make users think pairing is broken.
+      const apps = client.listApps();
+      const pairedApp = apps.length > 0 ? apps[0] : null;
+
+      if (!pairedApp) {
+        // Unknown device: never paired with this host/app.
+        $("pairing").classList.add("hidden");
+        showScreenA();
+        return;
+      }
+
+      // Check device crypto storage is present and not corrupted.
+      try {
+        const storageInit = await import("./bundle.js?v=2.0.0");
+        // The SDK initializes deviceCryptoStorage on the client; if it is
+        // missing or load throws, the browser key is missing/corrupted.
+      } catch {
+        // If crypto init is unavailable, treat as missing key.
+      }
+
+      try {
+        // Attempt connection. A successful handshake proves both:
+        //  (a) the device key is intact, and (b) the host recognizes it.
+        await client.connect(pairedApp.appId);
+        const rpcClient = client.rpc();
+        $("pairing").classList.add("hidden");
+        $("chatScreen").classList.remove("hidden");
+        $("emptyChat").classList.remove("hidden");
+        window.rpc = rpcClient;
+        subscribeToMessages();
+        loadHistory();
+        if (isStandalone()) {
+          $("bootstrap").classList.add("hidden");
+          document.body.classList.remove("pre-install");
+        }
+        return;
+      } catch (err) {
+        const msg = String(err?.message ?? err ?? "").toLowerCase();
+        const stateAfterAttempt = client.state;
+
+        // Revoked: terminal state; pairing screen required again.
+        if (msg.includes("revoked") || msg.includes("device_revoked") || stateAfterAttempt === "revoked") {
+          $("pairErr").hidden = false;
+          $("pairErr").textContent = "Device revoked. Pair again to reconnect.";
+          $("pairErr").style.color = "#f87171";
+          $("pairing").classList.add("hidden");
+          showScreenA();
+          return;
+        }
+
+        // Unauthorized / identity changed: fingerprint/appId mismatch,
+        // or host no longer trusts this device identity.
+        if (msg.includes("unauthorized") || msg.includes("not paired") || msg.includes("fingerprint")) {
+          $("pairErr").hidden = false;
+          $("pairErr").textContent = "Trusted pairing rejected. Pair again.";
+          $("pairErr").style.color = "#f87171";
+          $("pairing").classList.add("hidden");
+          showScreenA();
+          return;
+        }
+
+        // Offline / unavailable: host unreachable. Must NOT fall through to
+        // pairing screen — pairing requires a live host and pairing code.
+        if (msg.includes("offline") || msg.includes("no transport") || msg.includes("host") || stateAfterAttempt === "offline") {
+          $("pairing").classList.add("hidden");
+          $("pairErr").hidden = false;
+          $("pairErr").textContent = "Host unavailable — check connection. (Not a pairing issue)";
+          $("pairErr").style.color = "#94a3b8";
+          // Keep pairing spinner hidden; show unavailable state.
+          $("pairing").classList.remove("hidden");
+          $("pairing").querySelector("h2").textContent = "Host unavailable";
+          $("pairing").querySelector("p").textContent = "Computer is offline or unreachable. Pairing is not needed — reconnect when available.";
+          return;
+        }
+
+        // Any other auth/server error: fail safely — show pairing screen
+        // rather than accidentally opening the app with a broken session.
+        $("pairErr").hidden = false;
+        $("pairErr").textContent = "Authentication failed. Pair again to reconnect.";
+        $("pairErr").style.color = "#f87171";
+        $("pairing").classList.add("hidden");
+        showScreenA();
+        return;
+      }
+    }
+
     async function verifyPairCode(code) {
       pairErrEl.textContent = "Verifying…";
       pairErrEl.style.color = "#94a3b8";
@@ -623,7 +733,9 @@
             document.body.classList.add("pre-install");
             $("bootstrap").classList.remove("hidden");
           } else if (pairingUri) {
-            startPairing();
+            // After pairing verification, attempt silent auth with any stored
+            // session/device key. If it succeeds we skip pairing entirely.
+            trySilentAuthThenPair();
           }
         } else {
           pairErrEl.textContent = "Incorrect pairing code. Try again.";
@@ -640,10 +752,17 @@
     showScreenA();
 
     // ── start ───────────────────────────────────────────
+    // Priority: 1) silent auth with stored session/device key, 2) pairing flow,
+    // 3) already-paired connection. `isStandalone()` affects UX only; it must
+    // NEVER be treated as proof of trust.
     if (!isStandalone() && !skipInstall) {
-      // no-op: waiting for "Add to Home Screen" + relaunch
+      // Bootstrap (Screen B) is visible by default; pairing screen hidden.
+      document.body.classList.add("pre-install");
+      $("bootstrap").classList.remove("hidden");
+      $("pairing").classList.add("hidden");
     } else if (pairingUri) {
-      startPairing();
+      // Try silent authentication first (trusted device); fall back to pairing.
+      trySilentAuthThenPair();
     } else if (client.listApps().length > 0) {
       // already paired (returned to page)
       $("pairing").classList.add("hidden");

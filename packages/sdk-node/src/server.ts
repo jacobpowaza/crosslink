@@ -49,8 +49,17 @@ import {
 } from "@crosslink/webrtc-adapter";
 import { advertiseMdns, type MdnsBrowser } from "./mdns.js";
 
+export interface PwaConfig {
+  shortName?: string;
+  icons?: Array<{ src: string; sizes?: string; type?: string }>;
+  themeColor?: string;
+  bgColor?: string;
+  display?: "standalone" | "minimal-ui" | "fullscreen";
+  startUrl?: string;
+}
+
 export interface CrosslinkServerConfig {
-  application: { id: string; name: string; version?: string };
+  application: { id: string; name: string; version?: string; pwaConfig?: PwaConfig };
   capabilities?: CapabilityDef[];
   /** defaults to ./.crosslink-data/<appId> */
   storageDir?: string;

@@ -20,6 +20,7 @@ import { noopLogger, type Logger } from "../logger.js";
 import { PermissionEngine, type PermissionPolicy, type PolicyDecision } from "../permissions.js";
 import { shortAuthString } from "../sas.js";
 import { deviceIdFromPublicKey } from "./device-id.js";
+import { createSessionToken } from "./session-token.js";
 import {
   createPairingSession,
   normalizePairingCode,
@@ -81,6 +82,7 @@ export interface HostPairingOptions {
 interface LiveSession extends PairingSessionState {
   pending?: {
     claimNonce: string;
+    challengeNonce: string;
     claimName: string;
     claimPubEd: string;
     claimPubX: string;
@@ -208,6 +210,7 @@ export class HostPairingManager {
     const challengeNonce = bytesToBase64(randomBytes(32));
     live.pending = {
       claimNonce: nonce,
+      challengeNonce,
       claimName: name,
       claimPubEd: pubEdB64,
       claimPubX: pubXB64,
@@ -266,10 +269,15 @@ export class HostPairingManager {
     }
     const pending = live.pending;
 
+    const completeChallengeNonce = String(complete.challenge_nonce ?? "");
+    if (completeChallengeNonce !== pending.challengeNonce) {
+      throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "challenge nonce does not match pairing session");
+    }
+
     const transcript = pairingTranscriptBytes("complete", [
       psid,
       pending.claimNonce,
-      String(complete.challenge_nonce ?? "")
+      completeChallengeNonce
     ]);
     const ok = verifySignature(
       base64ToBytes(String(complete.sig ?? "")),
@@ -302,6 +310,18 @@ export class HostPairingManager {
       caps: record.caps,
       expiresAt: this.permissions.grantExpiryFrom(record.addedAt)
     });
+
+    // Issue a short-lived session token binding host fingerprint + app + device
+    const sessionPayload = {
+      hostFp: this.options.identity.fingerprint,
+      appId: this.options.appId,
+      deviceId: record.deviceId,
+      exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7-day session
+      nonce: bytesToBase64(randomBytes(16))
+    };
+    const sessionTokenStr = createSessionToken(sessionPayload, this.options.identity.edPrivateKey);
+    (record as TrustedDeviceRecord & { sessionToken?: string }).sessionToken = sessionTokenStr;
+
     return record;
   }
 

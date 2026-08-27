@@ -238,7 +238,19 @@ let latestPairingUri: string | null = null;
 let latestPairingCode: string | null = null;
 
 const host = createCrosslinkServer({
-  application: { id: "com.crosslink.chat", name: "Crosslink Chat", version: "1.0.0" },
+  application: {
+    id: "com.crosslink.chat",
+    name: "Crosslink Chat",
+    version: "1.0.0",
+    pwaConfig: {
+      shortName: "Chat",
+      icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png" }, { src: "/icon-512.png", sizes: "512x512", type: "image/png" }],
+      themeColor: "#0f172a",
+      bgColor: "#0f172a",
+      display: "standalone",
+      startUrl: "/mobile.html",
+    },
+  },
   capabilities: [
     { id: "chat.send", title: "Send messages", risk: "low" },
     { id: "chat.read", title: "Read messages", risk: "low" },
@@ -448,6 +460,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── API: app config (PWA identity) ──
+  if (pathname === "/api/config" && req.method === "GET") {
+    const cfg = (host as any).config?.application?.pwaConfig ?? {};
+    respond(res, 200, "application/json", JSON.stringify({
+      appName: (host as any).config?.application?.name ?? "Crosslink",
+      appId: (host as any).config?.application?.id ?? "",
+      pwaConfig: cfg,
+    }));
+    return;
+  }
+
+  // ── dynamic manifest ──
+  if (pathname === "/manifest.webmanifest" && req.method === "GET") {
+    const cfg = (host as any).config?.application?.pwaConfig ?? {};
+    const manifest = {
+      name: (host as any).config?.application?.name ?? "Crosslink",
+      short_name: cfg.shortName ?? ((host as any).config?.application?.name ?? "Crosslink"),
+      start_url: cfg.startUrl ?? "/mobile.html",
+      display: cfg.display ?? "standalone",
+      theme_color: cfg.themeColor ?? "#0f172a",
+      background_color: cfg.bgColor ?? "#0f172a",
+      icons: cfg.icons ?? [{ src: "/icon-192.png", sizes: "192x192" }],
+    };
+    respond(res, 200, "application/manifest+json", JSON.stringify(manifest));
+    return;
+  }
+
   // ── API: health ──
   if (pathname === "/api/health") {
     const st = host.status() as Record<string, any>;
@@ -457,6 +496,41 @@ const server = http.createServer(async (req, res) => {
       devices: st.devices,
       messages: messages.length,
     }));
+    return;
+  }
+
+  // ── API: revoke device ──
+  if (pathname === "/api/revoke" && req.method === "POST") {
+    try {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { deviceId = "" } = JSON.parse(body || "{}");
+      const target = String(deviceId || "").trim();
+      let revokedId: string | null = null;
+      let ok = false;
+      if (target) {
+        ok = host.revokeDevice(target);
+        if (ok) revokedId = target;
+      } else {
+        // Empty deviceId: revoke the first non-revoked device for testing.
+        const devices = host.listDevices();
+        const firstNonRevoked = devices.find((d) => !d.revokedAt);
+        if (firstNonRevoked) {
+          ok = host.revokeDevice(firstNonRevoked.deviceId);
+          if (ok) revokedId = firstNonRevoked.deviceId;
+        } else {
+          ok = false;
+        }
+      }
+      respond(res, 200, "application/json", JSON.stringify({
+        ok,
+        deviceId: revokedId ?? target,
+        revoked: ok,
+        message: ok ? (revokedId ? `Device ${revokedId} revoked.` : "No device to revoke.") : (target ? `Failed to revoke device ${target}.` : "No paired device found."),
+      }));
+    } catch (err) {
+      respond(res, 500, "application/json", JSON.stringify({ ok: false, error: String(err) }));
+    }
     return;
   }
 

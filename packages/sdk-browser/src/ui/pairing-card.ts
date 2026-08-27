@@ -56,6 +56,10 @@ export interface PairingCardOptions {
   cloudflareGuideUrl?: string;
   /** Custom theme color overrides */
   theme?: PairingCardTheme;
+  /** Endpoint URL to fetch paired device info. Default: /api/devices */
+  devicesEndpoint?: string;
+  /** Endpoint URL to revoke device access. Default: /api/devices/revoke */
+  revokeEndpoint?: string;
   /** Whether to inject default CSS styles into document head. Default true */
   injectStyles?: boolean;
 }
@@ -137,7 +141,7 @@ const PAIRING_CARD_STYLES = `
   top: 44px;
   right: 14px;
   width: 300px;
-  background: #0b1329;
+  background: #000000;
   border: 1px solid var(--cl-divider);
   border-radius: 12px;
   padding: 8px;
@@ -403,6 +407,125 @@ const PAIRING_CARD_STYLES = `
     max-width: none;
   }
 }
+
+/* ── Connected Devices Modal ────────────────────────── */
+.cl-connected-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: clDropdownFade 0.15s ease-out;
+}
+.cl-connected-modal {
+  background: #0a0a0a;
+  border: 1px solid var(--cl-divider);
+  border-radius: 20px;
+  width: 92vw;
+  max-width: 640px;
+  max-height: 85vh;
+  padding: 24px 28px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow-y: auto;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--cl-fg);
+}
+.cl-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 16px;
+}
+.cl-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.cl-modal-header button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--cl-divider);
+  border-radius: 10px;
+  color: var(--cl-fg);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cl-modal-header button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+.cl-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cl-modal-error {
+  color: #f87171;
+  font-size: 12px;
+  padding: 8px 0;
+}
+.cl-device-card {
+  background: #121212;
+  border: 1px solid var(--cl-divider);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.cl-device-info {
+  flex: 1;
+  min-width: 0;
+}
+.cl-device-name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 4px;
+  letter-spacing: -0.01em;
+}
+.cl-device-meta {
+  font-size: 11px;
+  color: var(--cl-muted);
+  margin-bottom: 8px;
+  text-transform: capitalize;
+}
+.cl-device-detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #c4c4c4;
+}
+.cl-device-detail strong {
+  color: var(--cl-muted);
+  font-weight: 600;
+}
+.cl-device-actions {
+  flex-shrink: 0;
+}
+.cl-revoke-btn {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3a;
+  color: #e7e7ea;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cl-revoke-btn:hover {
+  background: #7f1d1d;
+  border-color: #f87171;
+  color: #f87171;
+}
 `.trim();
 
 let stylesInjected = false;
@@ -640,6 +763,23 @@ export class PairingCard {
       });
     });
 
+    // Connected Devices option
+    const devicesHeader = document.createElement("div");
+    devicesHeader.className = "cl-dropdown-header";
+    devicesHeader.style.marginTop = "4px";
+    devicesHeader.textContent = "Devices";
+    pop.appendChild(devicesHeader);
+
+    const devicesItem = document.createElement("label");
+    devicesItem.className = "cl-dropdown-item";
+    devicesItem.innerHTML = `
+      <div class="cl-dropdown-label">
+        <span>Connected Devices</span>
+      </div>
+    `;
+    devicesItem.addEventListener("click", () => this.openConnectedDevicesModal());
+    pop.appendChild(devicesItem);
+
     return pop;
   }
 
@@ -820,6 +960,101 @@ export class PairingCard {
         this.refreshBtn.disabled = false;
       }
     }
+  }
+
+  private async openConnectedDevicesModal(): Promise<void> {
+    const endpoint = this.options.devicesEndpoint || "/api/devices";
+    try {
+      const res = await fetch(endpoint);
+      if (!res.ok) throw new Error(`Failed to fetch devices: ${res.status}`);
+      const data = await res.json();
+      const devices: Array<{ deviceId: string; name: string; deviceType?: string; location?: string; ipAddress?: string; lastConnected?: number; firstPaired?: number; status?: string; trusted?: boolean; caps?: string[] }> = data.devices || data || [];
+      this.renderConnectedDevicesModal(devices);
+    } catch (err: any) {
+      this.renderConnectedDevicesModal([], String(err?.message || err));
+    }
+  }
+
+  private renderConnectedDevicesModal(devices: Array<any>, errorMsg?: string): void {
+    // Build modal HTML
+    let html = `
+      <div class="cl-connected-modal-backdrop" onclick="this.style.display='none'; this.nextElementSibling?.style.display='none';">
+        <div class="cl-connected-modal" onclick="event.stopPropagation();">
+          <div class="cl-modal-header">
+            <h3>Connected Devices</h3>
+            <button onclick="this.closest('.cl-connected-modal').parentElement.style.display='none'; this.closest('.cl-connected-modal-backdrop').style.display='none';" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;">&times;</button>
+          </div>
+          <div class="cl-modal-body">`;
+    if (errorMsg) {
+      html += `<div class="cl-modal-error">${errorMsg}</div>`;
+    }
+    if (devices.length === 0 && !errorMsg) {
+      html += `<p style="color:var(--cl-muted);text-align:center;padding:20px 0;">No paired devices found.</p>`;
+    } else {
+      for (const dev of devices) {
+        const statusText = dev.status || (dev.revokedAt ? "Revoked" : dev.lastSeen ? (Date.now() - dev.lastSeen < 300000 ? "Online" : "Offline") : "Unknown");
+        const statusColor = statusText === "Online" ? "#4ade80" : statusText === "Revoked" ? "#f87171" : "#9a9a9a";
+        const trustedText = dev.revokedAt ? "Not trusted" : "Trusted";
+        const firstPaired = dev.firstPaired ? new Date(dev.firstPaired).toLocaleString() : (dev.addedAt ? new Date(dev.addedAt).toLocaleString() : "Unknown");
+        const lastConnected = dev.lastConnected ? new Date(dev.lastConnected).toLocaleString() : dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : "Never";
+        html += `
+          <div class="cl-device-card">
+            <div class="cl-device-info">
+              <div class="cl-device-name">${dev.name || "Unnamed Device"}</div>
+              <div class="cl-device-meta">${dev.deviceType ? `<span style="text-transform:capitalize;">${dev.deviceType}</span>` : ""} ${dev.location ? `&bull; ${dev.location}` : ""}</div>
+              <div class="cl-device-detail">
+                <span><strong>Device ID:</strong> ${dev.deviceId}</span><br>
+                <span><strong>IP:</strong> ${dev.ipAddress || "Not available"}</span><br>
+                <span><strong>First paired:</strong> ${firstPaired}</span><br>
+                <span><strong>Last connected:</strong> ${lastConnected}</span><br>
+                <span><strong>Status:</strong> <span style="color:${statusColor};font-weight:600;">${statusText}</span></span><br>
+                <span><strong>Trusted:</strong> ${trustedText}</span>
+              </div>
+            </div>
+            <div class="cl-device-actions">
+              <button onclick="this.revokeDevice('${dev.deviceId}')" class="cl-revoke-btn">Revoke Access</button>
+            </div>
+          </div>`;
+      }
+    }
+    html += `</div></div>`;
+
+    // Remove existing modal if present
+    const existingBackdrop = document.querySelector(".cl-connected-modal-backdrop");
+    if (existingBackdrop) existingBackdrop.remove();
+
+    // Create backdrop
+    const backdrop = document.createElement("div");
+    backdrop.className = "cl-connected-modal-backdrop";
+    backdrop.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);z-index:100;display:flex;align-items:center;justify-content:center;";
+    backdrop.innerHTML = html;
+    document.body.appendChild(backdrop);
+
+    // Wire revoke buttons
+    const revokeEndpoint = this.options.revokeEndpoint || "/api/devices/revoke";
+    backdrop.querySelectorAll(".cl-revoke-btn").forEach((btn: any) => {
+      btn.revokeDevice = async (deviceId: string) => {
+        btn.disabled = true;
+        btn.textContent = "Revoking...";
+        try {
+          const res = await fetch(revokeEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deviceId })
+          });
+          if (!res.ok) throw new Error("Revoke failed");
+          btn.textContent = "Access Revoked";
+          btn.style.background = "#166534";
+          btn.disabled = true;
+          setTimeout(() => {
+            this.openConnectedDevicesModal();
+          }, 800);
+        } catch (e: any) {
+          btn.textContent = "Failed";
+          btn.style.background = "#7f1d1d";
+        }
+      };
+    });
   }
 
   destroy(): void {

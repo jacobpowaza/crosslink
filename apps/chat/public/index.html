@@ -208,6 +208,14 @@
   </header>
 
   <main>
+    <!-- revocation controls (final integration test) -->
+    <div style="margin: 12px 0; padding: 12px; border-radius: 10px; background: #1e293b; border: 1px solid #334155;">
+      <strong style="font-size: 12px; color: var(--text);">Revocation test</strong>
+      <p style="font-size: 11px; color: var(--muted); margin: 4px 0 8px;">Revoke a paired device; mobile must fall back to pairing.</p>
+      <button onclick="revokeDevice()" style="font-size: 11px; padding: 6px 14px; border-radius: 999px; border: none; background: #f87171; color: #fff; cursor: pointer; font-weight: 600;">Revoke paired device</button>
+      <span id="revokeMsg" style="font-size: 11px; margin-left: 8px; color: var(--muted);"></span>
+    </div>
+
     <!-- canonical pairing widget (CrosslinkConnect) -->
     <div id="pairCardContainer"></div>
 
@@ -236,6 +244,30 @@
     const $ = id => document.getElementById(id);
     let mobileConnected = false;
     let currentMode = localStorage.getItem("crosslink.networkMode") || "local";
+
+    async function revokeDevice() {
+      try {
+        // Call the server revocation endpoint; requires a paired deviceId.
+        // The server will revoke the first non-revoked device.
+        const res = await fetch("/api/revoke", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ deviceId: "" })
+        });
+        const data = await res.json();
+        const msgEl = $("revokeMsg");
+        if (data.ok) {
+          msgEl.textContent = "Device revoked. Mobile will require pairing again.";
+          msgEl.style.color = "#4ade80";
+        } else {
+          msgEl.textContent = "Revoke failed: " + (data.error || "no device to revoke");
+          msgEl.style.color = "#f87171";
+        }
+      } catch (err) {
+        $("revokeMsg").textContent = "Revoke error: " + String(err);
+        $("revokeMsg").style.color = "#f87171";
+      }
+    }
 
     // ── pairing card ─────────────────────────────────────
     const pairingCard = CrosslinkSDK.createPairingCard({

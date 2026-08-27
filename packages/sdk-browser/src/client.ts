@@ -20,6 +20,7 @@ import {
   type UpgradeTarget,
 } from "@crosslink/webrtc-adapter";
 import { MemorySecureStorage, JsonStore, type SecureStorage } from "./storage.js";
+import { SecureDeviceCryptoStorage, type DeviceCryptoStorage } from "./device-crypto-storage.js";
 import { createSecureStorage } from "./secure-storage.js";
 import { SignalingPeer } from "./signaling-peer.js";
 import { openWithTimeout, wsTransport, type WsLike } from "./ws.js";
@@ -132,6 +133,7 @@ export class CrosslinkClient {
   private hints: JsonStore<StoredHints>;
   private link?: ClientLink;
   private readonly storage: SecureStorage;
+  private deviceCryptoStorage?: DeviceCryptoStorage;
 
   constructor(private readonly options: CrosslinkClientOptions = {}) {
     const storage = options.storage ?? new MemorySecureStorage();
@@ -208,6 +210,15 @@ export class CrosslinkClient {
    * link and this call transparently unwraps it.
    */
   async pairFromQr(text: string, requestedCaps?: string[]): Promise<PairedAppRecord> {
+    // Initialize persistent device cryptographic identity for trusted pairing
+    if (!this.deviceCryptoStorage) {
+      try {
+        const storageModule = await import("./device-crypto-storage.js");
+        this.deviceCryptoStorage = await storageModule.SecureDeviceCryptoStorage.open();
+      } catch (e) {
+        this.log.warn("client.device-crypto-init-failed", { error: String(e) });
+      }
+    }
     const manifest = unwrapBootstrapUri(text);
     const uri = parsePairingUri(manifest);
     if (!uri.signalingUrl) throw new Error("pairing URI has no signaling URL (LAN-only pairing not supported by browser client)");
@@ -275,6 +286,15 @@ export class CrosslinkClient {
         signalingUrl: uri.signalingUrl
       };
       this.hints.save(hintsAll as never);
+
+      // Store session token if server provided one (trusted pairing session)
+      if (done && typeof done.sessionToken === "string") {
+        try {
+          await (this.deviceCryptoStorage as any)?.save({ sessionToken: done.sessionToken }, record.appId);
+        } catch (e) {
+          this.log.debug("client.session-token-store-failed", { error: String(e) });
+        }
+      }
       return record;
     } finally {
       peer.close();
