@@ -40,6 +40,23 @@ export {
   type NetworkMode
 } from "./ui/pairing-card.js";
 
+export {
+  CrosslinkOfflineShell,
+  createOfflineUI,
+  updateOfflineStatus,
+  removeOfflineUI,
+  DEFAULT_OFFLINE_CONFIG,
+  type OfflineConfig,
+  type OfflineShellOptions,
+  type OfflineConnectionState,
+  type HostReachabilityResult,
+  generateServiceWorker,
+  DEFAULT_SERVICE_WORKER,
+  DEFAULT_SERVICE_WORKER_CONFIG,
+  createServiceWorkerConfig,
+  type ServiceWorkerConfig
+} from "./offline/index.js";
+
 /** Browser entry convenience: default storage = localStorage. */
 import { LocalStorageSecureStorage } from "./storage.js";
 import { CrosslinkClient, type CrosslinkClientOptions } from "./client.js";

@@ -1,6 +1,8 @@
 export { createCrosslinkServer, CrosslinkServer } from "./server.js";
 export type {
   CrosslinkServerConfig,
+  OfflineConfig,
+  PwaConfig,
   PairingCodeInfo,
   DeviceSummary,
   ServerEvents,

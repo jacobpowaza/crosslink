@@ -141,7 +141,7 @@ const PAIRING_CARD_STYLES = `
   top: 44px;
   right: 14px;
   width: 300px;
-  background: #000000;
+  background: var(--cl-bg);
   border: 1px solid var(--cl-divider);
   border-radius: 12px;
   padding: 8px;
@@ -968,7 +968,7 @@ export class PairingCard {
       const res = await fetch(endpoint);
       if (!res.ok) throw new Error(`Failed to fetch devices: ${res.status}`);
       const data = await res.json();
-      const devices: Array<{ deviceId: string; name: string; deviceType?: string; location?: string; ipAddress?: string; lastConnected?: number; firstPaired?: number; status?: string; trusted?: boolean; caps?: string[] }> = data.devices || data || [];
+      const devices: Array<{ deviceId: string; name: string; deviceType?: string; location?: string; ipAddress?: string; lastConnected?: number; firstPaired?: number; status?: string; trusted?: boolean; caps?: string[]; revokedAt?: number }> = data.devices || data || [];
       this.renderConnectedDevicesModal(devices);
     } catch (err: any) {
       this.renderConnectedDevicesModal([], String(err?.message || err));
@@ -976,49 +976,6 @@ export class PairingCard {
   }
 
   private renderConnectedDevicesModal(devices: Array<any>, errorMsg?: string): void {
-    // Build modal HTML
-    let html = `
-      <div class="cl-connected-modal-backdrop" onclick="this.style.display='none'; this.nextElementSibling?.style.display='none';">
-        <div class="cl-connected-modal" onclick="event.stopPropagation();">
-          <div class="cl-modal-header">
-            <h3>Connected Devices</h3>
-            <button onclick="this.closest('.cl-connected-modal').parentElement.style.display='none'; this.closest('.cl-connected-modal-backdrop').style.display='none';" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer;">&times;</button>
-          </div>
-          <div class="cl-modal-body">`;
-    if (errorMsg) {
-      html += `<div class="cl-modal-error">${errorMsg}</div>`;
-    }
-    if (devices.length === 0 && !errorMsg) {
-      html += `<p style="color:var(--cl-muted);text-align:center;padding:20px 0;">No paired devices found.</p>`;
-    } else {
-      for (const dev of devices) {
-        const statusText = dev.status || (dev.revokedAt ? "Revoked" : dev.lastSeen ? (Date.now() - dev.lastSeen < 300000 ? "Online" : "Offline") : "Unknown");
-        const statusColor = statusText === "Online" ? "#4ade80" : statusText === "Revoked" ? "#f87171" : "#9a9a9a";
-        const trustedText = dev.revokedAt ? "Not trusted" : "Trusted";
-        const firstPaired = dev.firstPaired ? new Date(dev.firstPaired).toLocaleString() : (dev.addedAt ? new Date(dev.addedAt).toLocaleString() : "Unknown");
-        const lastConnected = dev.lastConnected ? new Date(dev.lastConnected).toLocaleString() : dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : "Never";
-        html += `
-          <div class="cl-device-card">
-            <div class="cl-device-info">
-              <div class="cl-device-name">${dev.name || "Unnamed Device"}</div>
-              <div class="cl-device-meta">${dev.deviceType ? `<span style="text-transform:capitalize;">${dev.deviceType}</span>` : ""} ${dev.location ? `&bull; ${dev.location}` : ""}</div>
-              <div class="cl-device-detail">
-                <span><strong>Device ID:</strong> ${dev.deviceId}</span><br>
-                <span><strong>IP:</strong> ${dev.ipAddress || "Not available"}</span><br>
-                <span><strong>First paired:</strong> ${firstPaired}</span><br>
-                <span><strong>Last connected:</strong> ${lastConnected}</span><br>
-                <span><strong>Status:</strong> <span style="color:${statusColor};font-weight:600;">${statusText}</span></span><br>
-                <span><strong>Trusted:</strong> ${trustedText}</span>
-              </div>
-            </div>
-            <div class="cl-device-actions">
-              <button onclick="this.revokeDevice('${dev.deviceId}')" class="cl-revoke-btn">Revoke Access</button>
-            </div>
-          </div>`;
-      }
-    }
-    html += `</div></div>`;
-
     // Remove existing modal if present
     const existingBackdrop = document.querySelector(".cl-connected-modal-backdrop");
     if (existingBackdrop) existingBackdrop.remove();
@@ -1026,34 +983,134 @@ export class PairingCard {
     // Create backdrop
     const backdrop = document.createElement("div");
     backdrop.className = "cl-connected-modal-backdrop";
-    backdrop.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);z-index:100;display:flex;align-items:center;justify-content:center;";
-    backdrop.innerHTML = html;
+    backdrop.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);z-index:100;display:flex;align-items:center;justify-content:center;animation:clDropdownFade 0.15s ease-out;";
+
+    // Create modal
+    const modal = document.createElement("div");
+    modal.className = "cl-connected-modal";
+    
+    // Modal header
+    const header = document.createElement("div");
+    header.className = "cl-modal-header";
+    const title = document.createElement("h3");
+    title.textContent = "Connected Devices";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", () => backdrop.remove());
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    // Modal body
+    const body = document.createElement("div");
+    body.className = "cl-modal-body";
+
+    if (errorMsg) {
+      const errorEl = document.createElement("div");
+      errorEl.className = "cl-modal-error";
+      errorEl.textContent = errorMsg;
+      body.appendChild(errorEl);
+    }
+
+    if (devices.length === 0 && !errorMsg) {
+      const emptyEl = document.createElement("p");
+      emptyEl.style.cssText = "color:var(--cl-muted);text-align:center;padding:20px 0;";
+      emptyEl.textContent = "No paired devices found.";
+      body.appendChild(emptyEl);
+    } else {
+      for (const dev of devices) {
+        const card = document.createElement("div");
+        card.className = "cl-device-card";
+
+        const statusText = dev.status || (dev.revokedAt ? "Revoked" : dev.lastConnected ? (Date.now() - dev.lastConnected < 300000 ? "Online" : "Offline") : "Unknown");
+        const statusColor = statusText === "Online" ? "#4ade80" : statusText === "Revoked" ? "#f87171" : "#9a9a9a";
+        const trustedText = dev.revokedAt ? "Not trusted" : "Trusted";
+        const firstPaired = dev.firstPaired ? new Date(dev.firstPaired).toLocaleString() : "Unknown";
+        const lastConnected = dev.lastConnected ? new Date(dev.lastConnected).toLocaleString() : "Never";
+
+        const info = document.createElement("div");
+        info.className = "cl-device-info";
+
+        const name = document.createElement("div");
+        name.className = "cl-device-name";
+        name.textContent = dev.name || "Unnamed Device";
+
+        const meta = document.createElement("div");
+        meta.className = "cl-device-meta";
+        let metaText = "";
+        if (dev.deviceType) metaText += `<span style="text-transform:capitalize;">${dev.deviceType}</span>`;
+        if (dev.location) metaText += `${metaText ? " &bull; " : ""}${dev.location}`;
+        meta.innerHTML = metaText;
+
+        const detail = document.createElement("div");
+        detail.className = "cl-device-detail";
+        detail.innerHTML = `
+          <span><strong>Device ID:</strong> ${dev.deviceId}</span><br>
+          <span><strong>IP:</strong> ${dev.ipAddress || "Not available"}</span><br>
+          <span><strong>First paired:</strong> ${firstPaired}</span><br>
+          <span><strong>Last connected:</strong> ${lastConnected}</span><br>
+          <span><strong>Status:</strong> <span style="color:${statusColor};font-weight:600;">${statusText}</span></span><br>
+          <span><strong>Trusted:</strong> ${trustedText}</span>
+        `;
+
+        info.appendChild(name);
+        info.appendChild(meta);
+        info.appendChild(detail);
+
+        const actions = document.createElement("div");
+        actions.className = "cl-device-actions";
+        
+        if (!dev.revokedAt) {
+          const revokeBtn = document.createElement("button");
+          revokeBtn.className = "cl-revoke-btn";
+          revokeBtn.textContent = "Revoke Access";
+          revokeBtn.addEventListener("click", async () => {
+            revokeBtn.disabled = true;
+            revokeBtn.textContent = "Revoking...";
+            try {
+              const revokeEndpoint = this.options.revokeEndpoint || "/api/devices/revoke";
+              const res = await fetch(revokeEndpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deviceId: dev.deviceId })
+              });
+              if (!res.ok) throw new Error("Revoke failed");
+              revokeBtn.textContent = "Access Revoked";
+              revokeBtn.style.background = "#166534";
+              revokeBtn.disabled = true;
+              setTimeout(() => {
+                this.openConnectedDevicesModal();
+              }, 800);
+            } catch (e: any) {
+              revokeBtn.textContent = "Failed";
+              revokeBtn.style.background = "#7f1d1d";
+            }
+          });
+          actions.appendChild(revokeBtn);
+        } else {
+          const revokedLabel = document.createElement("span");
+          revokedLabel.style.cssText = "color:#9a9a9a;font-size:12px;";
+          revokedLabel.textContent = "Access Revoked";
+          actions.appendChild(revokedLabel);
+        }
+
+        card.appendChild(info);
+        card.appendChild(actions);
+        body.appendChild(card);
+      }
+    }
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
 
-    // Wire revoke buttons
-    const revokeEndpoint = this.options.revokeEndpoint || "/api/devices/revoke";
-    backdrop.querySelectorAll(".cl-revoke-btn").forEach((btn: any) => {
-      btn.revokeDevice = async (deviceId: string) => {
-        btn.disabled = true;
-        btn.textContent = "Revoking...";
-        try {
-          const res = await fetch(revokeEndpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ deviceId })
-          });
-          if (!res.ok) throw new Error("Revoke failed");
-          btn.textContent = "Access Revoked";
-          btn.style.background = "#166534";
-          btn.disabled = true;
-          setTimeout(() => {
-            this.openConnectedDevicesModal();
-          }, 800);
-        } catch (e: any) {
-          btn.textContent = "Failed";
-          btn.style.background = "#7f1d1d";
-        }
-      };
+    // Close on backdrop click
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) {
+        backdrop.remove();
+      }
     });
   }
 

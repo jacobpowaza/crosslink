@@ -250,6 +250,14 @@ const host = createCrosslinkServer({
       display: "standalone",
       startUrl: "/mobile.html",
     },
+    offline: {
+      title: "Crosslink Chat is offline",
+      message: "Open Crosslink Chat on your computer to reconnect automatically.",
+      icon: "/icon-192.png",
+      appName: "Crosslink Chat",
+      themeColor: "#0f172a",
+      bgColor: "#0f172a"
+    }
   },
   capabilities: [
     { id: "chat.send", title: "Send messages", risk: "low" },
@@ -355,7 +363,7 @@ const server = http.createServer(async (req, res) => {
         const cfUrl = await ensureCloudflareTunnel(port);
         if (cfUrl) {
           baseUrl = cfUrl;
-          skipParam = "&skip_install=1";
+          skipParam = "";
         }
       } else if (modeParam === "ngrok") {
         effectiveMode = "ngrok";
@@ -462,11 +470,12 @@ const server = http.createServer(async (req, res) => {
 
   // ── API: app config (PWA identity) ──
   if (pathname === "/api/config" && req.method === "GET") {
-    const cfg = (host as any).config?.application?.pwaConfig ?? {};
+    const appCfg = (host as any).config?.application ?? {};
     respond(res, 200, "application/json", JSON.stringify({
-      appName: (host as any).config?.application?.name ?? "Crosslink",
-      appId: (host as any).config?.application?.id ?? "",
-      pwaConfig: cfg,
+      appName: appCfg.name ?? "Crosslink",
+      appId: appCfg.id ?? "",
+      pwaConfig: appCfg.pwaConfig ?? {},
+      offline: appCfg.offline ?? {},
     }));
     return;
   }
@@ -528,6 +537,50 @@ const server = http.createServer(async (req, res) => {
         revoked: ok,
         message: ok ? (revokedId ? `Device ${revokedId} revoked.` : "No device to revoke.") : (target ? `Failed to revoke device ${target}.` : "No paired device found."),
       }));
+    } catch (err) {
+      respond(res, 500, "application/json", JSON.stringify({ ok: false, error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: list connected devices ──
+  if (pathname === "/api/devices" && req.method === "GET") {
+    try {
+      const devices = host.listDevices();
+      const deviceData = devices.map(d => ({
+        deviceId: d.deviceId,
+        name: d.name,
+        deviceType: d.name.toLowerCase().includes("mobile") ? "mobile" : 
+                   d.name.toLowerCase().includes("desktop") ? "desktop" :
+                   d.name.toLowerCase().includes("tablet") ? "tablet" : "unknown",
+        location: "Local Network", // Could be enhanced with GeoIP
+        ipAddress: "Local", // Could be enhanced to show actual IP
+        lastConnected: d.lastSeen || null,
+        firstPaired: d.addedAt,
+        status: d.revokedAt ? "Revoked" : (d.lastSeen && Date.now() - d.lastSeen < 300000 ? "Online" : "Offline"),
+        trusted: !d.revokedAt,
+        caps: d.caps,
+        revokedAt: d.revokedAt || null
+      }));
+      respond(res, 200, "application/json", JSON.stringify({ devices: deviceData }));
+    } catch (err) {
+      respond(res, 500, "application/json", JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── API: revoke device ──
+  if (pathname === "/api/devices/revoke" && req.method === "POST") {
+    try {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { deviceId } = JSON.parse(body || "{}");
+      if (!deviceId) {
+        respond(res, 400, "application/json", JSON.stringify({ ok: false, error: "deviceId required" }));
+        return;
+      }
+      const ok = host.revokeDevice(deviceId);
+      respond(res, 200, "application/json", JSON.stringify({ ok, deviceId }));
     } catch (err) {
       respond(res, 500, "application/json", JSON.stringify({ ok: false, error: String(err) }));
     }

@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Crosslink" />
+  <meta name="apple-mobile-web-app-title" content="Crosslink Chat" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" type="image/png" href="icon-192.png" />
@@ -16,10 +16,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet" />
   <title>Crosslink Chat</title>
   <style>
-    /* ── universal Crosslink "add to home screen" bootstrap ──
-       Shown whenever this page is running as a plain Safari tab. Once the
-       user adds it to their Home Screen and relaunches from there, this
-       whole layer is skipped and the real app underneath takes over. */
+    /* ── universal Crosslink "add to home screen" bootstrap ── */
     #bootstrap {
       position: fixed;
       inset: 0;
@@ -33,8 +30,14 @@
     }
     #bootstrap.hidden { display: none; }
     #bootstrap .mark {
-      width: min(72vw, 340px);
+      width: min(72vw, 180px);
+      height: auto;
+      aspect-ratio: 1 / 1;
+      object-fit: contain;
       color: #fff;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 12px;
     }
     #bootstrap .nudge {
       position: absolute;
@@ -49,24 +52,27 @@
     }
     #bootstrap .nudge span {
       font-family: "Caveat", "Segoe Script", "Bradley Hand", cursive;
-      font-size: 26px;
+      font-size: 20px;
       color: #fff;
       opacity: 0.92;
+      text-align: center;
+      max-width: 280px;
+      line-height: 1.2;
     }
     #bootstrap .nudge svg {
-      width: 64px;
-      height: 54px;
+      width: 48px;
+      height: 48px;
       color: #fff;
       opacity: 0.92;
     }
     #bootstrap .continue-btn {
-      margin-top: 24px;
+      margin-top: 16px;
       background: rgba(255, 255, 255, 0.15);
       border: 1px solid rgba(255, 255, 255, 0.25);
       color: #fff;
-      padding: 8px 18px;
+      padding: 10px 20px;
       border-radius: 999px;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       cursor: pointer;
       pointer-events: auto;
@@ -75,7 +81,6 @@
     #bootstrap .continue-btn:hover {
       background: rgba(255, 255, 255, 0.25);
     }
-    /* the real app is inert while the bootstrap layer is up */
     body.pre-install > header,
     body.pre-install > main {
       visibility: hidden;
@@ -130,34 +135,46 @@
       min-height: 0;
     }
 
-    /* ── pairing screen ─────────────────────────────────── */
-    .pairing {
+    /* ── pairing code screen ────────────────────────────── */
+    .pair-screen {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       padding: 32px 20px;
-      gap: 16px;
+      gap: 20px;
       text-align: center;
     }
-    .pairing.hidden { display: none; }
-    .spinner {
-      width: 40px;
-      height: 40px;
-      border: 3px solid var(--line);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+    .pair-screen.hidden { display: none; }
+    .pair-screen h2 { font-size: 20px; font-weight: 600; }
+    .pair-screen p { color: var(--muted); font-size: 14px; max-width: 280px; }
+    .pair-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      max-width: 260px;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .pairing h2 { font-size: 18px; font-weight: 600; }
-    .pairing p { color: var(--muted); font-size: 14px; max-width: 280px; }
-    .pairing .err { color: var(--red); font-size: 13px; max-width: 280px; }
+    .pair-grid input {
+      width: 72px;
+      height: 64px;
+      font-size: 24px;
+      text-align: center;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--text);
+      font-weight: 700;
+      outline: none;
+    }
+    .pair-grid input:focus { border-color: var(--accent); }
 
     /* ── SAS confirm ────────────────────────────────────── */
     .sas {
-      flex: 1;
+      position: fixed;
+      inset: 0;
+      z-index: 500;
+      background: rgba(0, 0, 0, 0.85);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -295,38 +312,16 @@
   </style>
 </head>
 <body>
-  <!-- Screen A: Pairing code entry -->
-  <div id="pairCodeScreen" style="display:none; position:fixed; inset:0; z-index:200; background:#000; flex-direction:column; align-items:center; justify-content:center; gap:24px;">
-    <div style="text-align:center;">
-      <img src="./crosslink-mark.svg" alt="Crosslink" style="width:120px; opacity:0.9;" />
-      <h2 style="font-size:20px; font-weight:600; margin-top:16px; color:#fff;">Enter pairing code</h2>
-      <p style="font-size:13px; color:#94a3b8; margin-top:6px;">Type the 9 digits shown on your computer</p>
-    </div>
-    <div id="pairCodeGrid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:260px;">
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-      <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" style="width:72px; height:64px; font-size:24px; text-align:center; border-radius:14px; border:1px solid #334155; background:#1e293b; color:#e2e8f0; font-weight:700; outline:none;" />
-    </div>
-    <p id="pairCodeErr" style="color:#f87171; font-size:13px; min-height:20px; margin:0;">&nbsp;</p>
-  </div>
-
+  <!-- Add to Home Screen Bootstrap Nudge (for browser tabs) -->
   <div id="bootstrap" class="hidden">
-    <img class="mark" id="bootstrapLogo" src="./crosslink-mark.svg" alt="App" />
-    <h2 id="bootstrapAppName" style="font-size:28px; font-weight:700; color:#fff; margin-top:20px; letter-spacing:-0.02em;">App</h2>
+    <img class="mark" id="bootstrapLogo" src="./icon-192.png" alt="App" />
+    <h2 id="bootstrapAppName" style="font-size:20px; font-weight:600; color:#fff; margin-top:12px; letter-spacing:-0.01em;">Crosslink Chat</h2>
     <button class="continue-btn" id="continueBrowserBtn">Continue in browser &rarr;</button>
     <div class="nudge">
-      <span id="bootstrapNudgeText">Add to home screen</span>
-      <svg viewBox="0 0 64 60" fill="none" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;">
-        <!-- curved line from bottom-left toward top-right (toward share icon) -->
-        <path d="M8 52 C 18 44, 32 18, 52 14" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <!-- arrowhead -->
-        <path d="M48 10 L 54 14 L 46 22" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <span>Add to home screen</span>
+      <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;">
+        <path d="M12 36 C 20 28, 34 12, 40 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M36 4 L 42 8 L 34 16" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       </svg>
     </div>
   </div>
@@ -334,24 +329,36 @@
   <header>
     <h1>Crosslink Chat</h1>
     <div class="status">
+      <button id="resetBtn" onclick="resetDeviceData()" style="background:rgba(255,255,255,0.08);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Reset</button>
       <span class="dot" id="dot"></span>
       <span id="stateText">connecting…</span>
     </div>
   </header>
 
   <main>
-    <!-- pairing -->
-    <div class="pairing" id="pairing">
-      <div class="spinner"></div>
-      <h2>Pairing with host…</h2>
-      <p>Establishing encrypted connection</p>
-      <p class="err" id="pairErr" hidden></p>
+    <!-- Screen A: Pairing code entry -->
+    <div class="pair-screen hidden" id="pairCodeScreen">
+      <img src="./crosslink-mark.svg" alt="Crosslink" style="width:72px; opacity:0.9;" />
+      <h2>Pairing Required</h2>
+      <p>Type the 9-digit pairing code shown on your computer to connect.</p>
+      <div class="pair-grid" id="pairCodeGrid">
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pairDigit" />
+      </div>
+      <p id="pairCodeErr" style="color:#f87171; font-size:13px; min-height:20px; margin:0;"></p>
     </div>
 
-    <!-- SAS confirm -->
+    <!-- SAS confirm Modal -->
     <div class="sas hidden" id="sasScreen">
-      <h2>Verify codes</h2>
-      <p>These must match on the web app:</p>
+      <h2>Verify Security Code</h2>
+      <p>Confirm the numbers match on your computer:</p>
       <div class="sas-grid" id="sasGrid"></div>
       <p class="caps" id="capList"></p>
       <div class="sas-actions">
@@ -360,7 +367,7 @@
       </div>
     </div>
 
-    <!-- chat -->
+    <!-- Chat Screen -->
     <div class="chat hidden" id="chatScreen">
       <div class="messages" id="messages">
         <div class="empty-chat" id="emptyChat">Connected! Send a message below.</div>
@@ -374,179 +381,67 @@
 
   <script src="./bundle.js?v=2.0.0"></script>
   <script>
-    const { createCrosslinkClient } = window.CrosslinkSDK;
     const $ = id => document.getElementById(id);
     const vibrate = p => { try { navigator.vibrate?.(p); } catch {} };
 
-    // ── universal Crosslink bootstrap: Safari tab vs installed PWA ───────
-    // iOS never fires `beforeinstallprompt`; "Add to Home Screen" only
-    // exists behind Safari's Share sheet. So instead of trying to trigger
-    // install, detect *how we were launched* and show a one-line nudge
-    // toward that sheet until the user has actually installed and relaunched.
+    // Function to wipe all credentials and stored state on the phone
+    async function resetDeviceData() {
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+        if (window.indexedDB?.databases) {
+          const dbs = await window.indexedDB.databases();
+          for (const db of dbs) {
+            if (db.name) window.indexedDB.deleteDatabase(db.name);
+          }
+        } else {
+          window.indexedDB?.deleteDatabase("crosslink-secure-storage");
+        }
+        if ("caches" in window) {
+          const keys = await caches.keys();
+          for (const k of keys) await caches.delete(k);
+        }
+      } catch (e) {
+        console.warn("Storage reset warning:", e);
+      }
+      location.href = location.pathname;
+    }
+    window.resetDeviceData = resetDeviceData;
+
     function isStandalone() {
-      return window.matchMedia("(display-mode: standalone)").matches
-        || window.navigator.standalone === true;
+      return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
     }
 
-    // read pairing URI from query parameter (?pair=crosslink://pair?...)
     const params = new URLSearchParams(location.search);
-    const pairFromQuery = params.get("pair");
-
-    // A Home Screen launch always opens the bare start_url — whatever
-    // pairing info arrived via the QR link's query string would otherwise
-    // be lost the moment the user leaves Safari to install. Stash it before
-    // that happens, and pick it back up once we're running standalone.
-    if (pairFromQuery) {
-      try { localStorage.setItem("crosslink.pendingPair", pairFromQuery); } catch {}
+    if (params.has("reset") || location.hash.includes("reset")) {
+      resetDeviceData();
     }
 
     const skipInstall = params.get("skip_install") === "1" || params.get("skip") === "1" || params.has("direct");
+    const pairingUri = /*__PAIRING_URI__*/ "" || params.get("pair");
+
+    if (pairingUri) {
+      try { localStorage.setItem("crosslink.pendingPair", pairingUri); } catch {}
+    }
 
     if (!isStandalone() && !skipInstall) {
       document.body.classList.add("pre-install");
       $("bootstrap").classList.remove("hidden");
-    } else {
-      document.body.classList.remove("pre-install");
-      $("bootstrap").classList.add("hidden");
     }
 
     $("continueBrowserBtn")?.addEventListener("click", () => {
       document.body.classList.remove("pre-install");
       $("bootstrap").classList.add("hidden");
-      if (pairingUri) {
-        startPairing();
+      if (shell.getState() === "authentication-required") {
+        $("pairCodeScreen").classList.remove("hidden");
       }
     });
-
-    // Dynamic branding: read app identity from server and apply to bootstrap + title
-    fetch("/api/config")
-      .then((r) => r.json())
-      .catch(() => ({}))
-      .then((cfg) => {
-        const appName = cfg.appName || cfg.name || cfg.pwaConfig?.shortName || "Crosslink";
-        document.title = cfg.appName || cfg.name || document.title;
-        document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute("content", cfg.pwaConfig?.shortName || appName);
-        const logoEl = document.getElementById("bootstrapLogo");
-        if (logoEl && cfg.pwaConfig?.icons?.[0]) {
-          logoEl.src = cfg.pwaConfig.icons[0].src;
-          logoEl.alt = appName;
-        }
-        const nameEl = document.getElementById("bootstrapAppName");
-        if (nameEl) nameEl.textContent = appName;
-      });
-
-    const pairingUri = pairFromQuery || (() => {
-      try { return localStorage.getItem("crosslink.pendingPair"); } catch { return null; }
-    })();
-    if (isStandalone() && pairingUri) {
-      try { localStorage.removeItem("crosslink.pendingPair"); } catch {}
-    }
-
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("./sw.js").catch(() => {});
-    }
-
-    if (!pairingUri) {
-      $("pairing").classList.add("hidden");
-      $("pairErr").textContent = "No pairing data. Scan a QR code from the web app instead.";
-      $("pairErr").hidden = false;
-    }
 
     let rpc = null;
-    let lastMsgCount = 0;
 
-    const client = createCrosslinkClient({
-      deviceName: "mobile",
-      onStateChange(state) {
-        const online = state === "direct" || state === "crosslink-relayed" || state === "lan";
-        $("dot").classList.toggle("on", online);
-        $("dot").classList.toggle("pairing", !online && state !== "offline");
-        $("stateText").textContent = state;
-
-        if (online) {
-          $("pairing").classList.add("hidden");
-          $("sasScreen").classList.add("hidden");
-          $("chatScreen").classList.remove("hidden");
-          $("emptyChat").classList.remove("hidden");
-          rpc = client.rpc();
-          subscribeToMessages();
-          loadHistory();
-        }
-      },
-      onConfirmPairing(req) {
-        $("pairing").classList.add("hidden");
-        $("sasScreen").classList.remove("hidden");
-        $("dot").classList.add("pairing");
-
-        const grid = $("sasGrid");
-        grid.replaceChildren();
-        for (const ch of req.sas.replace(/\s/g, "")) {
-          const span = document.createElement("span");
-          span.textContent = ch;
-          grid.appendChild(span);
-        }
-        $("capList").textContent = "Capabilities: " + (req.grantedCaps.join(", ") || "(none)");
-
-        vibrate([30, 60, 30]);
-
-        return new Promise(resolve => {
-          $("sasOk").onclick = () => { vibrate(20); resolve(true); };
-          $("sasNo").onclick = () => resolve(false);
-        });
-      }
-    });
-
-    function resolvePairingUri(uri) {
-      if (!uri) return uri;
-      if (location.hostname && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-        return uri
-          .replace(/127\.0\.0\.1(%3A|:)(\d+)/g, (_, sep, port) => location.hostname + sep + port)
-          .replace(/localhost(%3A|:)(\d+)/g, (_, sep, port) => location.hostname + sep + port);
-      }
-      return uri;
-    }
-
-    async function startPairing() {
-      if (!pairingUri) return;
-      try {
-        $("pairErr").hidden = true;
-        const targetUri = resolvePairingUri(pairingUri);
-        await client.pairFromQr(targetUri, ["chat.send", "chat.read"]);
-        vibrate([30, 60, 30]);
-        await client.connect();
-      } catch (err) {
-        $("pairing").classList.add("hidden");
-        $("pairErr").textContent = "Pairing failed: " + err.message;
-        $("pairErr").hidden = false;
-        vibrate(100);
-      }
-    }
-
-    // ── messages ────────────────────────────────────────
-    function subscribeToMessages() {
-      if (!rpc) return;
-      try {
-        rpc.subscribe("chat.new_message", msg => {
-          vibrate(15);
-          appendMessage(msg);
-        });
-      } catch {}
-    }
-
-    async function loadHistory() {
-      if (!rpc) return;
-      try {
-        const res = await rpc.call("chat.history");
-        const msgs = res?.messages ?? [];
-        const el = $("messages");
-        for (const m of msgs) appendMessage(m, true);
-        lastMsgCount = msgs.length;
-        if (msgs.length > 0) $("emptyChat").classList.add("hidden");
-      } catch {}
-    }
-
+    // ── Chat logic ──
     function appendMessage(m, skipEmptyCheck) {
-      if (!skipEmptyCheck) $("emptyChat").classList.add("hidden");
+      if (!skipEmptyCheck) $("emptyChat")?.classList.add("hidden");
       const el = $("messages");
       const div = document.createElement("div");
       div.className = "msg " + (m.sender === "mobile" ? "mobile" : "web");
@@ -558,6 +453,30 @@
       div.append(text, meta);
       el.appendChild(div);
       el.scrollTop = el.scrollHeight;
+    }
+
+    async function loadHistory() {
+      if (!rpc) return;
+      try {
+        const res = await rpc.call("chat.history");
+        const msgs = res?.messages ?? [];
+        for (const m of msgs) appendMessage(m, true);
+        if (msgs.length > 0) $("emptyChat")?.classList.add("hidden");
+      } catch (e) {
+        console.warn("Failed to load history:", e);
+      }
+    }
+
+    function subscribeToMessages() {
+      if (!rpc) return;
+      try {
+        rpc.subscribe("chat.new_message", (msg) => {
+          vibrate(15);
+          appendMessage(msg);
+        });
+      } catch (e) {
+        console.warn("Failed to subscribe to messages:", e);
+      }
     }
 
     async function sendMsg() {
@@ -579,200 +498,119 @@
       }
     });
 
-    // ── Screen A: Pairing code entry wiring ─────────────
-    const pairDigits = document.querySelectorAll('.pairDigit');
-    const pairErrEl = $("pairCodeErr");
-    let pairCodeValue = "";
+    // ── SAS confirmation UI ──
+    function showSasModal(req) {
+      return new Promise((resolve) => {
+        const grid = $("sasGrid");
+        grid.replaceChildren();
+        for (const ch of req.sas.replace(/\s/g, "")) {
+          const span = document.createElement("span");
+          span.textContent = ch;
+          grid.appendChild(span);
+        }
+        $("capList").textContent = "Capabilities: " + (req.grantedCaps.join(", ") || "(none)");
+        $("sasScreen").classList.remove("hidden");
+        vibrate([30, 60, 30]);
 
-    function showScreenA() {
-      $("pairCodeScreen").style.display = "flex";
-      $("bootstrap").classList.add("hidden");
-      document.body.classList.remove("pre-install");
+        $("sasOk").onclick = () => {
+          $("sasScreen").classList.add("hidden");
+          vibrate(20);
+          resolve(true);
+        };
+        $("sasNo").onclick = () => {
+          $("sasScreen").classList.add("hidden");
+          resolve(false);
+        };
+      });
     }
 
-    function hideScreenA() {
-      $("pairCodeScreen").style.display = "none";
-    }
+    // ── Framework Offline Shell ──
+    const shell = new window.CrosslinkSDK.CrosslinkOfflineShell({
+      clientOptions: {
+        deviceName: "mobile",
+        onConfirmPairing: (req) => showSasModal(req)
+      },
+      offline: {
+        title: "Crosslink Chat is offline",
+        message: "Open Crosslink Chat on your computer to reconnect automatically.",
+        appName: "Crosslink Chat",
+        icon: "./icon-192.png",
+        themeColor: "#0f172a",
+        bgColor: "#0f172a"
+      },
+      onConnected: (connectedRpc) => {
+        rpc = connectedRpc;
+        $("pairCodeScreen").classList.add("hidden");
+        $("chatScreen").classList.remove("hidden");
+        $("dot").className = "dot on";
+        $("stateText").textContent = "Connected";
+        subscribeToMessages();
+        loadHistory();
+      },
+      onAuthRequired: () => {
+        $("chatScreen").classList.add("hidden");
+        if (isStandalone() || skipInstall || !document.body.classList.contains("pre-install")) {
+          $("pairCodeScreen").classList.remove("hidden");
+        }
+        $("dot").className = "dot pairing";
+        $("stateText").textContent = "Pairing required";
+      },
+      onStateChange: (state) => {
+        if (state === "host-offline" || state === "reconnecting") {
+          $("dot").className = "dot";
+          $("stateText").textContent = "Offline";
+        }
+      }
+    });
 
+    // Wire up pairing code inputs
+    const pairDigits = document.querySelectorAll(".pairDigit");
     pairDigits.forEach((input, idx) => {
       input.addEventListener("input", () => {
         const val = input.value.replace(/\D/g, "");
         input.value = val ? val[0] : "";
         if (val && idx < pairDigits.length - 1) pairDigits[idx + 1].focus();
-        pairCodeValue = Array.from(pairDigits).map(i => i.value.replace(/\D/g, "")).join("");
-        // Auto-proceed when 9 digits entered
-        if (pairCodeValue.length === 9) {
-          verifyPairCode(pairCodeValue);
+        const fullCode = Array.from(pairDigits).map(i => i.value.replace(/\D/g, "")).join("");
+        if (fullCode.length === 9) {
+          handlePairCode(fullCode);
         }
       });
       input.addEventListener("keydown", (e) => {
         if (e.key === "Backspace" && !input.value && idx > 0) pairDigits[idx - 1].focus();
       });
-      input.addEventListener("paste", (e) => {
-        e.preventDefault();
-        const pasted = (e.clipboardData || window.clipboardData).getData("text").replace(/\D/g, "").slice(0, 9);
-        for (let i = 0; i < pasted.length && i < pairDigits.length; i++) {
-          pairDigits[i].value = pasted[i];
-        }
-        pairCodeValue = pasted;
-        if (pairCodeValue.length === 9) verifyPairCode(pairCodeValue);
-      });
     });
 
-    async function trySilentAuthThenPair() {
-      // Distinction: "couldn't connect" (offline/unavailable) is NOT the same
-      // as "not paired" (unknown/revoked/auth-rejected). Only pairing-related
-      // failures should fall through to pairing; offline hosts must show an
-      // unavailable state, not make users think pairing is broken.
-      const apps = client.listApps();
-      const pairedApp = apps.length > 0 ? apps[0] : null;
-
-      if (!pairedApp) {
-        // Unknown device: never paired with this host/app.
-        $("pairing").classList.add("hidden");
-        showScreenA();
-        return;
-      }
-
-      // Check device crypto storage is present and not corrupted.
+    async function handlePairCode(code) {
+      $("pairCodeErr").textContent = "Verifying code…";
+      $("pairCodeErr").style.color = "#94a3b8";
       try {
-        const storageInit = await import("./bundle.js?v=2.0.0");
-        // The SDK initializes deviceCryptoStorage on the client; if it is
-        // missing or load throws, the browser key is missing/corrupted.
-      } catch {
-        // If crypto init is unavailable, treat as missing key.
-      }
-
-      try {
-        // Attempt connection. A successful handshake proves both:
-        //  (a) the device key is intact, and (b) the host recognizes it.
-        await client.connect(pairedApp.appId);
-        const rpcClient = client.rpc();
-        $("pairing").classList.add("hidden");
-        $("chatScreen").classList.remove("hidden");
-        $("emptyChat").classList.remove("hidden");
-        window.rpc = rpcClient;
-        subscribeToMessages();
-        loadHistory();
-        if (isStandalone()) {
-          $("bootstrap").classList.add("hidden");
-          document.body.classList.remove("pre-install");
-        }
-        return;
-      } catch (err) {
-        const msg = String(err?.message ?? err ?? "").toLowerCase();
-        const stateAfterAttempt = client.state;
-
-        // Revoked: terminal state; pairing screen required again.
-        if (msg.includes("revoked") || msg.includes("device_revoked") || stateAfterAttempt === "revoked") {
-          $("pairErr").hidden = false;
-          $("pairErr").textContent = "Device revoked. Pair again to reconnect.";
-          $("pairErr").style.color = "#f87171";
-          $("pairing").classList.add("hidden");
-          showScreenA();
-          return;
-        }
-
-        // Unauthorized / identity changed: fingerprint/appId mismatch,
-        // or host no longer trusts this device identity.
-        if (msg.includes("unauthorized") || msg.includes("not paired") || msg.includes("fingerprint")) {
-          $("pairErr").hidden = false;
-          $("pairErr").textContent = "Trusted pairing rejected. Pair again.";
-          $("pairErr").style.color = "#f87171";
-          $("pairing").classList.add("hidden");
-          showScreenA();
-          return;
-        }
-
-        // Offline / unavailable: host unreachable. Must NOT fall through to
-        // pairing screen — pairing requires a live host and pairing code.
-        if (msg.includes("offline") || msg.includes("no transport") || msg.includes("host") || stateAfterAttempt === "offline") {
-          $("pairing").classList.add("hidden");
-          $("pairErr").hidden = false;
-          $("pairErr").textContent = "Host unavailable — check connection. (Not a pairing issue)";
-          $("pairErr").style.color = "#94a3b8";
-          // Keep pairing spinner hidden; show unavailable state.
-          $("pairing").classList.remove("hidden");
-          $("pairing").querySelector("h2").textContent = "Host unavailable";
-          $("pairing").querySelector("p").textContent = "Computer is offline or unreachable. Pairing is not needed — reconnect when available.";
-          return;
-        }
-
-        // Any other auth/server error: fail safely — show pairing screen
-        // rather than accidentally opening the app with a broken session.
-        $("pairErr").hidden = false;
-        $("pairErr").textContent = "Authentication failed. Pair again to reconnect.";
-        $("pairErr").style.color = "#f87171";
-        $("pairing").classList.add("hidden");
-        showScreenA();
-        return;
-      }
-    }
-
-    async function verifyPairCode(code) {
-      pairErrEl.textContent = "Verifying…";
-      pairErrEl.style.color = "#94a3b8";
-      try {
-        const entered = code.replace(/\D/g, "");
-        if (entered.length !== 9) {
-          pairErrEl.textContent = "Enter all 9 digits.";
-          pairErrEl.style.color = "#f87171";
-          return;
-        }
-        // Ask the server if this pairing code matches the active session.
         const res = await fetch("/api/verify-pair", {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ code: entered }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code })
         });
-        const result = await res.json().catch(() => ({}));
-        if (result.ok) {
-          pairErrEl.textContent = "";
-          hideScreenA();
-          if (!isStandalone() && !skipInstall) {
-            document.body.classList.add("pre-install");
-            $("bootstrap").classList.remove("hidden");
-          } else if (pairingUri) {
-            // After pairing verification, attempt silent auth with any stored
-            // session/device key. If it succeeds we skip pairing entirely.
-            trySilentAuthThenPair();
+        const data = await res.json().catch(() => ({}));
+        if (data.ok) {
+          $("pairCodeErr").textContent = "";
+          const targetPairUri = pairingUri || localStorage.getItem("crosslink.pendingPair");
+          if (targetPairUri) {
+            await shell.getClient().pairFromQr(targetPairUri, ["chat.send", "chat.read"]);
+            await shell.reconnectNow();
           }
         } else {
-          pairErrEl.textContent = "Incorrect pairing code. Try again.";
-          pairErrEl.style.color = "#f87171";
+          $("pairCodeErr").textContent = "Incorrect pairing code.";
+          $("pairCodeErr").style.color = "#f87171";
         }
       } catch (err) {
-        pairErrEl.textContent = "Network error — check connection.";
-        pairErrEl.style.color = "#f87171";
+        $("pairCodeErr").textContent = "Could not verify code with host.";
+        $("pairCodeErr").style.color = "#f87171";
       }
     }
 
-    // Show Screen A by default; hide pairing spinner initially
-    $("pairing").classList.add("hidden");
-    showScreenA();
-
-    // ── start ───────────────────────────────────────────
-    // Priority: 1) silent auth with stored session/device key, 2) pairing flow,
-    // 3) already-paired connection. `isStandalone()` affects UX only; it must
-    // NEVER be treated as proof of trust.
-    if (!isStandalone() && !skipInstall) {
-      // Bootstrap (Screen B) is visible by default; pairing screen hidden.
-      document.body.classList.add("pre-install");
-      $("bootstrap").classList.remove("hidden");
-      $("pairing").classList.add("hidden");
-    } else if (pairingUri) {
-      // Try silent authentication first (trusted device); fall back to pairing.
-      trySilentAuthThenPair();
-    } else if (client.listApps().length > 0) {
-      // already paired (returned to page)
-      $("pairing").classList.add("hidden");
-      $("chatScreen").classList.remove("hidden");
-      client.connect().then(() => {
-        rpc = client.rpc();
-        subscribeToMessages();
-        loadHistory();
-      }).catch(() => {});
-    }
+    // Start shell
+    shell.start().catch((err) => {
+      console.error("[Chat PWA] Offline shell start failed:", err);
+    });
   </script>
 </body>
 </html>

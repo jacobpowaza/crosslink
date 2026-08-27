@@ -77,8 +77,252 @@ var init_storage_FHFZA2HW = __esm({
   }
 });
 
+// ../../packages/sdk-browser/dist/chunk-RCHT4DYR.js
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const request2 = indexedDB.open(DB_NAME, DB_VERSION);
+    request2.onupgradeneeded = () => {
+      const db = request2.result;
+      if (!db.objectStoreNames.contains(KEY_STORE)) db.createObjectStore(KEY_STORE);
+      if (!db.objectStoreNames.contains(VALUE_STORE)) db.createObjectStore(VALUE_STORE);
+    };
+    request2.onsuccess = () => resolve(request2.result);
+    request2.onerror = () => reject(request2.error ?? new Error("indexedDB open failed"));
+    request2.onblocked = () => reject(new Error("indexedDB open blocked by another tab"));
+  });
+}
+function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("indexedDB transaction failed"));
+    tx.onabort = () => reject(tx.error ?? new Error("indexedDB transaction aborted"));
+  });
+}
+function request(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error("indexedDB request failed"));
+  });
+}
+async function createSecureStorage(options = {}) {
+  try {
+    const backend = await IndexedDbSecureStorage.open();
+    const storage = await HydratedSecureStorage.hydrate(backend, {
+      ...options.onWriteError ? { onWriteError: options.onWriteError } : {}
+    });
+    return { storage, kind: backend.kind, encrypted: true };
+  } catch (err) {
+    if (options.allowPlaintextFallback === false) throw err;
+  }
+  const { LocalStorageSecureStorage: LocalStorageSecureStorage2, MemorySecureStorage: MemorySecureStorage2 } = await Promise.resolve().then(() => (init_storage_FHFZA2HW(), storage_FHFZA2HW_exports));
+  if (typeof localStorage !== "undefined") {
+    return {
+      storage: new LocalStorageSecureStorage2(localStorage),
+      kind: "localstorage",
+      encrypted: false
+    };
+  }
+  return { storage: new MemorySecureStorage2(), kind: "memory", encrypted: false };
+}
+var DB_NAME, DB_VERSION, KEY_STORE, VALUE_STORE, MASTER_KEY_ID, IV_BYTES, IndexedDbSecureStorage, HydratedSecureStorage;
+var init_chunk_RCHT4DYR = __esm({
+  "../../packages/sdk-browser/dist/chunk-RCHT4DYR.js"() {
+    "use strict";
+    DB_NAME = "crosslink-secure";
+    DB_VERSION = 1;
+    KEY_STORE = "keys";
+    VALUE_STORE = "values";
+    MASTER_KEY_ID = "master";
+    IV_BYTES = 12;
+    IndexedDbSecureStorage = class _IndexedDbSecureStorage {
+      constructor(db, key) {
+        this.db = db;
+        this.key = key;
+      }
+      db;
+      key;
+      kind = "indexeddb-aes-gcm";
+      encrypted = true;
+      /**
+       * Opens the store, generating the non-extractable master key on first use.
+       * Rejects when IndexedDB or WebCrypto is unavailable (private-mode Safari,
+       * insecure origins) so the caller can choose its own fallback rather than
+       * being silently downgraded to plaintext.
+       */
+      static async open() {
+        if (typeof indexedDB === "undefined") {
+          throw new Error("IndexedDB is not available in this environment");
+        }
+        const subtle = globalThis.crypto?.subtle;
+        if (!subtle) {
+          throw new Error("WebCrypto subtle is not available (requires a secure origin)");
+        }
+        const db = await openDb();
+        let key = await request(
+          db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(MASTER_KEY_ID)
+        );
+        if (!key) {
+          key = await subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
+            "encrypt",
+            "decrypt"
+          ]);
+          const tx = db.transaction(KEY_STORE, "readwrite");
+          tx.objectStore(KEY_STORE).put(key, MASTER_KEY_ID);
+          await txDone(tx);
+        }
+        return new _IndexedDbSecureStorage(db, key);
+      }
+      async get(name) {
+        const stored = await request(
+          this.db.transaction(VALUE_STORE, "readonly").objectStore(VALUE_STORE).get(name)
+        );
+        if (!stored) return null;
+        try {
+          const plain = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: new Uint8Array(stored.iv) },
+            this.key,
+            stored.data
+          );
+          return new TextDecoder().decode(plain);
+        } catch {
+          return null;
+        }
+      }
+      async set(name, value) {
+        const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+        const data = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv },
+          this.key,
+          new TextEncoder().encode(value)
+        );
+        const tx = this.db.transaction(VALUE_STORE, "readwrite");
+        tx.objectStore(VALUE_STORE).put({ iv: iv.buffer, data }, name);
+        await txDone(tx);
+      }
+      async delete(name) {
+        const tx = this.db.transaction(VALUE_STORE, "readwrite");
+        tx.objectStore(VALUE_STORE).delete(name);
+        await txDone(tx);
+      }
+      async keys() {
+        const all = await request(
+          this.db.transaction(VALUE_STORE, "readonly").objectStore(VALUE_STORE).getAllKeys()
+        );
+        return all.map(String);
+      }
+      /** Destroys every stored value and the master key. */
+      async wipe() {
+        const tx = this.db.transaction([VALUE_STORE, KEY_STORE], "readwrite");
+        tx.objectStore(VALUE_STORE).clear();
+        tx.objectStore(KEY_STORE).clear();
+        await txDone(tx);
+      }
+    };
+    HydratedSecureStorage = class _HydratedSecureStorage {
+      constructor(backend, onWriteError) {
+        this.backend = backend;
+        this.onWriteError = onWriteError;
+      }
+      backend;
+      onWriteError;
+      cache = /* @__PURE__ */ new Map();
+      /** serializes writes so a rapid set/delete pair cannot land out of order */
+      flushChain = Promise.resolve();
+      pendingWrites = 0;
+      static async hydrate(backend, options = {}) {
+        const storage = new _HydratedSecureStorage(backend, options.onWriteError);
+        for (const key of await backend.keys()) {
+          const value = await backend.get(key);
+          if (value !== null) storage.cache.set(key, value);
+        }
+        return storage;
+      }
+      get kind() {
+        return this.backend.kind;
+      }
+      get encrypted() {
+        return this.backend.encrypted;
+      }
+      get(key) {
+        return this.cache.get(key) ?? null;
+      }
+      set(key, value) {
+        this.cache.set(key, value);
+        this.enqueue(key, () => this.backend.set(key, value));
+      }
+      delete(key) {
+        this.cache.delete(key);
+        this.enqueue(key, () => this.backend.delete(key));
+      }
+      /** Resolves once every queued write has reached the backend. */
+      flushed() {
+        return this.flushChain;
+      }
+      get pending() {
+        return this.pendingWrites;
+      }
+      enqueue(key, op) {
+        this.pendingWrites += 1;
+        this.flushChain = this.flushChain.then(op).catch((err) => {
+          this.onWriteError?.(err, key);
+        }).finally(() => {
+          this.pendingWrites -= 1;
+        });
+      }
+    };
+  }
+});
+
+// ../../packages/sdk-browser/dist/device-crypto-storage-NEJ3IT2Z.js
+var device_crypto_storage_NEJ3IT2Z_exports = {};
+__export(device_crypto_storage_NEJ3IT2Z_exports, {
+  SecureDeviceCryptoStorage: () => SecureDeviceCryptoStorage
+});
+var SecureDeviceCryptoStorage;
+var init_device_crypto_storage_NEJ3IT2Z = __esm({
+  "../../packages/sdk-browser/dist/device-crypto-storage-NEJ3IT2Z.js"() {
+    "use strict";
+    init_chunk_RCHT4DYR();
+    SecureDeviceCryptoStorage = class _SecureDeviceCryptoStorage {
+      storage;
+      constructor(storage) {
+        this.storage = storage;
+      }
+      static async open() {
+        const { storage } = await createSecureStorage({ allowPlaintextFallback: false });
+        return new _SecureDeviceCryptoStorage(storage);
+      }
+      storageKey(appId) {
+        return `crosslink.device-crypto.${appId}`;
+      }
+      async load(appId) {
+        const key = this.storageKey(appId ?? "default");
+        const value = this.storage.get(key);
+        if (!value) return null;
+        try {
+          const parsed = JSON.parse(value);
+          if (parsed && typeof parsed.deviceId === "string" && typeof parsed.edPrivateSeedB64 === "string") {
+            return { deviceId: parsed.deviceId, edPrivateSeedB64: parsed.edPrivateSeedB64 };
+          }
+        } catch {
+        }
+        return null;
+      }
+      async save(record, appId) {
+        const key = this.storageKey(appId ?? "default");
+        this.storage.set(key, JSON.stringify(record));
+      }
+      async clear(appId) {
+        const key = this.storageKey(appId ?? "default");
+        this.storage.delete(key);
+      }
+    };
+  }
+});
+
 // ../../packages/sdk-browser/dist/index.js
 init_chunk_FKNR6EFT();
+init_chunk_RCHT4DYR();
 
 // ../../node_modules/@noble/ciphers/esm/utils.js
 function isBytes(a) {
@@ -4849,194 +5093,6 @@ function dataChannelTransport(dc, kind = "webrtc-direct") {
 }
 
 // ../../packages/sdk-browser/dist/index.js
-var DB_NAME = "crosslink-secure";
-var DB_VERSION = 1;
-var KEY_STORE = "keys";
-var VALUE_STORE = "values";
-var MASTER_KEY_ID = "master";
-var IV_BYTES = 12;
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const request2 = indexedDB.open(DB_NAME, DB_VERSION);
-    request2.onupgradeneeded = () => {
-      const db = request2.result;
-      if (!db.objectStoreNames.contains(KEY_STORE)) db.createObjectStore(KEY_STORE);
-      if (!db.objectStoreNames.contains(VALUE_STORE)) db.createObjectStore(VALUE_STORE);
-    };
-    request2.onsuccess = () => resolve(request2.result);
-    request2.onerror = () => reject(request2.error ?? new Error("indexedDB open failed"));
-    request2.onblocked = () => reject(new Error("indexedDB open blocked by another tab"));
-  });
-}
-function txDone(tx) {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("indexedDB transaction failed"));
-    tx.onabort = () => reject(tx.error ?? new Error("indexedDB transaction aborted"));
-  });
-}
-function request(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error("indexedDB request failed"));
-  });
-}
-var IndexedDbSecureStorage = class _IndexedDbSecureStorage {
-  constructor(db, key) {
-    this.db = db;
-    this.key = key;
-  }
-  db;
-  key;
-  kind = "indexeddb-aes-gcm";
-  encrypted = true;
-  /**
-   * Opens the store, generating the non-extractable master key on first use.
-   * Rejects when IndexedDB or WebCrypto is unavailable (private-mode Safari,
-   * insecure origins) so the caller can choose its own fallback rather than
-   * being silently downgraded to plaintext.
-   */
-  static async open() {
-    if (typeof indexedDB === "undefined") {
-      throw new Error("IndexedDB is not available in this environment");
-    }
-    const subtle = globalThis.crypto?.subtle;
-    if (!subtle) {
-      throw new Error("WebCrypto subtle is not available (requires a secure origin)");
-    }
-    const db = await openDb();
-    let key = await request(
-      db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(MASTER_KEY_ID)
-    );
-    if (!key) {
-      key = await subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
-        "encrypt",
-        "decrypt"
-      ]);
-      const tx = db.transaction(KEY_STORE, "readwrite");
-      tx.objectStore(KEY_STORE).put(key, MASTER_KEY_ID);
-      await txDone(tx);
-    }
-    return new _IndexedDbSecureStorage(db, key);
-  }
-  async get(name) {
-    const stored = await request(
-      this.db.transaction(VALUE_STORE, "readonly").objectStore(VALUE_STORE).get(name)
-    );
-    if (!stored) return null;
-    try {
-      const plain = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: new Uint8Array(stored.iv) },
-        this.key,
-        stored.data
-      );
-      return new TextDecoder().decode(plain);
-    } catch {
-      return null;
-    }
-  }
-  async set(name, value) {
-    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-    const data = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      this.key,
-      new TextEncoder().encode(value)
-    );
-    const tx = this.db.transaction(VALUE_STORE, "readwrite");
-    tx.objectStore(VALUE_STORE).put({ iv: iv.buffer, data }, name);
-    await txDone(tx);
-  }
-  async delete(name) {
-    const tx = this.db.transaction(VALUE_STORE, "readwrite");
-    tx.objectStore(VALUE_STORE).delete(name);
-    await txDone(tx);
-  }
-  async keys() {
-    const all = await request(
-      this.db.transaction(VALUE_STORE, "readonly").objectStore(VALUE_STORE).getAllKeys()
-    );
-    return all.map(String);
-  }
-  /** Destroys every stored value and the master key. */
-  async wipe() {
-    const tx = this.db.transaction([VALUE_STORE, KEY_STORE], "readwrite");
-    tx.objectStore(VALUE_STORE).clear();
-    tx.objectStore(KEY_STORE).clear();
-    await txDone(tx);
-  }
-};
-var HydratedSecureStorage = class _HydratedSecureStorage {
-  constructor(backend, onWriteError) {
-    this.backend = backend;
-    this.onWriteError = onWriteError;
-  }
-  backend;
-  onWriteError;
-  cache = /* @__PURE__ */ new Map();
-  /** serializes writes so a rapid set/delete pair cannot land out of order */
-  flushChain = Promise.resolve();
-  pendingWrites = 0;
-  static async hydrate(backend, options = {}) {
-    const storage = new _HydratedSecureStorage(backend, options.onWriteError);
-    for (const key of await backend.keys()) {
-      const value = await backend.get(key);
-      if (value !== null) storage.cache.set(key, value);
-    }
-    return storage;
-  }
-  get kind() {
-    return this.backend.kind;
-  }
-  get encrypted() {
-    return this.backend.encrypted;
-  }
-  get(key) {
-    return this.cache.get(key) ?? null;
-  }
-  set(key, value) {
-    this.cache.set(key, value);
-    this.enqueue(key, () => this.backend.set(key, value));
-  }
-  delete(key) {
-    this.cache.delete(key);
-    this.enqueue(key, () => this.backend.delete(key));
-  }
-  /** Resolves once every queued write has reached the backend. */
-  flushed() {
-    return this.flushChain;
-  }
-  get pending() {
-    return this.pendingWrites;
-  }
-  enqueue(key, op) {
-    this.pendingWrites += 1;
-    this.flushChain = this.flushChain.then(op).catch((err) => {
-      this.onWriteError?.(err, key);
-    }).finally(() => {
-      this.pendingWrites -= 1;
-    });
-  }
-};
-async function createSecureStorage(options = {}) {
-  try {
-    const backend = await IndexedDbSecureStorage.open();
-    const storage = await HydratedSecureStorage.hydrate(backend, {
-      ...options.onWriteError ? { onWriteError: options.onWriteError } : {}
-    });
-    return { storage, kind: backend.kind, encrypted: true };
-  } catch (err) {
-    if (options.allowPlaintextFallback === false) throw err;
-  }
-  const { LocalStorageSecureStorage: LocalStorageSecureStorage2, MemorySecureStorage: MemorySecureStorage2 } = await Promise.resolve().then(() => (init_storage_FHFZA2HW(), storage_FHFZA2HW_exports));
-  if (typeof localStorage !== "undefined") {
-    return {
-      storage: new LocalStorageSecureStorage2(localStorage),
-      kind: "localstorage",
-      encrypted: false
-    };
-  }
-  return { storage: new MemorySecureStorage2(), kind: "memory", encrypted: false };
-}
 function toBytes3(data) {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (ArrayBuffer.isView(data)) {
@@ -5306,6 +5362,7 @@ var CrosslinkClient = class _CrosslinkClient {
   hints;
   link;
   storage;
+  deviceCryptoStorage;
   /**
    * Builds a client whose identity and paired-app records are encrypted at
    * rest with a non-extractable WebCrypto key, rather than sitting in
@@ -5352,6 +5409,14 @@ var CrosslinkClient = class _CrosslinkClient {
    * link and this call transparently unwraps it.
    */
   async pairFromQr(text, requestedCaps) {
+    if (!this.deviceCryptoStorage) {
+      try {
+        const storageModule = await Promise.resolve().then(() => (init_device_crypto_storage_NEJ3IT2Z(), device_crypto_storage_NEJ3IT2Z_exports));
+        this.deviceCryptoStorage = await storageModule.SecureDeviceCryptoStorage.open();
+      } catch (e) {
+        this.log.warn("client.device-crypto-init-failed", { error: String(e) });
+      }
+    }
     const manifest = unwrapBootstrapUri(text);
     const uri = parsePairingUri(manifest);
     if (!uri.signalingUrl) throw new Error("pairing URI has no signaling URL (LAN-only pairing not supported by browser client)");
@@ -5414,6 +5479,13 @@ Capabilities: ${req.grantedCaps.join(", ") || "(none)"}`
         signalingUrl: uri.signalingUrl
       };
       this.hints.save(hintsAll);
+      if (done && typeof done.sessionToken === "string") {
+        try {
+          await this.deviceCryptoStorage?.save({ sessionToken: done.sessionToken }, record.appId);
+        } catch (e) {
+          this.log.debug("client.session-token-store-failed", { error: String(e) });
+        }
+      }
       return record;
     } finally {
       peer.close();
@@ -5635,7 +5707,7 @@ var PAIRING_CARD_STYLES = `
   top: 44px;
   right: 14px;
   width: 300px;
-  background: #0b1329;
+  background: var(--cl-bg);
   border: 1px solid var(--cl-divider);
   border-radius: 12px;
   padding: 8px;
@@ -5852,9 +5924,10 @@ var PAIRING_CARD_STYLES = `
   color: #f87171;
 }
 .cl-pair-code-pills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-width: 200px;
   justify-content: center;
   min-height: 44px;
   align-items: center;
@@ -5863,14 +5936,14 @@ var PAIRING_CARD_STYLES = `
   background: var(--cl-pill);
   color: var(--cl-pill-text);
   font-family: "SF Mono", "Fira Code", monospace;
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 700;
   line-height: 1;
-  border-radius: 999px;
-  padding: 12px 6px;
-  min-width: 32px;
+  border-radius: 12px;
+  padding: 14px 8px;
+  min-width: 44px;
   text-align: center;
-  display: inline-block;
+  display: block;
 }
 .cl-pair-hint {
   font-size: 11px;
@@ -5900,7 +5973,260 @@ var PAIRING_CARD_STYLES = `
     max-width: none;
   }
 }
+
+/* \u2500\u2500 Connected Devices Modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+.cl-connected-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: clDropdownFade 0.15s ease-out;
+}
+.cl-connected-modal {
+  background: #0a0a0a;
+  border: 1px solid var(--cl-divider);
+  border-radius: 20px;
+  width: 92vw;
+  max-width: 640px;
+  max-height: 85vh;
+  padding: 24px 28px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  overflow-y: auto;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--cl-fg);
+}
+.cl-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 16px;
+}
+.cl-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.cl-modal-header button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--cl-divider);
+  border-radius: 10px;
+  color: var(--cl-fg);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cl-modal-header button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+.cl-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cl-modal-error {
+  color: #f87171;
+  font-size: 12px;
+  padding: 8px 0;
+}
+.cl-device-card {
+  background: #121212;
+  border: 1px solid var(--cl-divider);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.cl-device-info {
+  flex: 1;
+  min-width: 0;
+}
+.cl-device-name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 4px;
+  letter-spacing: -0.01em;
+}
+.cl-device-meta {
+  font-size: 11px;
+  color: var(--cl-muted);
+  margin-bottom: 8px;
+  text-transform: capitalize;
+}
+.cl-device-detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #c4c4c4;
+}
+.cl-device-detail strong {
+  color: var(--cl-muted);
+  font-weight: 600;
+}
+.cl-device-actions {
+  flex-shrink: 0;
+}
+.cl-revoke-btn {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3a;
+  color: #e7e7ea;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cl-revoke-btn:hover {
+  background: #7f1d1d;
+  border-color: #f87171;
+  color: #f87171;
+}
 `.trim();
+var DEFAULT_SERVICE_WORKER_CONFIG = {
+  version: "1.0.0",
+  precacheAssets: [
+    "./mobile.html",
+    "./bundle.js",
+    "./manifest.webmanifest",
+    "./crosslink-mark.svg",
+    "./icon-192.png",
+    "./icon-512.png"
+  ]
+};
+function generateServiceWorker(config = {}) {
+  const version = config.version || DEFAULT_SERVICE_WORKER_CONFIG.version;
+  const precacheAssets = config.precacheAssets || DEFAULT_SERVICE_WORKER_CONFIG.precacheAssets;
+  const cacheName = `crosslink-shell-v${version}`;
+  const assetsJson = JSON.stringify(precacheAssets, null, 2);
+  return `/* Crosslink PWA Service Worker \u2014 Generated by Crosslink Framework */
+const CACHE_NAME = "${cacheName}";
+const PRECACHE_ASSETS = ${assetsJson};
+
+// Endpoints and patterns that must NEVER be cached (security, credentials, active RPC/presence)
+const NEVER_CACHE_PATTERNS = [
+  "/api/",
+  "/rpc/",
+  "/ws",
+  "/pair",
+  "/verify-pair",
+  "/challenge",
+  "/session",
+  "/revoke",
+  "/events"
+];
+
+function isSecuritySensitive(url) {
+  const path = url.pathname;
+  return NEVER_CACHE_PATTERNS.some((pattern) => path.includes(pattern));
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Robust asset caching: fetch individually so one missing asset doesn't abort entire install
+      for (const asset of PRECACHE_ASSETS) {
+        try {
+          const res = await fetch(asset, { cache: "no-cache" });
+          if (res.ok) {
+            await cache.put(asset, res);
+          }
+        } catch (err) {
+          console.warn("[Crosslink SW] Precache missed:", asset);
+        }
+      }
+    })
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys
+          .filter((key) => key.startsWith("crosslink-") && key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      )
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  // Ignore cross-origin requests
+  if (url.origin !== self.location.origin) return;
+
+  // Never cache auth or API calls
+  if (isSecuritySensitive(url)) {
+    return;
+  }
+
+  // 1. Navigation requests: network-first with offline fallback to cached shell
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          // Host is offline: return cached shell
+          const cached =
+            (await caches.match(request, { ignoreSearch: true })) ||
+            (await caches.match("./mobile.html", { ignoreSearch: true })) ||
+            (await caches.match("/mobile.html", { ignoreSearch: true })) ||
+            (await caches.match("/", { ignoreSearch: true }));
+          if (cached) return cached;
+          return new Response("Application is offline", {
+            status: 503,
+            statusText: "Offline",
+            headers: { "Content-Type": "text/plain" }
+          });
+        })
+    );
+    return;
+  }
+
+  // 2. Static shell assets: cache-first with network fallback
+  event.respondWith(
+    caches.match(request, { ignoreSearch: true }).then((hit) => {
+      if (hit) return hit;
+      return fetch(request).then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      });
+    })
+  );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "skipWaiting") {
+    self.skipWaiting();
+  }
+});
+`;
+}
+var DEFAULT_SERVICE_WORKER = generateServiceWorker();
 
 // src/main.ts
 var REQUESTED_CAPS = ["files.read", "shell.exec"];
