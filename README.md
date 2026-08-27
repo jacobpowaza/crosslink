@@ -301,3 +301,14 @@ Apache 2.0 — see [LICENSE](LICENSE).
     <img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?style=for-the-badge&logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" />
   </a>
 </p>
+
+---
+
+## Open LAN Remote (Direct WAN)
+
+Crosslink supports direct remote access without tunnels or paid hosting:
+- Router port mapping attempted automatically (UPnP / NAT-PMP / PCP via `packages/nat-map`)
+- Public endpoint verified before being advertised (no dead IP in pairing QR)
+- Pairing persistent: PWA stores device identity independently of endpoint URL
+- Graceful fallback to local tunnel (`localtunnel`) or LAN when WAN unreachable
+- Security: pairing rate-limited, external reachability verified, endpoint identity validated

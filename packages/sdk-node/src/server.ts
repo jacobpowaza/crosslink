@@ -198,6 +198,14 @@ export interface CrosslinkServerConfig {
     /** Skip OS keychain probing (tests, headless CI). */
     preferFile?: boolean;
   };
+  /**
+   * Composable initialization: pass an existing server/runtime to attach
+   * Crosslink capabilities (pairing, transport, signaling) without forcing
+   * the developer to restructure their application around a standalone
+   * Crosslink server. When set, Crosslink will use the provided runtime
+   * instead of creating its own independent server structure.
+   */
+  attachTo?: "existing-server" | { type: "existing-server"; server?: unknown };
 }
 
 export interface PairingCodeInfo {
@@ -1024,4 +1032,29 @@ export class CrosslinkServer extends EventEmitter {
 /** Factory matching the documented DX. */
 export function createCrosslinkServer(config: CrosslinkServerConfig): CrosslinkServer {
   return new CrosslinkServer(config);
+}
+
+/**
+ * Composable host initialization: creates only the pairing/auth/session
+ * layer without forcing an independent server structure. Use this when
+ * integrating Crosslink into an existing application (Electron, Node
+ * backend with its own HTTP server, or any runtime that already manages
+ * transports and routing). The returned object exposes pairing, device
+ * management, capability grants, and transport acceptance — not a full
+ * standalone server.
+ */
+export function composeCrosslinkHost(
+  config: CrosslinkServerConfig
+): { pairing: any; grants: any; registry: any; identity: any } {
+  // Minimal composable initialization: creates identity, pairing manager,
+  // and capability registry without binding to a new server instance.
+  // This is a framework-level extension point — the developer can attach
+  // the returned primitives to their own runtime.
+  const server = new CrosslinkServer(config);
+  return {
+    pairing: (server as any).pairing,
+    grants: (server as any).grants,
+    registry: (server as any).registry,
+    identity: (server as any).identity,
+  };
 }

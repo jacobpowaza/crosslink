@@ -1,4 +1,4 @@
-export { createCrosslinkServer, CrosslinkServer } from "./server.js";
+export { createCrosslinkServer, CrosslinkServer, composeCrosslinkHost } from "./server.js";
 export type {
   CrosslinkServerConfig,
   OfflineConfig,

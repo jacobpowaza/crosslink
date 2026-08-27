@@ -389,3 +389,11 @@ Crosslink's networking architecture defends against:
   authentication is per-session cryptographic
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for the full analysis.
+
+---
+## Open LAN Remote — Direct WAN Mode (Updated)
+
+- `packages/nat-map/` provides structured UPnP/NAT-PMP/PCP discovery.
+- `apps/chat/src/server.ts` verifies `http://<public-ip>:<port>/api/health` before advertising the endpoint.
+- Pairing URI (`buildPairingUri`) rewrites signaling URL to the verified public endpoint for `open-lan` mode.
+- Mobile pairing (`handlePairingSubmit`) reads pairing info from secure storage; reconnects using stored identity (`PairedAppRecord`) rather than endpoint URL, making the installed PWA permanent across endpoint changes.

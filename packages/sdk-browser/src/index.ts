@@ -1,3 +1,6 @@
+/* ================================================================
+   Crosslink Browser SDK — Framework-independent core primitives
+   ================================================================ */
 export { CrosslinkClient } from "./client.js";
 // Re-exported so a browser app can turn on structured logging without taking
 // a direct dependency on @crosslink/core.
@@ -12,6 +15,12 @@ export {
 } from "@crosslink/core";
 export { MockSocket } from "./mock-ws.js";
 export type { CrosslinkClientOptions, PairingConfirmRequest } from "./client.js";
+// Re-export framework-independent primitives from core for framework bindings
+export {
+  type ConnectionState,
+  type RpcClient,
+  type PairedAppRecord,
+} from "@crosslink/core";
 export {
   MemorySecureStorage,
   LocalStorageSecureStorage,
@@ -30,6 +39,12 @@ export {
 export { SignalingPeer } from "./signaling-peer.js";
 export { wsTransport, type WsLike } from "./ws.js";
 export { NotificationHandler, type NotificationHandlerOptions } from "./notifications.js";
+/* -------------------------------------------------------------
+   Optional framework integrations: pairing UI, bootstrap screens,
+   offline shell, service-worker generator. These are independent
+   of any frontend framework and can be used with React, Vue,
+   Svelte, vanilla JS, etc., or replaced entirely by the developer.
+   ------------------------------------------------------------- */
 export {
   PairingCard,
   createPairingCard,
