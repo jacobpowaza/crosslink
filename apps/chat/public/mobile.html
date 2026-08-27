@@ -603,25 +603,31 @@
       pairErrEl.textContent = "Verifying…";
       pairErrEl.style.color = "#94a3b8";
       try {
-        // The pairing URI (from the QR) is the authoritative pairing mechanism.
-        // We compare the user-entered 9-digit pairing code against the pairing
-        // info embedded in the pairing URI rather than fetching a new /api/pair
-        // (which would generate a different code).
         const entered = code.replace(/\D/g, "");
         if (entered.length !== 9) {
           pairErrEl.textContent = "Enter all 9 digits.";
           pairErrEl.style.color = "#f87171";
           return;
         }
-        // If we have a pairing URI, proceed directly with pairing.
-        // The pairing code is a visual reference; pairing uses the URI.
-        pairErrEl.textContent = "";
-        hideScreenA();
-        if (!isStandalone() && !skipInstall) {
-          document.body.classList.add("pre-install");
-          $("bootstrap").classList.remove("hidden");
-        } else if (pairingUri) {
-          startPairing();
+        // Ask the server if this pairing code matches the active session.
+        const res = await fetch("/api/verify-pair", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ code: entered }),
+        });
+        const result = await res.json().catch(() => ({}));
+        if (result.ok) {
+          pairErrEl.textContent = "";
+          hideScreenA();
+          if (!isStandalone() && !skipInstall) {
+            document.body.classList.add("pre-install");
+            $("bootstrap").classList.remove("hidden");
+          } else if (pairingUri) {
+            startPairing();
+          }
+        } else {
+          pairErrEl.textContent = "Incorrect pairing code. Try again.";
+          pairErrEl.style.color = "#f87171";
         }
       } catch (err) {
         pairErrEl.textContent = "Network error — check connection.";

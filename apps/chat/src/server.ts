@@ -235,6 +235,7 @@ function broadcast(event: string, data: unknown) {
 
 // ─── crosslink host ─────────────────────────────────────────────────────
 let latestPairingUri: string | null = null;
+let latestPairingCode: string | null = null;
 
 const host = createCrosslinkServer({
   application: { id: "com.crosslink.chat", name: "Crosslink Chat", version: "1.0.0" },
@@ -331,6 +332,7 @@ const server = http.createServer(async (req, res) => {
 
       const code = await host.getPairingCode();
       latestPairingUri = code.uri;
+      latestPairingCode = String(code.code ?? "").replace(/\D/g, "");
 
       let baseUrl = `http://${getLanAddress()}:${port}`;
       let skipParam = "";
@@ -455,6 +457,24 @@ const server = http.createServer(async (req, res) => {
       devices: st.devices,
       messages: messages.length,
     }));
+    return;
+  }
+
+  // ── API: verify pairing code ──
+  if (pathname === "/api/verify-pair" && req.method === "POST") {
+    try {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const { code = "" } = JSON.parse(body || "{}");
+      const entered = String(code ?? "").replace(/\D/g, "");
+      const expected = (latestPairingCode ?? "").replace(/\D/g, "");
+      respond(res, 200, "application/json", JSON.stringify({
+        ok: expected.length === 9 && entered === expected,
+        expected,
+      }));
+    } catch {
+      respond(res, 400, "application/json", JSON.stringify({ ok: false, error: "invalid request" }));
+    }
     return;
   }
 
