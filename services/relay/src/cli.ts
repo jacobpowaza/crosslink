@@ -23,14 +23,31 @@ const authToken =
   process.env.CROSSLINK_RELAY_TOKEN ?? flag("auth-token") ?? devTokens.relayToken;
 const clientAuthToken =
   process.env.CROSSLINK_RELAY_CLIENT_TOKEN ?? flag("client-auth-token");
+const region = process.env.CROSSLINK_REGION ?? flag("region");
+const publicUrl = process.env.CROSSLINK_RELAY_PUBLIC_URL ?? flag("public-url");
+const regionCatalog = process.env.CROSSLINK_RELAY_REGIONS
+  ? JSON.parse(process.env.CROSSLINK_RELAY_REGIONS) as Array<{ id: string; url: string; priority?: number }>
+  : undefined;
 
 const server = await createRelayServer({
   port,
   host: process.env.HOST ?? flag("host") ?? "0.0.0.0",
   ...(authToken ? { authToken } : {}),
   ...(clientAuthToken ? { clientAuthToken } : {}),
+  ...(region ? { region } : {}),
+  ...(publicUrl ? { publicUrl } : {}),
+  ...(regionCatalog ? { regions: regionCatalog } : {}),
   ...(process.env.CROSSLINK_RELAY_MAX_CLIENTS
     ? { maxClientsPerChannel: Number(process.env.CROSSLINK_RELAY_MAX_CLIENTS) }
+    : {}),
+  ...(process.env.CROSSLINK_RELAY_MAX_CHANNELS
+    ? { maxChannels: Number(process.env.CROSSLINK_RELAY_MAX_CHANNELS) }
+    : {}),
+  ...(process.env.CROSSLINK_RELAY_MAX_BYTES
+    ? { maxBytesPerChannel: Number(process.env.CROSSLINK_RELAY_MAX_BYTES) }
+    : {}),
+  ...(process.env.CROSSLINK_RELAY_BYTES_PER_SEC
+    ? { bytesPerSecondPerChannel: Number(process.env.CROSSLINK_RELAY_BYTES_PER_SEC) }
     : {})
 });
 

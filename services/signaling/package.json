@@ -24,6 +24,7 @@
   "dependencies": {
     "@crosslink/dev-tokens": "*",
     "@crosslink/protocol": "*",
+    "redis": "^5.12.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

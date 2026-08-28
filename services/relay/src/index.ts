@@ -58,6 +58,26 @@ export interface RelayOptions {
   maxClientsPerChannel?: number;
   /** Channels one IP may create per minute. */
   channelsPerMinutePerIp?: number;
+  /** Hard cap on allocated channels held by this process. Default 10,000. */
+  maxChannels?: number;
+  /** Lifetime ingress-byte quota per channel. Default 1 GiB. */
+  maxBytesPerChannel?: number;
+  /** Sustained ingress bandwidth per channel. Default 4 MiB/s. */
+  bytesPerSecondPerChannel?: number;
+  /** Token-bucket burst allowance. Default 8 MiB. */
+  byteBurstPerChannel?: number;
+  /** Region identifier exposed by health/region discovery. */
+  region?: string;
+  /** Public URL clients should dial for this relay. */
+  publicUrl?: string;
+  /** Operator-configured failover catalog returned from `/regions`. */
+  regions?: RelayRegion[];
+}
+
+export interface RelayRegion {
+  id: string;
+  url: string;
+  priority?: number;
 }
 
 /** 4-byte big-endian stream id prefixed to host-side binary frames. */
@@ -84,12 +104,14 @@ interface Channel {
   clients: Map<number, ClientEnd>;
   nextStreamId: number;
   bytesRelayed: number;
+  byteTokens: number;
+  byteTokenAt: number;
 }
 
 export interface RelayServer {
   port: number;
   close(): Promise<void>;
-  stats(): { channels: number; active: number; bytesRelayed: number; clients: number };
+  stats(): { channels: number; active: number; bytesRelayed: number; clients: number; quotaDrops: number };
 }
 
 export function createRelayServer(options: RelayOptions = {}): Promise<RelayServer> {
@@ -99,10 +121,15 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
     idleTimeoutMs: options.idleTimeoutMs ?? 600_000,
     maxChannelLifeMs: options.maxChannelLifeMs ?? 24 * 3600_000,
     maxClientsPerChannel: options.maxClientsPerChannel ?? 8,
-    channelsPerMinutePerIp: options.channelsPerMinutePerIp ?? 30
+    channelsPerMinutePerIp: options.channelsPerMinutePerIp ?? 30,
+    maxChannels: options.maxChannels ?? 10_000,
+    maxBytesPerChannel: options.maxBytesPerChannel ?? 1024 ** 3,
+    bytesPerSecondPerChannel: options.bytesPerSecondPerChannel ?? 4 * 1024 ** 2,
+    byteBurstPerChannel: options.byteBurstPerChannel ?? 8 * 1024 ** 2
   };
   const channels = new Map<string, Channel>();
   const creationWindows = new Map<string, { start: number; count: number }>();
+  let quotaDrops = 0;
 
   const authOk = (presented: string | null | undefined, expected?: string): boolean => {
     if (!expected) return true;
@@ -122,9 +149,20 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
         JSON.stringify({
           ok: true,
           service: "crosslink-relay",
+          region: options.region ?? "local",
           auth: options.authToken ? "required" : "open"
         })
       );
+      return;
+    }
+    if (url === "/regions") {
+      const own = options.publicUrl
+        ? [{ id: options.region ?? "local", url: options.publicUrl, priority: 0 }]
+        : [];
+      const regions = [...own, ...(options.regions ?? [])]
+        .filter(validRelayRegion)
+        .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+      res.end(JSON.stringify({ regions }));
       return;
     }
     if (url === "/stats") {
@@ -148,6 +186,12 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
         return;
       }
       const now = Date.now();
+      if (channels.size >= limits.maxChannels) {
+        res.statusCode = 503;
+        res.setHeader("retry-after", "30");
+        res.end(JSON.stringify({ error: "capacity_exceeded" }));
+        return;
+      }
       let win = creationWindows.get(ip);
       if (!win || now - win.start > 60_000) {
         win = { start: now, count: 0 };
@@ -167,14 +211,18 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
         createdAt: now,
         clients: new Map(),
         nextStreamId: 1,
-        bytesRelayed: 0
+        bytesRelayed: 0,
+        byteTokens: limits.byteBurstPerChannel,
+        byteTokenAt: now
       });
       res.statusCode = 201;
       res.end(
         JSON.stringify({
           channel_id: channelId,
           token,
-          max_clients: limits.maxClientsPerChannel
+          max_clients: limits.maxClientsPerChannel,
+          max_bytes: limits.maxBytesPerChannel,
+          region: options.region ?? "local"
         })
       );
       return;
@@ -283,6 +331,19 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
           ws.close(4409, "frame-too-large");
           return;
         }
+        const quota = consumeBytes(channel, buf.length, now);
+        if (quota === "lifetime") {
+          quotaDrops += 1;
+          channel.host?.ws.close(4408, "quota-exhausted");
+          for (const client of channel.clients.values()) client.ws.close(4408, "quota-exhausted");
+          channels.delete(channel.id);
+          return;
+        }
+        if (quota === "rate") {
+          quotaDrops += 1;
+          ws.close(4429, "bandwidth-quota");
+          return;
+        }
         if (role === "h") {
           forwardFromHost(channel, buf, ws);
         } else {
@@ -380,7 +441,7 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
     for (const client of channel.clients.values()) client.lastTraffic = now;
   }
 
-  function snapshot(): { channels: number; active: number; bytesRelayed: number; clients: number } {
+  function snapshot(): { channels: number; active: number; bytesRelayed: number; clients: number; quotaDrops: number } {
     let active = 0;
     let clients = 0;
     let bytes = 0;
@@ -389,7 +450,20 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       clients += channel.clients.size;
       bytes += channel.bytesRelayed;
     }
-    return { channels: channels.size, active, bytesRelayed: bytes, clients };
+    return { channels: channels.size, active, bytesRelayed: bytes, clients, quotaDrops };
+  }
+
+  function consumeBytes(channel: Channel, bytes: number, now: number): "ok" | "rate" | "lifetime" {
+    if (channel.bytesRelayed + bytes > limits.maxBytesPerChannel) return "lifetime";
+    const elapsedSeconds = Math.max(0, now - channel.byteTokenAt) / 1000;
+    channel.byteTokens = Math.min(
+      limits.byteBurstPerChannel,
+      channel.byteTokens + elapsedSeconds * limits.bytesPerSecondPerChannel
+    );
+    channel.byteTokenAt = now;
+    if (bytes > channel.byteTokens) return "rate";
+    channel.byteTokens -= bytes;
+    return "ok";
   }
 
   const sweeper = setInterval(() => {
@@ -436,6 +510,18 @@ function toBuffer(raw: RawData): Buffer {
 
 function sendJson(ws: WebSocket, obj: unknown): void {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function validRelayRegion(region: RelayRegion): boolean {
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(region.id)) return false;
+  try {
+    const parsed = new URL(region.url);
+    return parsed.protocol === "https:" || parsed.protocol === "wss:" ||
+      ((parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+        (parsed.protocol === "http:" || parsed.protocol === "ws:"));
+  } catch {
+    return false;
+  }
 }
 
 /** Extracts the credential from an `Authorization: Bearer <token>` header. */

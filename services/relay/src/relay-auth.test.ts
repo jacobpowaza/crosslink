@@ -173,6 +173,53 @@ function frameFor(stream: number, payload: string): Buffer {
 }
 
 describe("relay auth token", () => {
+  it("publishes a validated, priority-ordered multi-region catalog", async () => {
+    const { base } = await startRelay({
+      region: "us-east",
+      publicUrl: "https://east.relay.example",
+      regions: [
+        { id: "bad", url: "javascript:alert(1)", priority: 0 },
+        { id: "eu-west", url: "https://eu.relay.example", priority: 20 }
+      ]
+    });
+    const body = await fetch(`${base}/regions`).then((response) => response.json()) as {
+      regions: Array<{ id: string; url: string }>;
+    };
+    expect(body.regions.map((region) => region.id)).toEqual(["us-east", "eu-west"]);
+  });
+
+  it("refuses channel allocation at process capacity", async () => {
+    const { base } = await startRelay({ maxChannels: 1 });
+    await allocate(base);
+    const response = await fetch(`${base}/channels`, { method: "POST" });
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("30");
+  });
+
+  it("closes every end when a channel exhausts its lifetime byte quota", async () => {
+    const { base } = await startRelay({ maxBytesPerChannel: 4, byteBurstPerChannel: 64 });
+    const channel = await allocate(base);
+    const host = await connectHost(base, channel);
+    const { client } = await attachClient(base, channel, host);
+    const closed = closeCode(client.ws);
+    client.ws.send(Buffer.from("12345"));
+    expect(await closed).toBe(4408);
+  });
+
+  it("disconnects a sender that exceeds the channel bandwidth burst", async () => {
+    const { base } = await startRelay({
+      maxBytesPerChannel: 1024,
+      bytesPerSecondPerChannel: 1,
+      byteBurstPerChannel: 4
+    });
+    const channel = await allocate(base);
+    const host = await connectHost(base, channel);
+    const { client } = await attachClient(base, channel, host);
+    const closed = closeCode(client.ws);
+    client.ws.send(Buffer.from("12345"));
+    expect(await closed).toBe(4429);
+  });
+
   it("protects operational stats with the configured operator token", async () => {
     const { base } = await startRelay({ authToken: "s3cret" });
     const denied = await fetch(`${base}/stats`);

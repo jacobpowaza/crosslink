@@ -25,6 +25,7 @@ const server = await createSignalingServer({
   port,
   host: process.env.HOST ?? flag("host") ?? "0.0.0.0",
   ...(process.env.CROSSLINK_REGION ? { region: process.env.CROSSLINK_REGION } : {}),
+  ...(process.env.CROSSLINK_REDIS_URL ? { redisUrl: process.env.CROSSLINK_REDIS_URL } : {}),
   ...(authToken ? { authToken } : {})
 });
 
@@ -32,6 +33,9 @@ console.log(`[crosslink-signaling] listening on :${server.port}`);
 console.log(
   `[crosslink-signaling] host auth REQUIRED (${process.env.CROSSLINK_SIGNALING_TOKEN || flag("auth-token") ? "from config" : "per-machine dev tokens in .crosslink-data/dev-tokens.json"})`
 );
+if (process.env.CROSSLINK_REDIS_URL) {
+  console.log("[crosslink-signaling] shared state: Redis");
+}
 
 writeStackConfig({ signaling: { port: server.port } });
 process.on("SIGINT", () => {

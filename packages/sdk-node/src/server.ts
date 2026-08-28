@@ -97,6 +97,8 @@ export interface CrosslinkServerConfig {
   signalingUrl?: string;
   /** e.g. https://relay.example.com — enables connectivity behind NATs */
   relayUrl?: string;
+  /** Ordered regional fallbacks. The host allocates on the first healthy region. */
+  relayUrls?: string[];
   /**
    * Public URL of a tunnel the developer opted into (ngrok, Cloudflare, …).
    * Crosslink never starts a tunnel on its own — a provider account is exactly
@@ -387,6 +389,7 @@ export class CrosslinkServer extends EventEmitter {
   /** Resolved service URLs (from config, env, or stack auto-discovery). */
   private _signalingUrl = "";
   private _relayUrl = "";
+  private _relayUrls: string[] = [];
   /** Rate limiting: tracks pairing session creation timestamps per IP. */
   private pairingTimestamps = new Map<string, number>();
 
@@ -474,6 +477,10 @@ export class CrosslinkServer extends EventEmitter {
     });
     this._signalingUrl = this.config.signalingUrl ?? resolved?.signalingUrl ?? "";
     this._relayUrl = this.config.relayUrl ?? resolved?.relayUrl ?? "";
+    this._relayUrls = [...new Set([
+      ...(this._relayUrl ? [this._relayUrl] : []),
+      ...(this.config.relayUrls ?? [])
+    ].map((url) => url.replace(/\/$/, "")))];
 
     const secure = await loadOrCreateIdentitySecurely({
       storageDir: this.storageDir,
@@ -619,9 +626,9 @@ export class CrosslinkServer extends EventEmitter {
     }
 
     // Relay channel (optional, disabled in local-only mode)
-    if (this._relayUrl && this.config.networkMode !== "local-only") {
+    if (this._relayUrls.length > 0 && this.config.networkMode !== "local-only") {
       try {
-        await this.connectRelay(this._relayUrl);
+        await this.connectRelay(this._relayUrls);
       } catch (err) {
         const msg = (err as Error)?.message ?? String(err);
         if (/auth|token|unauthorized|forbidden|401|403/i.test(msg)) {
@@ -1199,11 +1206,12 @@ export class CrosslinkServer extends EventEmitter {
     if (!this.started) throw new Error("server not started; call await server.start()");
   }
 
-  private async connectRelay(relayUrl: string): Promise<void> {
-    this.relay = await RelayChannel.allocate(relayUrl, {
+  private async connectRelay(relayUrls: readonly string[]): Promise<void> {
+    this.relay = await RelayChannel.allocateAny(relayUrls, {
       ...(this.relayToken ? { authToken: this.relayToken } : {}),
       logger: this.log
     });
+    this._relayUrl = this.relay.info.url;
     this.relay.onDropped = ({ needsReallocation }) => {
       if (this.stopping) return;
       this.scheduleRelayReconnect(needsReallocation);
@@ -1226,11 +1234,19 @@ export class CrosslinkServer extends EventEmitter {
       void (async () => {
         if (this.stopping) return;
         try {
-          if (!this.relay && this._relayUrl) {
-            await this.connectRelay(this._relayUrl);
+          if (!this.relay && this._relayUrls.length > 0) {
+            await this.connectRelay(this.regionalRelayOrder());
             this.signaling?.refreshPresence();
           } else if (this.relay && needsReallocation) {
             await this.relay.reallocate();
+            this.signaling?.refreshPresence();
+          } else if (this.relay && attempt >= 2 && this._relayUrls.length > 1) {
+            // A region can stay reachable at HTTP allocation time while its
+            // WebSocket edge is unhealthy. After two reconnect failures,
+            // rotate rather than pinning the host to that region forever.
+            this.relay.close();
+            this.relay = undefined;
+            await this.connectRelay(this.regionalRelayOrder());
             this.signaling?.refreshPresence();
           }
           if (this.relay) {
@@ -1257,6 +1273,13 @@ export class CrosslinkServer extends EventEmitter {
       this.emitConnectivity("relay-connect-failed");
       this.scheduleRelayReconnect(false);
     }
+  }
+
+  private regionalRelayOrder(): string[] {
+    if (this._relayUrls.length < 2 || !this._relayUrl) return [...this._relayUrls];
+    const current = this._relayUrls.indexOf(this._relayUrl);
+    if (current < 0) return [...this._relayUrls];
+    return [...this._relayUrls.slice(current + 1), ...this._relayUrls.slice(0, current + 1)];
   }
 
   private startSignaling(url: string): void {

@@ -54,6 +54,28 @@ export class RelayChannel {
     return new RelayChannel({ url: baseUrl, channelId }, token, options);
   }
 
+  /**
+   * Allocates on the first reachable region, in caller preference order.
+   * Authentication failures stop immediately (the same bad credential will
+   * fail every region); availability/capacity failures fall through.
+   */
+  static async allocateAny(
+    baseUrls: readonly string[],
+    options: RelayChannelOptions = {}
+  ): Promise<RelayChannel> {
+    const failures: string[] = [];
+    for (const baseUrl of [...new Set(baseUrls.map((url) => url.replace(/\/$/, "")))]) {
+      try {
+        return await RelayChannel.allocate(baseUrl, options);
+      } catch (error) {
+        const message = String((error as Error)?.message ?? error);
+        if (/auth|token|unauthorized|forbidden|401|403/i.test(message)) throw error;
+        failures.push(`${baseUrl}: ${message}`);
+      }
+    }
+    throw new AggregateError(failures, "no relay region accepted a channel allocation");
+  }
+
   get channelId(): string {
     return this.info.channelId;
   }
