@@ -17,7 +17,6 @@
   <img src="https://img.shields.io/badge/Tests-477-brightgreen.svg" alt="Tests" />
   <img src="https://img.shields.io/badge/Crypto-X25519%20%2B%20ML--KEM--768-9b59b6.svg" alt="Crypto" />
   <a href="https://github.com/jacobpowaza/crosslink/security"><img src="https://img.shields.io/badge/Security-audited%20primitives-orange.svg" alt="Security" /></a>
-  <a href="https://venmo.com/u/jacobpowaza"><img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" /></a>
 </p>
 
 ---
@@ -63,6 +62,9 @@ relay forwards only opaque ciphertext.
 
 ## Quickstart
 
+The root `demo:*` scripts are convenience aliases for the example workspaces
+listed below.
+
 ```bash
 git clone git@github.com:jacobpowaza/crosslink.git
 cd crosslink
@@ -88,7 +90,7 @@ on the host's socket.
 
 ### From another network
 
-For the chat demo, the most reliable development path is a temporary HTTPS
+For the chat app, the most reliable development path is a temporary HTTPS
 tunnel. It works across different Wi-Fi networks, cellular data, carrier-grade
 NAT, and routers that refuse inbound mappings:
 
@@ -311,12 +313,13 @@ See [docs/security/overview.mdx](docs/security/overview.mdx) and
 | App | What it does |
 | --- | --- |
 | `apps/chat` | Full chat app — web host + installable mobile client on one port |
-| `apps/demo-pwa` | Installable PWA reference client |
-| `examples/echo` | Minimal host — exposes `echo.ping`, pairs in 20 lines |
-| `examples/notes` | Notes sync host |
-| `examples/todo` | Todo app with local + relay modes |
+| `apps/demo-pwa` | Installable PWA reference client that ships the canonical bootstrap |
+| `examples/echo-host` | Minimal host — exposes `echo.ping`, pairs in 20 lines |
+| `examples/notes-host` | Notes sync host |
+| `examples/todo-host` | Todo app with local + relay modes |
 | `examples/webrtc-upgrade` | Relay → direct WebRTC, wired end to end |
 | `examples/electron-chat` | Packaged, sandboxed Electron chat host with native pairing approval |
+| `examples/react-tsx`, `examples/vanilla` | Minimal client UIs |
 
 ## Documentation
 
@@ -326,7 +329,7 @@ The full documentation site lives in `docs/` (Mintlify). Start here:
 - [Building with Crosslink](docs/build/overview.mdx) — the developer's path, in order
 - [Your first app](docs/build/first-app.mdx) — host + phone client on one port
 - [Capabilities and RPC](docs/build/capabilities-and-rpc.mdx) — the permission and method surfaces
-- [Local development](docs/build/local-development.mdx) — repo layout, build, tests, demos
+- [Local development](docs/build/local-development.mdx) — repo layout, build, tests, examples
 - [Production checklist](docs/build/production-checklist.mdx) — before other people run it
 - [Package map](docs/reference/packages.mdx) — what to import, and what not to
 - [Connection modes](docs/guides/connection-modes.mdx) — the four host network modes
@@ -394,10 +397,3 @@ Diagnose any of it with `npm run check:remote`. Details and limits:
 Apache 2.0 — see [LICENSE](LICENSE).
 
 ---
-
-<p align="center">
-  <strong>Help support more of my projects</strong><br />
-  <a href="https://venmo.com/u/jacobpowaza">
-    <img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?style=for-the-badge&logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" />
-  </a>
-</p>

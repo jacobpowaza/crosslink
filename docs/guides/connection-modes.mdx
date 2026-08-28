@@ -83,7 +83,7 @@ alter your data, and it is not a trust anchor.
 npm run stack   # signaling on :8081, relay on :8082
 CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
 CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
-npm run demo:chat
+npm run dev -w @crosslink/demo-chat
 ```
 
 See [Self-hosting](/guides/self-hosting) to run these somewhere durable.
@@ -99,7 +99,7 @@ shop. It also has real preconditions, which are covered in
 you behind carrier-grade NAT and no amount of software can fix it.
 
 ```bash
-npm run demo:chat:remote
+CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat
 # or, in an app:
 #   networkMode: "remote"
 ```

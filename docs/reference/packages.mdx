@@ -64,7 +64,7 @@ npm run stack   # signaling :8081 + relay :8082, from the repo root
 | Path | What it demonstrates |
 | --- | --- |
 | `apps/chat` | The full pattern: web host plus installable mobile client on one port, device management, network-mode switching |
-| `apps/demo-pwa` | Reference installable PWA client |
+| `apps/demo-pwa` | Reference installable PWA client that uses the canonical mobile bootstrap |
 | `examples/echo-host` | The smallest useful host — one method, ~20 lines |
 | `examples/notes-host` | State sync over RPC and events |
 | `examples/todo-host` | A host that serves its own mobile page through Crosslink's bootstrap |
@@ -76,12 +76,15 @@ The protocol baselines under `sdks/swift`, `sdks/kotlin`, and `sdks/rust` are
 tested against the same canonical JSON/framing behavior. See [Native protocol
 SDKs](/guides/native-sdks).
 
-Run any of them from the repo root:
+Run any of them from the repo root, or use the workspace scripts directly:
 
 ```bash
-npm run demo:echo        # host, prints a pairing code and QR
-npm run demo:pwa         # browser client on http://localhost:8090
-npm run demo:chat        # the full chat app
+cd examples/echo-host && npm run dev
+cd examples/notes-host && npm run dev
+cd examples/todo-host && npm run dev
+npm run dev -w @crosslink/example-electron-chat
+npm run dev -w @crosslink/demo-chat
+npm run serve -w @crosslink/demo-pwa
 ```
 
-The complete list of demo scripts is in [Local Development](/build/local-development).
+The root `demo:*` scripts are convenience aliases around these workspace entrypoints. The complete list of repo workflows is in [Local Development](/build/local-development).

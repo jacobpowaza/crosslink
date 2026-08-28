@@ -1,15 +1,15 @@
 ---
 title: "Local Development"
-description: "Working in the Crosslink repo: layout, build, tests, demos, and testing a connection without a network."
+description: "Working in the Crosslink repo: layout, build, tests, examples, and testing a connection without a network."
 ---
 
-This page is for working **on** Crosslink, or for running its demos while
+This page is for working **on** Crosslink, or for running its examples while
 building against it. If you are only consuming the published packages, you need
 [Your First App](/build/first-app) instead.
 
 ## Requirements
 
-- Node.js **>= 20** (22 recommended)
+- Node.js **>= 20.19** (22 recommended)
 - npm (the repo uses npm workspaces)
 
 ```bash
@@ -58,30 +58,30 @@ npx vitest run packages/core
 npx vitest run packages/sdk-node/src/server.test.ts
 ```
 
-## Running the demos
+## Running the examples
 
 ```bash
-npm run demo:echo            # minimal host; prints a pairing code and QR
-npm run demo:pwa             # browser client on http://localhost:8090
-npm run demo:chat            # full chat app (host + mobile client, one port)
-npm run demo:notes           # notes sync host
-npm run demo:todo            # todo host
-npm run demo:webrtc          # relay -> direct WebRTC upgrade host
-npm run demo:webrtc-client   # its client
+cd examples/echo-host && npm run dev
+cd examples/notes-host && npm run dev
+cd examples/todo-host && npm run dev
+npm run dev -w @crosslink/example-electron-chat
+npm run host -w @crosslink/example-webrtc-upgrade
+npm run serve -w @crosslink/example-webrtc-upgrade
 ```
 
 Cross-network variants:
 
 ```bash
-npm run stack                # signaling :8081 + relay :8082
-npm run demo:echo:remote     # host asks the router for an inbound port
-npm run demo:chat:remote     # same, for the chat app
-npm run demo:chat:tunnel     # chat app behind a provider tunnel
+npm run stack
+node examples/echo-host/src/cli.ts --remote
+node examples/todo-host/src/cli.ts --remote
+CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat
+node scripts/run-chat-tunnel.mjs
 ```
 
-The usual loop is two terminals: `npm run demo:echo` in one,
-`npm run demo:pwa` in the other, then scan the printed QR with a phone on the
-same Wi-Fi. Nothing else needs to be running.
+The usual loop is two terminals: one host workspace running its `dev` script,
+and one client workspace or browser tab, then scan the printed QR with a phone
+on the same Wi-Fi. Nothing else needs to be running.
 
 ## Checking reachability
 

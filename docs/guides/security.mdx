@@ -1,43 +1,110 @@
 ---
 title: "Security & Encryption Architecture"
-description: "How Crosslink secures remote and local connections with zero-trust end-to-end encryption."
+description: "How Crosslink secures local and remote connections, what each component can see, and how to debug it safely."
 ---
 
 # Security & Encryption Architecture
 
-Crosslink is designed under a **zero-trust model**: with no services configured at all, a phone pairs and connects directly to the host over the address in the QR code -- no signaling service, no relay, no tunnel, no account. When a signaling service, relay, or a developer-configured tunnel (ngrok, Cloudflare, etc.) does sit in the path, **no intermediary server ever has access to plaintext data**.
+Crosslink is built as a zero-trust transport: with no broker configured, a phone pairs and connects directly to the host over the address in the QR code. When a signaling service, relay, or developer-configured tunnel sits in the path, it only carries metadata or ciphertext. It does not get plaintext, session keys, or private device identity material.
 
----
+## Trust boundaries
 
-## 1. End-to-End Cryptographic Primitives
+The important boundary is not "client vs server". It is "trusted endpoint vs everything else".
 
-- **Handshake Protocol (CLX1):** Authenticated key exchange using **X25519** ECDH combined with **Ed25519** signatures.
-- **Symmetric Frame Encryption:** All message frames and RPC invocations are encrypted with **XChaCha20-Poly1305 AEAD** (Authenticated Encryption with Associated Data).
-- **Key Derivation:** **HKDF-SHA256** derives independent transmit and receive session keys.
+- The host owns application identity, capability policy, revocation, and the primary logs.
+- The browser client owns user approval and the user-visible pairing check.
+- Signaling only helps devices discover one another and route the pairing code.
+- Relay only forwards encrypted frames.
 
----
+If you are debugging a security issue, first identify which boundary failed. A bad QR, a denied capability, a dropped WebSocket, and a revoked device all fail in different places and should look different in logs.
 
-## 2. Host Key Fingerprint Pinning
+## Cryptographic primitives
 
-Every desktop host generates a persistent Ed25519 identity key.
-- The 16-character hexadecimal fingerprint is embedded in the QR code:
-  `crosslink://pair?v=2&e=<endpoints>&c=<code>&a=<appId>&n=<name>&f=9a4f2e1c7b8d30e5`
-- When the phone camera scans the QR code, the browser client **pins the host fingerprint**.
-- If a man-in-the-middle (MITM) attacker attempts to intercept the signaling or relay server, the handshake fails immediately before any RPC payload is sent.
+Crosslink uses the following primitives in the current implementation:
 
----
+| Purpose | Primitive |
+| --- | --- |
+| Device identity | Ed25519 signing keypair |
+| Key agreement | X25519 authenticated handshake |
+| Optional hybrid mode | X25519 + ML-KEM-768 |
+| Session key derivation | HKDF-SHA256 |
+| Frame encryption | XChaCha20-Poly1305 AEAD |
+| Fingerprints | SHA-256 |
 
-## 3. Short Authentication String (SAS) Human Verification
+The code treats these as implementation choices, not policy knobs. You should not swap them ad hoc in an app, because the rest of the stack expects the transcript, replay protection, and frame encoding to behave exactly the same way.
 
-To guarantee that the physical device scanning the screen is the one pairing:
-- During pairing, a 9-digit pairing code with a **120-second TTL** is generated.
-- A 9-digit (three groups of three) human-readable **Short Authentication String (SAS)** is derived from both devices' Ed25519 identity public keys.
-- The user visually confirms the digits displayed on their phone screen match the desktop widget before granting capability permissions.
+## Pairing trust
 
----
+Pairing uses two checks that serve different purposes:
 
-## 4. Capability-Gated Permissions
+- The QR pins the host fingerprint and lists the routes the client is allowed to try.
+- The SAS digits let a human verify that the screen being scanned is the one the host intended.
 
-Unlike raw sockets, mobile devices in Crosslink only receive access to explicitly declared capabilities (e.g. `chat.send`, `chat.read`, `notes.sync`).
-- Capabilities can be revoked individually at any time from the desktop.
-- When a device is revoked, its session keys are invalidated and reconnection is refused -- the device's Ed25519 key no longer proves anything, since revocation is checked on every handshake. There is no separate bearer session token to invalidate.
+That means a relay, signaling service, or tunnel can help with reachability without becoming an identity source. If the host fingerprint does not match, stop. If the SAS does not match, stop.
+
+The code path also avoids treating opaque continuation tokens as human-readable pairing codes. That distinction matters because the browser can safely hold a silent continuation token, but it cannot safely hold a shared secret that was meant to be compared by a human.
+
+## Capabilities and revocation
+
+Crosslink is capability-based. A paired device only gets the capabilities the host grants, and those grants can be revoked later.
+
+Operationally, that means:
+
+- Keep capability names narrow and specific.
+- Mark dangerous actions with explicit approval.
+- Re-check capability state on every privileged action.
+- Treat revocation as immediate, not eventual.
+
+There is no separate bearer token to "keep around" after revocation. If a device is revoked, the host should refuse subsequent calls and reconnect attempts.
+
+## What to log
+
+Crosslink's logger is structured and redacting by design. Use it for the event name, state transition, and sanitized metadata. Do not log raw request objects, private keys, seed material, auth headers, or full tokens.
+
+```ts
+import { consoleLogger } from "@crosslink/core";
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const server = createCrosslinkServer({
+  application: { id: "com.example.notes", name: "Notes" },
+  logger: consoleLogger({ level: "debug" })
+});
+```
+
+Good log data looks like:
+
+- endpoint kind and transport selection
+- device ids, request ids, and method names
+- a redacted reason for a failure
+- whether a secret store, keychain, or encrypted-file fallback was used
+
+Bad log data looks like:
+
+- raw `Authorization` headers
+- pairing codes pasted into logs
+- private keys, seeds, passphrases, or one-time tokens
+- opaque provider error objects copied to users verbatim
+
+If you need more detail, raise the logger level first. Do not work around missing observability by dumping entire objects.
+
+## Debugging security-sensitive failures
+
+When a security-sensitive path fails, use the narrowest useful diagnostic:
+
+1. Check `server.status()` on the host for the active network mode, transport reachability, and secret-store backend.
+2. Check the host's advertised endpoints and confirm the route kind matches the intended mode.
+3. If the problem is remote access, run `npm run check:remote` or `node scripts/check-remote-access.mjs <port>` and compare the returned reason with the host logs.
+4. If the problem is pairing, verify the QR fingerprint and SAS first, before retrying with a new code.
+5. If the problem is authorization, inspect the capability policy and the requested capability, not just the call site.
+
+The debugging goal is to explain the failure without expanding the trust boundary. You should not loosen TLS, disable fingerprint checks, or replace a structured error with a generic success path just to get a demo running.
+
+## Security checklist
+
+- Use `consoleLogger()` or another logger that preserves structured fields.
+- Keep secrets in the OS keychain, `safeStorage`, or encrypted-file fallback only.
+- Never echo tokens, seeds, or private keys back to the browser.
+- Require explicit approval for risky capabilities.
+- Revoke devices instead of rotating the whole app secret when one device is compromised.
+- Prefer `https`, `wss`, or localhost for anything that needs browser storage or a service worker.
+- Treat signaling and relay as untrusted transport helpers, not as identity sources.

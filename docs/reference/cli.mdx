@@ -3,7 +3,7 @@ title: CLI Reference
 description: Command-line interface for Crosslink
 ---
 
-Crosslink has no installed CLI binary — these are `npm` scripts run from the root of the monorepo (or, for demos, from an example package).
+Crosslink has no single installed CLI binary. The canonical entrypoints are the workspace scripts in the monorepo, with a few root aliases for convenience.
 
 ## Services
 
@@ -31,21 +31,21 @@ npm test
 
 ## Examples
 
-### Run echo example
+### Run the echo host
 
 ```bash
 cd examples/echo-host
 npm run dev
 ```
 
-### Run notes example
+### Run the notes host
 
 ```bash
 cd examples/notes-host
 npm run dev
 ```
 
-### Run todo example
+### Run the todo host
 
 ```bash
 cd examples/todo-host
@@ -58,14 +58,14 @@ npm run dev
 npm run dev -w @crosslink/example-electron-chat
 ```
 
-### Run an example with remote access
+### Run a workspace in remote mode
 
-Several root-level scripts start a demo with `networkMode: "remote"` already configured — see [Remote Access](/guides/remote-access):
+The same workspaces can be started with remote access already enabled — see [Remote Access](/guides/remote-access):
 
 ```bash
-npm run demo:echo:remote
-npm run demo:chat:remote
-npm run demo:todo:remote
+node examples/echo-host/src/cli.ts --remote
+node examples/todo-host/src/cli.ts --remote
+CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat
 ```
 
 ### Check remote-access readiness
