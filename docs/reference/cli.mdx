@@ -52,6 +52,12 @@ cd examples/todo-host
 npm run dev
 ```
 
+### Run the Electron chat example
+
+```bash
+npm run dev -w @crosslink/example-electron-chat
+```
+
 ### Run an example with remote access
 
 Several root-level scripts start a demo with `networkMode: "remote"` already configured — see [Remote Access](/guides/remote-access):
@@ -76,6 +82,8 @@ npm run check:remote
 | `HOST` | Signaling/relay bind address | `0.0.0.0` |
 | `CROSSLINK_SIGNALING_URL` | Signaling URL (host SDK) | _(auto-discovered)_ |
 | `CROSSLINK_RELAY_URL` | Relay URL (host SDK) | _(auto-discovered)_ |
+| `CROSSLINK_REDIS_URL` | Shared signaling backplane | _(in-memory)_ |
+| `CROSSLINK_REGION` | Signaling/relay region label | _(none)_ |
 | `CROSSLINK_SECRET_KEY` | Passphrase for encrypted storage | _(none)_ |
 | `CROSSLINK_DATA_DIR` | Where the dev-token/stack config lives (`@crosslink/dev-tokens`). A host's own `storageDir` is a config field, not this. | `.crosslink-data` |
 

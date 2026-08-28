@@ -1,0 +1,33 @@
+---
+title: Hybrid post-quantum exchange
+description: Combine X25519 authentication with ephemeral ML-KEM-768 secrets.
+---
+
+Crosslink can mix an ephemeral ML-KEM-768 shared secret into the existing CLX1 X25519
+key schedule. Both algorithms must succeed: the classical authenticated exchange
+preserves current security while the KEM adds protection against store-now-decrypt-
+later attacks if ML-KEM remains secure.
+
+```ts
+security: { hybridPq: "preferred" }
+```
+
+| Mode | Behavior |
+| --- | --- |
+| `disabled` | Classical CLX1 only; current compatibility default |
+| `preferred` | Use hybrid when both peers advertise it; otherwise classical |
+| `required` | Reject a peer that omits or corrupts the PQ exchange |
+
+The client KEM public key, host ciphertext, and negotiated mode are included in the
+signed handshake transcript. An intermediary cannot strip or replace the PQ offer
+without invalidating authentication. KEM secrets are mixed with the ephemeral and
+static X25519 secrets before HKDF and wiped after derivation.
+
+<Warning>
+`preferred` permits an authenticated legacy peer to negotiate classical mode. Use
+`required` only after every deployed peer supports the hybrid extension; it
+intentionally fails closed during a downgrade or rollout mismatch.
+</Warning>
+
+This is hybrid key establishment, not post-quantum identity authentication. Long-term
+identities and transcript signatures remain Ed25519.

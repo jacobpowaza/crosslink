@@ -30,6 +30,7 @@ actually do":
 | `@crosslink/core` | Transport-agnostic engine: identity, CLX1 handshake, sessions, capability registry, RPC router, pairing state machines |
 | `@crosslink/nat-map` | Inbound reachability: PCP, NAT-PMP and UPnP IGD port mapping, plus STUN address discovery. Used by `remote` network mode |
 | `@crosslink/dev-tokens` | Per-machine development tokens, so the default signaling and relay are not open to unauthenticated use |
+| `@crosslink/conformance` | Adapter contract and shared positive/negative wire corpus for non-JavaScript implementations |
 
 Import `@crosslink/core` directly only when you are building a transport, or
 embedding Crosslink in a runtime that cannot use the `sdk-node` listener.
@@ -68,7 +69,12 @@ npm run stack   # signaling :8081 + relay :8082, from the repo root
 | `examples/notes-host` | State sync over RPC and events |
 | `examples/todo-host`, `examples/todo-client` | A host and client pair, local and relay modes |
 | `examples/webrtc-upgrade` | Relay connection upgraded to direct WebRTC, end to end |
+| `examples/electron-chat` | Sandboxed Electron main/preload/renderer integration and native pairing approval |
 | `examples/react-tsx`, `examples/vanilla` | Minimal client UIs |
+
+The protocol baselines under `sdks/swift`, `sdks/kotlin`, and `sdks/rust` are
+tested against the same canonical JSON/framing behavior. See [Native protocol
+SDKs](/guides/native-sdks).
 
 Run any of them from the repo root:
 

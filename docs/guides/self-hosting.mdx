@@ -5,7 +5,8 @@ description: Running your own signaling and relay servers
 
 ## Overview
 
-Crosslink's signaling and relay servers are stateless, horizontally scalable, and can run anywhere with Node.js.
+Crosslink's signaling nodes are horizontally scalable with Redis. Relay channels are
+ephemeral and process-local, with region catalogs and host-side fallback for scale-out.
 
 ## Quick start
 
@@ -64,6 +65,7 @@ Both services require a bind before phones can reach them from anywhere but the 
 | `HOST` | `0.0.0.0` | Bind address |
 | `CROSSLINK_SIGNALING_TOKEN` | _(none)_ | Shared secret hosts must present; required unless per-machine dev tokens apply |
 | `CROSSLINK_REGION` | _(none)_ | Optional region label included in presence data |
+| `CROSSLINK_REDIS_URL` | _(none)_ | Redis URL for shared TTL state and cross-node pub/sub; use `rediss://` in production |
 
 ### Relay
 
@@ -74,6 +76,11 @@ Both services require a bind before phones can reach them from anywhere but the 
 | `CROSSLINK_RELAY_TOKEN` | _(none)_ | Shared secret hosts must present; required unless per-machine dev tokens apply |
 | `CROSSLINK_RELAY_CLIENT_TOKEN` | _(none)_ | Optional shared secret clients must present to attach |
 | `CROSSLINK_RELAY_MAX_CLIENTS` | _(unset)_ | Max clients per relay channel |
+| `CROSSLINK_RELAY_MAX_CHANNELS` | `1024` | Max allocated channels per process |
+| `CROSSLINK_RELAY_MAX_BYTES` | _(unlimited)_ | Lifetime traffic cap per channel |
+| `CROSSLINK_RELAY_BYTES_PER_SEC` | _(unlimited)_ | Token-bucket rate per channel |
+| `CROSSLINK_RELAY_PUBLIC_URL` | _(none)_ | Public HTTPS URL for this relay region |
+| `CROSSLINK_RELAY_REGIONS` | _(none)_ | JSON array of regional URLs and priorities |
 
 <Warning>
 Outside of local development, both services refuse to start without an auth token (`CROSSLINK_SIGNALING_TOKEN` / `CROSSLINK_RELAY_TOKEN`) or the per-machine dev tokens written to `.crosslink-data/dev-tokens.json`. Set these explicitly for any deployment other services will connect to.
@@ -106,7 +113,9 @@ server {
 
 ### Load balancing
 
-Both services are stateless and can be horizontally scaled:
+Signaling can be horizontally scaled when every replica uses the same Redis
+deployment. Relay WebSockets require channel affinity; deploy independent regional
+relay pools and let hosts allocate using ordered regional fallback:
 
 ```nginx
 upstream signaling {
@@ -122,6 +131,12 @@ upstream relay {
 }
 ```
 
+<Warning>
+Do not round-robin an allocated relay channel across processes. Either keep
+WebSocket affinity for the channel or publish each relay pool as a distinct regional
+allocation endpoint.
+</Warning>
+
 ### Monitoring
 
 Monitor these metrics:
@@ -135,7 +150,9 @@ Monitor these metrics:
 
 ### Backup
 
-The services are stateless -- no backup needed. However, if you customize configuration, back up:
+Relay channel state and signaling presence are ephemeral. Redis persistence is not
+required for correctness after a restart, but production configuration must be
+recoverable. Back up:
 - Environment variables (including auth tokens)
 - TLS certificates
 - Your deployment manifests
@@ -143,6 +160,8 @@ The services are stateless -- no backup needed. However, if you customize config
 ## Security checklist
 
 - [ ] Use TLS termination (nginx, Caddy, Cloudflare)
+- [ ] Use `rediss://`, Redis ACLs, and a private Redis network
+- [ ] Set channel, client, lifetime-byte, bandwidth, and edge connection quotas
 - [ ] Run in a DMZ or private network
 - [ ] Monitor connection counts and error rates
 - [ ] Set `CROSSLINK_SIGNALING_TOKEN` / `CROSSLINK_RELAY_TOKEN` explicitly

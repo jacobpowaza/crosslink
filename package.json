@@ -13,7 +13,7 @@
     "examples/*"
   ],
   "engines": {
-    "node": ">=18.17"
+    "node": ">=20.19"
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -34,7 +34,10 @@
     "demo:webrtc-client": "npm run serve -w @crosslink/example-webrtc-upgrade",
     "demo:echo:remote": "node examples/echo-host/src/cli.ts --remote",
     "demo:chat:remote": "CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat",
-    "check:remote": "node scripts/check-remote-access.mjs"
+    "check:remote": "node scripts/check-remote-access.mjs",
+    "docs:check": "node scripts/validate-docs.mjs && npm --prefix docs run check",
+    "security:check": "npm audit --omit=dev --audit-level=high && node scripts/security-baseline.mjs",
+    "check:ci": "npm run typecheck && npm run build && npm test && npm run docs:check && npm run security:check"
   },
   "dependencies": {
     "untun": "^0.2.2"
@@ -42,7 +45,10 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "concurrently": "^10.0.5",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.9"
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
   }
 }

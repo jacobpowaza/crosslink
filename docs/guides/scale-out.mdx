@@ -1,0 +1,59 @@
+---
+title: Scale-out and regions
+description: Run Redis-backed signaling and quota-enforced relays across regions.
+---
+
+Crosslink scales signaling and relays differently: signaling nodes share short-lived
+routing state through Redis, while relay channels stay on the region that allocated
+them. Hosts publish ordered regional fallback URLs so clients do not guess where a
+channel lives.
+
+## Redis-backed signaling
+
+Set the same Redis URL and namespace for every signaling replica:
+
+```bash
+CROSSLINK_REDIS_URL=rediss://user:password@redis.internal:6379/0 \
+CROSSLINK_REGION=us-east \
+CROSSLINK_SIGNALING_TOKEN="$SIGNAL_TOKEN" \
+node services/signaling/dist/cli.js
+```
+
+Redis stores expiring presence and pairing-code hashes and carries opaque cross-node
+routing messages over pub/sub. Identity keys, session keys, pairing plaintext, and
+application content are never written to Redis. Use `rediss://`, Redis ACLs, a private
+network, eviction monitoring, and a deployment-specific namespace.
+
+## Relay quotas
+
+| Variable | Meaning |
+| --- | --- |
+| `CROSSLINK_RELAY_MAX_CHANNELS` | Concurrent allocated channels on this process |
+| `CROSSLINK_RELAY_MAX_CLIENTS` | Concurrent clients per channel |
+| `CROSSLINK_RELAY_MAX_BYTES` | Lifetime bytes in both directions per channel |
+| `CROSSLINK_RELAY_BYTES_PER_SEC` | Per-channel token-bucket throughput |
+
+Quota violations close or reject only the affected channel and increment `quotaDrops`
+in authenticated relay statistics. Put infrastructure-level connection and request
+limits in front of the process as a second boundary.
+
+## Region catalog
+
+```bash
+export CROSSLINK_REGION=us-east
+export CROSSLINK_RELAY_PUBLIC_URL=https://relay-use1.example.com
+export CROSSLINK_RELAY_REGIONS='[
+  {"id":"us-east","url":"https://relay-use1.example.com","priority":10},
+  {"id":"us-west","url":"https://relay-usw2.example.com","priority":20},
+  {"id":"eu-west","url":"https://relay-euw1.example.com","priority":30}
+]'
+```
+
+Hosts may also pass `relayUrls`. Allocation tries each validated HTTPS URL in order
+and reconnects by reallocating when a channel expires. Every region independently
+requires host and, when configured, client tokens.
+
+<Warning>
+Do not put a TCP load balancer in front of relay WebSockets unless it preserves
+channel affinity. A channel is process-local by design.
+</Warning>

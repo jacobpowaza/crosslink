@@ -47,6 +47,11 @@ Array of capability objects:
 
 `string` -- URL of the relay server (enables connectivity behind NATs). Same auto-discovery as `signalingUrl`.
 
+### relayUrls
+
+`string[]` -- Ordered regional relay fallbacks. Allocation tries the first healthy
+validated endpoint and re-allocates after a regional/channel failure.
+
 ### lan
 
 | Property | Type | Description |
@@ -64,7 +69,39 @@ Array of capability objects:
 | `ttlMs` | `number` | Pairing code/session TTL |
 | `autoApprove` | `boolean` | Dev convenience: skip human confirmation. Never grants above policy. Never for production |
 | `approve` | `(req: PairingApprovalRequest) => PairingApproval \| Promise<PairingApproval>` | Pairing approval callback |
+| `notifyApprovalRequest` | `(req) => void \| Promise<void>` | Raise a push/native notification before local approval. Delivery cannot approve by itself |
 | `bootstrapUrl` | `string` | Base URL of a hosted, installable client page for the iOS "Add to Home Screen" pairing flow |
+
+### mdns
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `enabled` | `boolean` | Advertise a `_crosslink._tcp` LAN candidate after startup |
+| `name` | `string` | Local service display name |
+
+mDNS results are untrusted discovery candidates, never identity evidence. The SDK
+accepts only local addresses and valid app/fingerprint/version/port metadata; the
+authenticated handshake still pins the host.
+
+### groups
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `enabled` | `boolean` | Register the built-in group RPC/capabilities |
+| `maxGroups` | `number` | Maximum live host-mediated groups |
+| `maxMembersPerGroup` | `number` | Maximum members in one star session |
+| `maxPayloadBytes` | `number` | Maximum host-routed group payload |
+| `inviteTtlMs` | `number` | Device-bound invite lifetime |
+
+### security
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `maxDevices` | `number` | Maximum non-revoked paired devices |
+| `maxActivePairingSessions` | `number` | Maximum live single-use pairing sessions (default 10) |
+| `pairingRateLimitMs` | `number` | Minimum pairing-code creation interval per caller/global key (default 5000) |
+| `localNetworkOnly` | `boolean` | Reject non-local LAN socket peers |
+| `hybridPq` | `"disabled" \| "preferred" \| "required"` | Hybrid X25519 + ML-KEM-768 policy |
 
 ### networkMode
 
@@ -95,6 +132,7 @@ CrosslinkClient.create({
   onConfirmPairing: ...,
   logger: ...,
   dialTimeoutMs: ...,
+  hybridPq: "preferred",
   allowPlaintextFallback: ...
 });
 ```
@@ -160,6 +198,7 @@ Both services read configuration from CLI flags (`--port`, `--host`, `--auth-tok
 | `HOST` | `0.0.0.0` | Bind address |
 | `CROSSLINK_SIGNALING_TOKEN` | _(per-machine dev token)_ | Shared secret hosts must present to register presence |
 | `CROSSLINK_REGION` | _(none)_ | Advertised in `/health` for operators |
+| `CROSSLINK_REDIS_URL` | _(none)_ | Redis/Redis-TLS URL for shared presence, codes, and pub/sub routing |
 
 ### Relay (`services/relay`)
 
@@ -170,6 +209,11 @@ Both services read configuration from CLI flags (`--port`, `--host`, `--auth-tok
 | `CROSSLINK_RELAY_TOKEN` | _(per-machine dev token)_ | Shared secret hosts must present to allocate a channel |
 | `CROSSLINK_RELAY_CLIENT_TOKEN` | _(none)_ | Shared secret clients must also present, if set |
 | `CROSSLINK_RELAY_MAX_CLIENTS` | `8` | Max concurrent clients per relay channel |
+| `CROSSLINK_RELAY_MAX_CHANNELS` | `1024` | Max allocated channels on the process |
+| `CROSSLINK_RELAY_MAX_BYTES` | _(unlimited)_ | Lifetime bytes per channel |
+| `CROSSLINK_RELAY_BYTES_PER_SEC` | _(unlimited)_ | Token-bucket bandwidth per channel |
+| `CROSSLINK_RELAY_PUBLIC_URL` | _(none)_ | Validated public HTTPS URL for this region |
+| `CROSSLINK_RELAY_REGIONS` | _(none)_ | JSON region catalog (`id`, HTTPS `url`, optional `priority`) |
 
 ---
 

@@ -21,7 +21,8 @@ Crosslink is built on four principles:
 | Layer | Primitive | Purpose | Rationale |
 | --- | --- | --- | --- |
 | Identity | Ed25519 | Long-term device identity | Fast, small keys, no legacy |
-| Key exchange | X25519 | Ephemeral Diffie-Hellman | Forward secrecy, same-curve as identity |
+| Key exchange | X25519 | Ephemeral + static Diffie-Hellman | Forward secrecy and authenticated key confirmation |
+| Hybrid extension | ML-KEM-768 | Optional ephemeral KEM mixed with X25519 | Store-now-decrypt-later protection without replacing classical security |
 | Handshake | CLX1 (custom) | Authenticated key exchange | Combines identity + ECDH + signatures |
 | Session frames | XChaCha20-Poly1305 | AEAD encryption | Better nonce management than AES-GCM |
 | Key derivation | HKDF-SHA256 | Session key from shared secret | Standard, well-understood |
@@ -44,8 +45,8 @@ Crosslink is built on four principles:
 4. Client verifies host fingerprint (from QR code)
 5. Both exchange signed public keys
 6. SAS verification confirms no MITM
-7. Ephemeral X25519 keys derived
-8. Session established with fresh keys
+7. Ephemeral X25519 secrets derived; optional transcript-bound ML-KEM secret mixed in
+8. Session established with fresh HKDF-derived keys
 ```
 
 ## Threat model
@@ -61,6 +62,7 @@ Crosslink is built on four principles:
 | Replay attacks | Nonce-based, single-use pairing codes |
 | Key compromise | Forward secrecy (ephemeral session keys) |
 | Pairing code brute-force | Constant-time code comparison, host-side throttling |
+| Pairing notification spoofing | Notification cannot authorize; only the local approval callback decides |
 | Cross-origin WebSocket hijack (LAN) | LAN listener refuses upgrades from browser origins it did not itself advertise |
 | Browser XSS (seed theft) | Non-extractable WebCrypto key |
 | OS keychain theft | Electron safeStorage (OS-level protection), where available |
@@ -120,7 +122,7 @@ Sessions are bound to:
 ### Frame integrity
 
 Every encrypted frame includes:
-- A 12-byte nonce (random, unique per frame)
+- A 24-byte XChaCha nonce (random, unique per frame)
 - A Poly1305 authentication tag (detects tampering)
 - Sequence numbers (detects replay/reordering)
 
@@ -154,7 +156,8 @@ The non-extractable WebCrypto key is **not** a vault. A script running on the or
 ## Security checklist for production
 
 - [ ] Use HTTPS for all signaling/relay endpoints
-- [ ] Implement rate limiting at the application level
+- [ ] Configure pairing limits and relay channel/client/byte/bandwidth quotas
+- [ ] Implement application-specific rate limiting in RPC handlers
 - [ ] Validate all RPC inputs (schema validation)
 - [ ] Log security-relevant events (pairing, capability grants, errors)
 - [ ] Set appropriate capability TTLs
@@ -163,3 +166,4 @@ The non-extractable WebCrypto key is **not** a vault. A script running on the or
 - [ ] Keep the SDK updated to the latest version
 - [ ] Use OS keychain for host secret storage (not plaintext)
 - [ ] Use `CrosslinkClient.create()` for browser clients (encrypted storage)
+- [ ] Use `hybridPq: "required"` only after every deployed peer supports it

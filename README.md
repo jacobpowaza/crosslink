@@ -15,8 +15,9 @@
   <img src="https://img.shields.io/badge/TypeScript-strict-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Node-≥20-green.svg" alt="Node.js" />
   <img src="https://img.shields.io/badge/Tests-283+-brightgreen.svg" alt="Tests" />
-  <img src="https://img.shields.io/badge/Crypto-noble%2Fcurves-9b59b6.svg" alt="Crypto" />
+  <img src="https://img.shields.io/badge/Crypto-X25519%20%2B%20ML--KEM--768-9b59b6.svg" alt="Crypto" />
   <a href="https://github.com/jacobpowaza/crosslink/security"><img src="https://img.shields.io/badge/Security-audited%20primitives-orange.svg" alt="Security" /></a>
+  <a href="https://venmo.com/u/jacobpowaza"><img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" /></a>
 </p>
 
 ---
@@ -54,6 +55,8 @@ crypto, brittle sockets. Crosslink packages the hard parts once:
 | **Observability** | Structured, redacting `Logger` threaded through every layer |
 | **Bootstrap** | An installable page served on the host's own port, so one QR covers pairing and the PWA |
 | **Remote access** | Router port mapping over NAT-PMP / PCP / UPnP — no account, no tunnel provider, no port forwarding |
+| **Scale-out** | Redis-backed signaling, bounded relay quotas, and region-aware fallback |
+| **Groups** | Host-mediated star sessions with capability-gated peer introductions |
 
 Services are dumb by design: **signaling never sees keys or plaintext**, and the
 relay forwards only opaque ciphertext.
@@ -76,6 +79,12 @@ Scan the QR with a phone on the same Wi-Fi, confirm the SAS digits, and start
 calling RPC methods over the encrypted channel. There is no service in that
 path: the QR carries the host's own address and the whole pairing exchange runs
 on the host's socket.
+
+<p align="center">
+  <img src="docs/assets/pairing/connect-widget.png" alt="Crosslink pairing widget with QR and pairing code" width="760" />
+  <br />
+  <img src="docs/assets/pairing/pairing-code-page.jpg" alt="Crosslink mobile pairing code screen" width="260" />
+</p>
 
 ### From another network
 
@@ -226,7 +235,8 @@ Crosslink uses audited cryptographic primitives from `@noble/curves` and
 | --- | --- |
 | Device identity | Ed25519 signing keypair |
 | Key agreement | X25519 (ephemeral + static, double-DH) |
-| Session keys | HKDF-SHA256 over (ephemeral DH ‖ static DH) |
+| Hybrid key agreement | Optional X25519 + ML-KEM-768 (`preferred` or fail-closed `required`) |
+| Session keys | HKDF-SHA256 over authenticated classical and optional PQ secrets |
 | Frame encryption | XChaCha20-Poly1305 AEAD, random 24-byte nonces |
 | Hashes / fingerprints | SHA-256 |
 
@@ -258,6 +268,8 @@ See [docs/security/overview.mdx](docs/security/overview.mdx) and
 | `@crosslink/webrtc-adapter` | DataChannel transport + SDP exchange over existing sessions |
 | `@crosslink/signaling` | Presence directory + pairing-code router |
 | `@crosslink/relay` | Stateless encrypted-pipe relay for NAT traversal |
+| `@crosslink/conformance` | Language-neutral canonical JSON, framing, and negative-case runner |
+| `sdks/swift`, `sdks/kotlin`, `sdks/rust` | Native protocol baselines tested against the shared corpus |
 
 ## Apps & Examples
 
@@ -269,6 +281,7 @@ See [docs/security/overview.mdx](docs/security/overview.mdx) and
 | `examples/notes` | Notes sync host |
 | `examples/todo` | Todo app with local + relay modes |
 | `examples/webrtc-upgrade` | Relay → direct WebRTC, wired end to end |
+| `examples/electron-chat` | Packaged, sandboxed Electron chat host with native pairing approval |
 
 ## Documentation
 
@@ -290,6 +303,10 @@ The full documentation site lives in `docs/` (Mintlify). Start here:
 - [Self-hosting](docs/guides/self-hosting.mdx) — run your own signaling/relay
 - [Security](docs/security/overview.mdx) — crypto choices and invariants
 - [Threat model](docs/security/threat-model.mdx) — what we defend against, what we don't
+- [Scale-out](docs/guides/scale-out.mdx) — Redis signaling, relay quotas, and regions
+- [Group sessions](docs/concepts/group-sessions.mdx) — host-mediated multi-device sessions
+- [Native SDKs and conformance](docs/guides/native-sdks.mdx) — Swift, Kotlin, Rust, and the corpus
+- [Electron example](docs/guides/electron.mdx) — bundle a hardened desktop host
 
 ## Development
 
@@ -304,15 +321,18 @@ Both SDKs are unit-testable without a network. `@crosslink/sdk-browser` ships
 and revocation can be driven against a real `HostPairingManager` and
 `HostAcceptor` with every failure produced deliberately.
 
-## Roadmap
+## Completed milestones
 
-- **M6** — Hardening: OS keychain adapters, pairing approval push, rate-limit
-  tuning, structured logging
-- **M7** — Scale-out: Redis-backed signaling, relay quotas, multi-region relay
-- **M8** — WebRTC end-to-end tests, mDNS/DNS-SD zero-config LAN discovery
-- **M9** — Group sessions: star topology with capability-gated peer introductions
-- **M10** — Ecosystem: protocol conformance suite, Swift/Kotlin/Rust SDKs,
-  hybrid PQ key exchange
+- **M6 Hardening** — OS keychain/Electron `safeStorage` adapters, fail-safe
+  approval notifications, bounded pairing creation, and structured redacting logs.
+- **M7 Scale-out** — Redis-backed signaling presence and opaque routing,
+  relay channel/client/byte/bandwidth quotas, and region-aware fallback.
+- **M8 Direct discovery** — authenticated WebRTC adapter end-to-end coverage and
+  strict local-only mDNS/DNS-SD discovery candidates.
+- **M9 Groups** — bounded star sessions with host-issued, single-use invites and
+  capability-gated introductions and delivery.
+- **M10 Ecosystem** — positive and negative protocol conformance, Swift/Kotlin/Rust
+  protocol SDKs, and transcript-bound hybrid X25519 + ML-KEM-768 exchange.
 
 ## Remote access, without a tunnel provider
 

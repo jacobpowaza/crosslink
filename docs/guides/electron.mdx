@@ -1,136 +1,99 @@
 ---
-title: Electron Integration
-description: Using Crosslink in Electron applications
+title: Electron
+description: Bundle a secure Crosslink host into a desktop application.
 ---
 
-## Setup
+The runnable [`examples/electron-chat`](https://github.com/jacobpowaza/crosslink/tree/main/examples/electron-chat)
+app is the reference integration. It keeps Crosslink in Electron's main process
+and gives the sandboxed renderer only four narrow operations: read status, mint
+a pairing code, send a message, and revoke a device.
 
 ```bash
-npm install @crosslink/sdk-node @crosslink/sdk-browser
+npm install
+npm run dev -w @crosslink/example-electron-chat
 ```
 
-- `@crosslink/sdk-node` in the **main process**
-- `@crosslink/sdk-browser` in the **renderer** (optional)
+<Frame>
+  <img src="/assets/pairing/connect-widget.png" alt="Crosslink connect widget with a QR code and short pairing code" />
+</Frame>
 
-## Main process
+## Process boundary
 
-```js
-import { createCrosslinkServer } from "@crosslink/sdk-node";
-import { app, ipcMain } from "electron";
+| Process | Holds | Must not hold |
+| --- | --- | --- |
+| Main | Crosslink host, identity, grants, relay tokens, approval UI | Remote renderer code |
+| Preload | Four validated IPC wrappers | Raw `ipcRenderer` |
+| Renderer | Display state and user input | Node.js, filesystem, keys, service tokens |
 
-let server;
+The example uses `contextIsolation: true`, `sandbox: true`,
+`nodeIntegration: false`, `webSecurity: true`, a restrictive CSP, denied
+permissions, denied navigation/windows, and exact IPC sender validation. Its UI
+loads through a registered secure custom protocol rather than `file://`.
 
-app.whenReady().then(async () => {
-  server = createCrosslinkServer({
-    application: {
-      id: "com.example.myelectron",
-      name: "My Electron App",
-      version: app.getVersion()
-    },
-    capabilities: [
-      { id: "app.control", title: "Control the app", risk: "medium" }
-    ],
-    signalingUrl: "http://127.0.0.1:8081",
-    relayUrl: "http://127.0.0.1:8082",
-    lan: { bind: "loopback" },
-    pairing: {
-      approve: async (req) => {
-        // Forward to renderer for user confirmation
-        return ipcMain.handleOnce("pairing-approve", () => req);
-      }
-    }
-  });
+## Host configuration
 
-  server.expose("app.status", () => ({
-    version: app.getVersion(),
-    uptime: process.uptime()
-  }));
-
-  await server.start();
-});
-
-// Expose pairing code to renderer
-ipcMain.handle("get-pairing-code", async () => {
-  return server.getPairingCode();
-});
-
-// Cleanup
-app.on("will-quit", () => {
-  server?.stop();
-});
-```
-
-## Renderer process
-
-```js
-const { contextBridge, ipcRenderer } = require("electron");
-
-// Expose Crosslink to renderer
-contextBridge.exposeInMainWorld("crosslink", {
-  getPairingCode: () => ipcRenderer.invoke("get-pairing-code"),
-  approvePairing: (approve) => ipcRenderer.handle("pairing-approve", approve)
-});
-```
-
-## Using safeStorage
-
-Electron's `safeStorage` provides OS-level encryption:
-
-```js
-import { safeStorage } from "electron";
-
-// Encrypt
-const encrypted = safeStorage.encryptString("my-secret");
-
-// Decrypt
-const decrypted = safeStorage.decryptString(encrypted);
-```
-
-## Preload script
-
-```js
-const { contextBridge, ipcRenderer } = require("electron");
-
-contextBridge.exposeInMainWorld("electronCrosslink", {
-  // Pairing
-  getPairingCode: () => ipcRenderer.invoke("crosslink:get-pairing-code"),
-  approvePairing: (req) => ipcRenderer.invoke("crosslink:approve-pairing", req),
-
-  // Status
-  onStateChange: (cb) => ipcRenderer.on("crosslink:state-change", cb),
-  onClientConnected: (cb) => ipcRenderer.on("crosslink:client-connected", cb),
-  onClientDisconnected: (cb) => ipcRenderer.on("crosslink:client-disconnected", cb)
-});
-```
-
-## Security considerations
-
-- The main process holds the identity key in the OS keychain via Electron's `safeStorage` (or the optional `keytar` package, if your app installs it)
-- The renderer process does not have direct access to the keychain
-- Use IPC to communicate between main and renderer
-- Consider disabling Node integration in the renderer for security
-
-```js
-// BrowserWindow options
-{
-  webPreferences: {
-    nodeIntegration: false,
-    contextIsolation: true,
-    preload: path.join(__dirname, "preload.js")
+```ts
+const host = createCrosslinkServer({
+  application: { id: "com.example.app", name: "My Electron App" },
+  storageDir: path.join(app.getPath("userData"), "crosslink"),
+  capabilities: [
+    { id: "app.read", title: "Read app data", risk: "low" },
+    { id: "app.change", title: "Change app data", risk: "medium" }
+  ],
+  lan: { enabled: true, bind: "all" },
+  networkMode: "lan-and-relay",
+  signalingUrl: process.env.CROSSLINK_SIGNALING_URL,
+  relayUrl: process.env.CROSSLINK_RELAY_URL,
+  signalingToken: process.env.CROSSLINK_SIGNALING_TOKEN,
+  relayToken: process.env.CROSSLINK_RELAY_TOKEN,
+  security: {
+    hybridPq: "preferred",
+    maxDevices: 12,
+    maxActivePairingSessions: 2,
+    pairingRateLimitMs: 5_000
+  },
+  pairing: {
+    autoApprove: false,
+    notifyApprovalRequest: (request) => showNativeNotification(request),
+    approve: (request) => showNativeApprovalDialog(request)
   }
-}
-```
-
-## Auto-updates
-
-When updating your Electron app, the identity key persists:
-
-```js
-// After update, the host can reconnect to existing clients
-// because the identity key hasn't changed
-app.whenReady().then(async () => {
-  // Server starts with existing identity
-  await server.start();
-  // Existing clients can reconnect
 });
 ```
+
+Crosslink probes Electron `safeStorage` after `app.whenReady()` and stores only
+its encrypted ciphertext under `userData`. If OS encryption is unavailable it
+uses the encrypted-file backend; it never silently selects plaintext.
+
+## Reachable from any network
+
+Use authenticated HTTPS signaling and relay endpoints for predictable remote
+reachability:
+
+```bash
+CROSSLINK_NETWORK_MODE=lan-and-relay \
+CROSSLINK_SIGNALING_URL=https://signal.example.com \
+CROSSLINK_RELAY_URL=https://relay.example.com \
+CROSSLINK_SIGNALING_TOKEN='from-your-secret-manager' \
+CROSSLINK_RELAY_TOKEN='from-your-secret-manager' \
+npm run dev -w @crosslink/example-electron-chat
+```
+
+The example refuses non-HTTPS service URLs. For a direct router mapping, set
+`CROSSLINK_NETWORK_MODE=remote`; startup fails if it cannot establish a real
+remote route. Never expose a renderer HTTP control panel on `0.0.0.0`; only the
+encrypted Crosslink transport should bind to the LAN/public interface.
+
+## Package installers
+
+```bash
+npm run dist -w @crosslink/example-electron-chat
+```
+
+`electron-builder` produces macOS, Windows, or Linux artifacts on the matching
+host OS. Production releases still need your platform signing identity,
+notarization, and update-signing configuration.
+
+<Warning>
+Do not enable `autoApprove` in a distributed app. A notification is advisory;
+only the local approval callback can authorize the pairing.
+</Warning>

@@ -39,6 +39,7 @@
           "concepts/hosts-and-clients",
           "concepts/links",
           "concepts/sessions",
+          "concepts/group-sessions",
           "concepts/pairing",
           "concepts/permissions"
         ]
@@ -65,6 +66,7 @@
           "security/overview",
           "security/authentication",
           "security/encryption",
+          "security/hybrid-pq",
           "security/threat-model",
           "security/permissions"
         ]
@@ -77,6 +79,8 @@
           "guides/tauri",
           "guides/node",
           "guides/self-hosting",
+          "guides/scale-out",
+          "guides/native-sdks",
           "guides/connection-modes",
           "guides/remote-access",
           "guides/security"
@@ -86,12 +90,13 @@
         "group": "REFERENCE",
         "pages": [
           "reference/packages",
-          "reference/api",
+          "reference/sdk-api",
           "reference/configuration",
           "reference/events",
           "reference/errors",
           "reference/cli",
-          "reference/protocol"
+          "reference/protocol",
+          "reference/conformance"
         ]
       },
       {
@@ -117,6 +122,12 @@
       "href": "/quickstart"
     }
   },
+  "redirects": [
+    {
+      "source": "/reference/api",
+      "destination": "/reference/sdk-api"
+    }
+  ],
   "footer": {
     "socials": {
       "github": "https://github.com/jacobpowaza/crosslink"

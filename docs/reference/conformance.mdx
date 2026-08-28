@@ -1,0 +1,29 @@
+---
+title: Protocol conformance
+description: Shared corpus and adapter contract for Crosslink implementations.
+---
+
+`@crosslink/conformance` runs the same language-neutral cases against any
+implementation with four operations:
+
+```ts
+interface ProtocolAdapter {
+  canonicalJson(value: unknown): string;
+  encodeFrame(value: object): Uint8Array;
+  decodeMessage(bytes: Uint8Array): unknown;
+  errorCode(error: unknown): string | undefined;
+}
+```
+
+Each positive fixture supplies an input value, exact canonical JSON, and exact frame
+bytes. Negative fixtures supply malformed JSON/protocol messages and the stable error
+code expected from every SDK. A report contains passed and failed counts plus
+operation-level differences.
+
+```ts
+const report = runConformance(adapter, corpus);
+if (report.failed) throw new Error(JSON.stringify(report.failures, null, 2));
+```
+
+Conformance establishes wire compatibility only. It does not replace handshake tamper
+tests, transport end-to-end tests, fuzzing, or application capability tests.

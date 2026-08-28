@@ -12,7 +12,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm ci
+      - run: npm ci --prefix docs
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - run: npm run docs:check
+      - run: npm run security:check
+
+  native-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.0.0"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --manifest-path sdks/rust/Cargo.toml
+      - run: gradle -p sdks/kotlin test --no-daemon
+
+  swift-protocol:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path sdks/swift

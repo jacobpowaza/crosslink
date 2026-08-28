@@ -1,0 +1,45 @@
+---
+title: Group sessions
+description: Capability-gated multi-device sessions in a host-mediated star topology.
+---
+
+Group sessions are a star centered on the trusted host. Devices never receive another
+device's address, transport, long-term public key, grant list, or raw device ID. The
+host assigns opaque participant IDs and remains the enforcement point for every
+introduction and message.
+
+```text
+phone A ── encrypted session ──┐
+tablet B ─ encrypted session ──┼── host policy + routing
+laptop C ─ encrypted session ──┘
+```
+
+```ts
+const host = createCrosslinkServer({
+  // ...
+  groups: {
+    enabled: true,
+    maxGroups: 32,
+    maxMembersPerGroup: 8,
+    maxPayloadBytes: 64 * 1024,
+    inviteTtlMs: 60_000
+  }
+});
+```
+
+| Capability | Authority |
+| --- | --- |
+| `crosslink.group.create` | Create a bounded group |
+| `crosslink.group.join` | Redeem a device-bound, single-use invite |
+| `crosslink.group.introduce` | Ask the host to reveal opaque participants |
+| `crosslink.group.send` | Send through host routing |
+| `crosslink.group.receive` | Receive host-routed messages |
+
+Joining alone does not allow messaging: the host must introduce the relevant
+participants, and both send and receive capabilities are checked at delivery.
+Revocation removes the device from every group immediately.
+
+<Note>
+Application data remains end-to-end encrypted on each device-to-host session, but
+the trusted host necessarily sees group payloads to route them.
+</Note>

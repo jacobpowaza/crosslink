@@ -1,0 +1,29 @@
+---
+title: Native protocol SDKs
+description: Use and validate the Swift, Kotlin, and Rust protocol baselines.
+---
+
+The repository includes native protocol baselines for teams building a full Crosslink
+client outside JavaScript. They implement canonical JSON, CLX1 length-prefixed framing,
+incremental decoding, protocol version checks, and shared positive/negative fixtures.
+
+| SDK | Location | Test command |
+| --- | --- | --- |
+| Swift Package | `sdks/swift` | `swift test --package-path sdks/swift` |
+| Kotlin/JVM | `sdks/kotlin` | `gradle -p sdks/kotlin test` |
+| Rust crate | `sdks/rust` | `cargo test --manifest-path sdks/rust/Cargo.toml` |
+
+These packages are protocol foundations, not yet feature-parity clients. They do not
+currently include transport selection, pairing UI, persistent identity, reconnect
+policy, or platform-native keychain integration.
+
+## Adding a language
+
+1. Implement canonical JSON and the four-byte big-endian frame prefix.
+2. Enforce frame-size and protocol-version limits before allocation.
+3. Port every fixture from `packages/conformance/fixtures` without changing it.
+4. Assert stable error codes for malformed JSON, oversized frames, trailing data,
+   and unsupported versions.
+5. Add the SDK test command to CI before implementing transports or crypto.
+
+See [Protocol conformance](/reference/conformance) for the adapter contract.
