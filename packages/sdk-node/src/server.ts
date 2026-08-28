@@ -18,6 +18,8 @@ import {
   DEVICE_LINK_RPC_METHOD,
   HostAcceptor,
   HostPairingManager,
+  GroupSessionManager,
+  GROUP_CAPABILITIES,
   RpcRouter,
   buildPairingUri,
   isValidEndpointUrl,
@@ -92,6 +94,14 @@ export interface CrosslinkServerConfig {
   mdns?: {
     enabled?: boolean;
     name?: string;
+  };
+  /** Host-mediated, capability-gated star group sessions. Disabled by default. */
+  groups?: {
+    enabled?: boolean;
+    maxGroups?: number;
+    maxMembersPerGroup?: number;
+    maxPayloadBytes?: number;
+    inviteTtlMs?: number;
   };
   /** e.g. https://signal.example.com — enables QR pairing across networks */
   signalingUrl?: string;
@@ -381,6 +391,7 @@ export class CrosslinkServer extends EventEmitter {
   private signaling?: SignalingLink;
   private relay?: RelayChannel;
   private relayRetry?: ReturnType<typeof setTimeout>;
+  private groups?: GroupSessionManager;
   private sessions = new Map<CrosslinkSession, string>();
   private liveCodes = new Map<string, PairingSessionState>();
   private started = false;
@@ -496,6 +507,15 @@ export class CrosslinkServer extends EventEmitter {
     this.deviceStore = new FileHostDeviceStore(this.storageDir);
 
     this.registry.registerAll(this.config.capabilities ?? []);
+    if (this.config.groups?.enabled) {
+      this.registry.registerAll([
+        { id: GROUP_CAPABILITIES.create, title: "Create group sessions", risk: "medium" },
+        { id: GROUP_CAPABILITIES.join, title: "Join group sessions", risk: "medium" },
+        { id: GROUP_CAPABILITIES.introduce, title: "Introduce group peers", risk: "high" },
+        { id: GROUP_CAPABILITIES.send, title: "Send group messages", risk: "medium" },
+        { id: GROUP_CAPABILITIES.receive, title: "Receive group messages", risk: "medium" }
+      ]);
+    }
 
     this.pairing = new HostPairingManager({
       identity: this.identity,
@@ -533,6 +553,7 @@ export class CrosslinkServer extends EventEmitter {
     });
 
     this.ensureRouter().setConsentBroker(this.consent);
+    if (this.config.groups?.enabled) this.setupGroups(this.config.groups);
 
     // Framework-level method, exposed on every host regardless of app code:
     // lets an already-trusted, connected device mint a single-use
@@ -1014,6 +1035,7 @@ export class CrosslinkServer extends EventEmitter {
       for (const revokedId of revokedIds) {
         this.grants.drop(revokedId);
         this.consent?.forget(revokedId);
+        this.groups?.leaveAll(revokedId);
       }
       for (const [session, dev] of this.sessions) {
         if (revokedIds.has(dev)) session.close("device-revoked");
@@ -1172,6 +1194,73 @@ export class CrosslinkServer extends EventEmitter {
     exposeWebrtcOffer(target, hostOpts);
     this.webrtcExposed = true;
     this.log.debug("webrtc.exposed", { capability: opts.capability ?? "(any)" });
+  }
+
+  private setupGroups(opts: NonNullable<CrosslinkServerConfig["groups"]>): void {
+    if (this.groups) return;
+    const router = this.ensureRouter();
+    router.declareEvent("crosslink.group.introduction", {
+      capability: GROUP_CAPABILITIES.receive
+    });
+    router.declareEvent("crosslink.group.message", {
+      capability: GROUP_CAPABILITIES.receive
+    });
+    this.groups = new GroupSessionManager({
+      hasCapability: (deviceId, capability) => this.grants.hasAll(deviceId, [capability]),
+      deliver: (deviceId, event, payload) => {
+        router.publishToDevice(`crosslink.group.${event}`, deviceId, payload);
+      },
+      ...(opts.maxGroups !== undefined ? { maxGroups: opts.maxGroups } : {}),
+      ...(opts.maxMembersPerGroup !== undefined
+        ? { maxMembersPerGroup: opts.maxMembersPerGroup }
+        : {}),
+      ...(opts.maxPayloadBytes !== undefined ? { maxPayloadBytes: opts.maxPayloadBytes } : {}),
+      ...(opts.inviteTtlMs !== undefined ? { inviteTtlMs: opts.inviteTtlMs } : {}),
+      logger: this.log.child({ component: "groups" })
+    });
+    const groups = this.groups;
+    router
+      .expose("crosslink.group.create", (_input, ctx) => groups.create(ctx.deviceId), {
+        capability: GROUP_CAPABILITIES.create
+      })
+      .expose("crosslink.group.invite", (input, ctx) => {
+        const value = groupInput(input);
+        return groups.invite(
+          requiredString(value.groupId, "groupId"),
+          ctx.deviceId,
+          optionalString(value.targetDeviceId)
+        );
+      }, { capability: GROUP_CAPABILITIES.introduce })
+      .expose("crosslink.group.join", (input, ctx) => {
+        const value = groupInput(input);
+        return groups.join(requiredString(value.token, "token"), ctx.deviceId);
+      }, { capability: GROUP_CAPABILITIES.join })
+      .expose("crosslink.group.members", (input, ctx) => {
+        const value = groupInput(input);
+        return groups.members(requiredString(value.groupId, "groupId"), ctx.deviceId);
+      }, { capability: GROUP_CAPABILITIES.join })
+      .expose("crosslink.group.introduce", (input, ctx) => {
+        const value = groupInput(input);
+        return groups.introduce(
+          requiredString(value.groupId, "groupId"),
+          ctx.deviceId,
+          requiredString(value.targetParticipantId, "targetParticipantId")
+        );
+      }, { capability: GROUP_CAPABILITIES.introduce })
+      .expose("crosslink.group.send", (input, ctx) => {
+        const value = groupInput(input);
+        groups.send(
+          requiredString(value.groupId, "groupId"),
+          requiredString(value.introductionId, "introductionId"),
+          ctx.deviceId,
+          (value.payload ?? null) as Json
+        );
+        return { ok: true };
+      }, { capability: GROUP_CAPABILITIES.send })
+      .expose("crosslink.group.leave", (input, ctx) => {
+        const value = groupInput(input);
+        return { left: groups.leave(requiredString(value.groupId, "groupId"), ctx.deviceId) };
+      }, { capability: GROUP_CAPABILITIES.join });
   }
 
   /** Capability ids currently granted to a device, expired ones excluded. */
@@ -1424,6 +1513,24 @@ export class CrosslinkServer extends EventEmitter {
 /** Factory matching the documented DX. */
 export function createCrosslinkServer(config: CrosslinkServerConfig): CrosslinkServer {
   return new CrosslinkServer(config);
+}
+
+function groupInput(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError("group RPC input must be an object");
+  }
+  return input as Record<string, unknown>;
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 256) {
+    throw new TypeError(`${field} must be a non-empty string of at most 256 characters`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return value === undefined ? undefined : requiredString(value, "targetDeviceId");
 }
 
 /**

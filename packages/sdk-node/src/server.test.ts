@@ -15,6 +15,7 @@ import {
   ClientLink,
   DeviceIdentity,
   DEVICE_LINK_RPC_METHOD,
+  GROUP_CAPABILITIES,
   MemoryLogSink,
   buildPairingUri,
   createClaim,
@@ -427,6 +428,57 @@ describe("capability enforcement at call time", () => {
       code: ErrorCodes.GRANT_EXPIRED
     });
     link.close();
+  }, 15000);
+});
+
+describe("group sessions", () => {
+  it("routes only a capability-gated introduced star edge", async () => {
+    const groupCaps = Object.values(GROUP_CAPABILITIES);
+    const server = await startServer({
+      groups: { enabled: true, maxMembersPerGroup: 4 },
+      pairing: { approve: () => true },
+      permissions: { maxAutoGrantRisk: "high", requireApproval: "none" }
+    });
+    const ownerPair = await pairDevice(server, groupCaps);
+    const phonePair = await pairDevice(server, groupCaps);
+    const owner = await connectDevice(server, ownerPair.identity, ownerPair.record);
+    const phone = await connectDevice(server, phonePair.identity, phonePair.record);
+    const messages: unknown[] = [];
+    phone.subscribe("crosslink.group.message", (payload) => messages.push(payload));
+
+    const created = await owner.call("crosslink.group.create") as {
+      groupId: string;
+      participantId: string;
+    };
+    const invite = await owner.call("crosslink.group.invite", {
+      groupId: created.groupId,
+      targetDeviceId: phonePair.identity.deviceId
+    }) as { token: string };
+    await phone.call("crosslink.group.join", { token: invite.token });
+    const members = await owner.call("crosslink.group.members", {
+      groupId: created.groupId
+    }) as Array<{ participantId: string; self: boolean }>;
+    const target = members.find((member) => !member.self)!;
+    const introduced = await owner.call("crosslink.group.introduce", {
+      groupId: created.groupId,
+      targetParticipantId: target.participantId
+    }) as { introductionId: string };
+
+    await owner.call("crosslink.group.send", {
+      groupId: created.groupId,
+      introductionId: introduced.introductionId,
+      payload: { text: "host routed" }
+    });
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(messages[0]).toMatchObject({ payload: { text: "host routed" } });
+
+    await expect(phone.call("crosslink.group.send", {
+      groupId: created.groupId,
+      introductionId: "not-an-edge",
+      payload: "blocked"
+    })).rejects.toThrow(/not been introduced/);
+    owner.close();
+    phone.close();
   }, 15000);
 });
 

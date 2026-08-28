@@ -164,6 +164,30 @@ export class RpcRouter {
     }
   }
 
+  /** Sends a declared event only to one authenticated device's subscriptions. */
+  publishToDevice(event: string, deviceId: string, payload?: Json): void {
+    if (!this.events.has(event)) throw new TypeError(`event not declared: ${event}`);
+    const capability = this.events.get(event)?.capability;
+    if (capability && !this.getGrants().hasAll(deviceId, [capability])) return;
+    for (const session of this.sessions) {
+      if (session.meta.peerDeviceId !== deviceId) continue;
+      for (const [subId, eventName] of this.subscriptions.get(session) ?? []) {
+        if (eventName !== event) continue;
+        try {
+          session.send({
+            v: "1.0",
+            t: MessageTypes.EVT,
+            s: subId,
+            e: event,
+            ...(payload !== undefined ? { p: payload } : {})
+          });
+        } catch {
+          /* dead session; its close path cleans up */
+        }
+      }
+    }
+  }
+
   /* ------------------------------- plumbing -------------------------- */
 
   handleMessage(session: CrosslinkSession, msg: CrosslinkMessage): void {

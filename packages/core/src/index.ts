@@ -150,3 +150,8 @@ export {
   type NotificationPayload,
   type NotificationChannelDef
 } from "./notifications.js";
+export {
+  GroupSessionManager,
+  GROUP_CAPABILITIES,
+  type GroupSessionOptions
+} from "./groups.js";
