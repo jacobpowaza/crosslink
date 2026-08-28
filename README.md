@@ -83,7 +83,7 @@ path: the QR carries the host's own address and the whole pairing exchange runs
 on the host's socket.
 
 <p align="center">
-  <img src="docs/assets/pairing/connect-widget.png" alt="Crosslink pairing widget with QR and pairing code" width="760" />
+  <img src="docs/assets/pairing/connect-widget-v2.png" alt="Crosslink pairing widget with QR and pairing code" width="760" />
   <br />
   <img src="docs/assets/pairing/pairing-code-page.jpg" alt="Crosslink mobile pairing code screen" width="260" />
 </p>
