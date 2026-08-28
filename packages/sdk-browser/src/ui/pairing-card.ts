@@ -1069,7 +1069,7 @@ export class PairingCard {
           <div class="cl-dropdown-tooltip">
             <strong>How it works:</strong> The pairing payload carries every available route, and the connecting device picks the first one that answers &mdash; local first, then other confirmed routes.<br>
             <strong>Security:</strong> Crosslink authenticates devices and encrypts application data end to end whichever route wins.
-            <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+            <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Mintlify docs &rarr;</a>
           </div>
         </div>
       </label>
@@ -1085,7 +1085,7 @@ export class PairingCard {
           <div class="cl-dropdown-tooltip">
             <strong>How it works:</strong> Direct connection on the current Wi-Fi or LAN. No remote transport is advertised.<br>
             <strong>Security:</strong> The same Crosslink authentication and end-to-end encryption apply on the local link.
-            <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+            <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Mintlify docs &rarr;</a>
           </div>
         </div>
       </label>
@@ -1101,7 +1101,7 @@ export class PairingCard {
           <div class="cl-dropdown-tooltip">
             <strong>How it works:</strong> Adds a configured relay so another device can reach the host when a direct local route is unavailable.<br>
             <strong>Security:</strong> Crosslink encrypts application data before it reaches the relay and authenticates it at the destination.
-            <a href="${secUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+            <a href="${secUrl}" target="_blank" rel="noopener noreferrer">Mintlify docs &rarr;</a>
           </div>
         </div>
       </label>
@@ -1117,7 +1117,7 @@ export class PairingCard {
           <div class="cl-dropdown-tooltip">
             <strong>How it works:</strong> Advertises a confirmed internet route, such as a router mapping or configured tunnel. If none is available, Crosslink reports that instead of claiming remote reachability.<br>
             <strong>Security:</strong> The framework keeps device authentication and end-to-end encryption in place on the public route.
-            <a href="${remoteUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+            <a href="${remoteUrl}" target="_blank" rel="noopener noreferrer">Mintlify docs &rarr;</a>
           </div>
         </div>
       </label>

@@ -172,7 +172,7 @@ crosslink.onConnected(async (rpc) => {
 });
 ```
 
-See the [Quickstart](docs/quickstart.mdx) for the loopback desktop handler and
+See the [Quickstart](https://crosslink.mintlify.site/quickstart) for the loopback desktop handler and
 complete runnable files.
 
 ## Advanced: manual browser client
@@ -232,7 +232,7 @@ stable HTTPS origin → installed app identity → endpoint discovery
 
 Installing the PWA does not pin it to the LAN IP used during pairing. The
 origin owns the Service Worker/cache; Crosslink resolves the desktop's current
-route independently. See [Durable Origins](docs/client/durable-origin.mdx).
+route independently. See [Durable Origins](https://crosslink.mintlify.site/client/durable-origin).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -291,8 +291,8 @@ Crosslink uses audited cryptographic primitives from `@noble/curves` and
 - **Revocation** — immediate at enforcement point; live sessions killed, grants
   dropped
 
-See [docs/security/overview.mdx](docs/security/overview.mdx) and
-[docs/security/threat-model.mdx](docs/security/threat-model.mdx) for the full analysis.
+See [Security](https://crosslink.mintlify.site/security/overview) and
+[Threat model](https://crosslink.mintlify.site/security/threat-model) for the full analysis.
 
 ## Packages
 
@@ -325,26 +325,26 @@ See [docs/security/overview.mdx](docs/security/overview.mdx) and
 
 The full documentation site lives in `docs/` (Mintlify). Start here:
 
-- [Quickstart](docs/quickstart.mdx) — a working connection in five minutes
-- [Building with Crosslink](docs/build/overview.mdx) — the developer's path, in order
-- [Your first app](docs/build/first-app.mdx) — host + phone client on one port
-- [Capabilities and RPC](docs/build/capabilities-and-rpc.mdx) — the permission and method surfaces
-- [Local development](docs/build/local-development.mdx) — repo layout, build, tests, examples
-- [Production checklist](docs/build/production-checklist.mdx) — before other people run it
-- [Package map](docs/reference/packages.mdx) — what to import, and what not to
-- [Connection modes](docs/guides/connection-modes.mdx) — the four host network modes
-- [Remote access](docs/guides/remote-access.mdx) — router port mapping, and its real limits
-- [Architecture](docs/concepts/architecture.mdx) — how the pieces fit
-- [Pairing](docs/concepts/pairing.mdx) — the v2 pairing URI and the direct exchange
-- [Protocol spec](docs/reference/protocol.mdx) — bytes on the wire
-- [Networking](docs/connections/networking.mdx) — routes, fallback, firewalls
-- [Self-hosting](docs/guides/self-hosting.mdx) — run your own signaling/relay
-- [Security](docs/security/overview.mdx) — crypto choices and invariants
-- [Threat model](docs/security/threat-model.mdx) — what we defend against, what we don't
-- [Scale-out](docs/guides/scale-out.mdx) — Redis signaling, relay quotas, and regions
-- [Group sessions](docs/concepts/group-sessions.mdx) — host-mediated multi-device sessions
-- [Native SDKs and conformance](docs/guides/native-sdks.mdx) — Swift, Kotlin, Rust, and the corpus
-- [Electron example](docs/guides/electron.mdx) — bundle a hardened desktop host
+- [Quickstart](https://crosslink.mintlify.site/quickstart) — a working connection in five minutes
+- [Building with Crosslink](https://crosslink.mintlify.site/build/overview) — the developer's path, in order
+- [Your first app](https://crosslink.mintlify.site/build/first-app) — host + phone client on one port
+- [Capabilities and RPC](https://crosslink.mintlify.site/build/capabilities-and-rpc) — the permission and method surfaces
+- [Local development](https://crosslink.mintlify.site/build/local-development) — repo layout, build, tests, examples
+- [Production checklist](https://crosslink.mintlify.site/build/production-checklist) — before other people run it
+- [Package map](https://crosslink.mintlify.site/reference/packages) — what to import, and what not to
+- [Connection modes](https://crosslink.mintlify.site/guides/connection-modes) — the four host network modes
+- [Remote access](https://crosslink.mintlify.site/guides/remote-access) — router port mapping, and its real limits
+- [Architecture](https://crosslink.mintlify.site/concepts/architecture) — how the pieces fit
+- [Pairing](https://crosslink.mintlify.site/concepts/pairing) — the v2 pairing URI and the direct exchange
+- [Protocol spec](https://crosslink.mintlify.site/reference/protocol) — bytes on the wire
+- [Networking](https://crosslink.mintlify.site/connections/networking) — routes, fallback, firewalls
+- [Self-hosting](https://crosslink.mintlify.site/guides/self-hosting) — run your own signaling/relay
+- [Security](https://crosslink.mintlify.site/security/overview) — crypto choices and invariants
+- [Threat model](https://crosslink.mintlify.site/security/threat-model) — what we defend against, what we don't
+- [Scale-out](https://crosslink.mintlify.site/guides/scale-out) — Redis signaling, relay quotas, and regions
+- [Group sessions](https://crosslink.mintlify.site/concepts/group-sessions) — host-mediated multi-device sessions
+- [Native SDKs and conformance](https://crosslink.mintlify.site/guides/native-sdks) — Swift, Kotlin, Rust, and the corpus
+- [Electron example](https://crosslink.mintlify.site/guides/electron) — bundle a hardened desktop host
 
 ## Development
 
@@ -390,10 +390,17 @@ up for and nothing to configure:
   without a second scan after the desktop app or the machine restarts.
 
 Diagnose any of it with `npm run check:remote`. Details and limits:
-[docs/guides/remote-access.mdx](docs/guides/remote-access.mdx).
+[Remote access](https://crosslink.mintlify.site/guides/remote-access).
 
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
 
 ---
+
+<p align="center">
+  <strong>Help support other projects</strong><br />
+  <a href="https://venmo.com/u/jacobpowaza">
+    <img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?style=for-the-badge&logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" />
+  </a>
+</p>
