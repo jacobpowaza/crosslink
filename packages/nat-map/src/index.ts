@@ -71,6 +71,15 @@ export interface NatMappingResult {
   lifetimeSeconds: number;
   /** Set when the ISP places this host behind carrier-grade NAT. */
   cgnat: boolean;
+  /**
+   * Set when STUN and the router disagree about the public address, which on a
+   * desktop almost always means a VPN or secure-DNS client (Cloudflare WARP,
+   * Tailscale exit node, a corporate client) holds the default route. The
+   * mapping the router made is real, but replies to an inbound connection
+   * leave through the tunnel instead of the WAN interface, so the handshake
+   * never completes and the connection hangs rather than refusing.
+   */
+  vpnSuspected?: boolean;
   /** Ordered log of what was attempted and why it did or did not work. */
   attempts: NatAttempt[];
   /** Human-readable summary suitable for a diagnostics panel. */
@@ -278,6 +287,9 @@ export async function tryNatMapping(opts: NatMapOptions): Promise<NatMappingResu
       result.confidence = "verified";
     } else if (result.externalAddress) {
       result.confidence = "router";
+      // Two different public addresses means our packets are not leaving by the
+      // route the router forwards to. Inbound will silently time out.
+      if (result.reflexiveAddress) result.vpnSuspected = true;
     }
     // An explicitly configured public host wins over both the router and STUN:
     // it is usually a dynamic-DNS name pointing at this address, and the whole
@@ -296,7 +308,14 @@ export async function tryNatMapping(opts: NatMapOptions): Promise<NatMappingResu
             : result.confidence === "manual"
               ? "address configured, mapping negotiated with the router"
               : "reported by the router"
-        }).`
+        }).${
+          result.vpnSuspected
+            ? ` STUN sees this host at ${result.reflexiveAddress} instead, so a VPN or proxy ` +
+              "client holds the default route. Inbound connections will reach the router and " +
+              "then hang, because the replies leave through the tunnel. Disable it, or exclude " +
+              "this machine's LAN from it, before trusting this endpoint."
+            : ""
+        }`
       : "The router accepted the mapping but would not report a public address.";
     return result;
   }

@@ -278,7 +278,10 @@ function pwaManifest(installId?: string): unknown {
 /** Why there is no `wan` endpoint, when the host asked for one. */
 function remoteNote(): string | null {
   const diagnostics = host.getRemoteDiagnostics();
-  if (!diagnostics || diagnostics.reachable) return null;
+  // A `vpnSuspected` endpoint is reported reachable and still fails: the router
+  // forwards, the VPN swallows the reply. Say so rather than let the QR promise
+  // a route that hangs.
+  if (!diagnostics || (diagnostics.reachable && !diagnostics.vpnSuspected)) return null;
   return diagnostics.message;
 }
 
