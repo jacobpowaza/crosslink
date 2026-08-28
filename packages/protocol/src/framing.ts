@@ -12,6 +12,7 @@ import { canonicalJson, type Json } from "./json.js";
 import { Limits } from "./limits.js";
 import { validateMessage } from "./messages.js";
 import { bytesToUtf8, utf8ToBytes } from "./encoding.js";
+import { SUPPORTED_VERSIONS } from "./version.js";
 
 export function encodeMessage(msg: object): Uint8Array {
   return utf8ToBytes(canonicalJson(msg));
@@ -31,6 +32,14 @@ export function decodeMessage(data: Uint8Array | string): unknown {
     throw new CrosslinkError(ErrorCodes.PARSE_ERROR, "payload is not valid JSON");
   }
   rejectProto(parsed, 0);
+  if (
+    parsed !== null &&
+    typeof parsed === "object" &&
+    typeof (parsed as { v?: unknown }).v === "string" &&
+    !SUPPORTED_VERSIONS.includes((parsed as { v: string }).v)
+  ) {
+    throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "protocol version is not supported");
+  }
   const problem = validateMessage(parsed);
   if (problem) {
     throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, `invalid message: ${problem}`);

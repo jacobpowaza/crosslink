@@ -1,0 +1,9 @@
+[package]
+name = "crosslink-sdk"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Crosslink CLX1 protocol SDK for Rust"
+
+[dependencies]
+serde_json = "1.0"

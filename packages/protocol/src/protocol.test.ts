@@ -98,6 +98,14 @@ describe("versioning", () => {
   });
 });
 
+describe("decoder version rejection", () => {
+  it("reports unsupported versions distinctly from malformed messages", () => {
+    expect(() => decodeMessage('{"t":"ping","ts":1,"v":"99"}')).toThrow(
+      expect.objectContaining({ code: ErrorCodes.VERSION_UNSUPPORTED })
+    );
+  });
+});
+
 describe("encoding helpers", () => {
   it("base64 roundtrip incl url-safe", () => {
     const bytes = new Uint8Array([0, 1, 250, 251, 252, 253, 254, 255]);

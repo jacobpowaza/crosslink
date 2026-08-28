@@ -35,6 +35,8 @@ export interface SessionInitFrame {
   nc: string;
   ts: number;
   sig: string;
+  /** Optional ephemeral ML-KEM encapsulation key, transcript-bound by sig. */
+  pq?: { suite: "ML-KEM-768"; ek: string };
 }
 
 export interface SessionAcceptFrame {
@@ -43,6 +45,8 @@ export interface SessionAcceptFrame {
   epk: string;
   nh: string;
   sig: string;
+  /** Ciphertext for the client's ephemeral ML-KEM key. */
+  pq?: { suite: "ML-KEM-768"; ct: string };
 }
 
 export interface SessionRejectFrame {

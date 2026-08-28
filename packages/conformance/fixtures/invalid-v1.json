@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "cases": [
+    { "name": "invalid-json", "utf8": "{", "error": "parse_error" },
+    { "name": "unknown-version", "utf8": "{\"t\":\"ping\",\"ts\":1,\"v\":\"99\"}", "error": "version_unsupported" },
+    { "name": "unknown-type", "utf8": "{\"t\":\"root\",\"v\":\"1.0\"}", "error": "invalid_message" },
+    { "name": "missing-request-id", "utf8": "{\"m\":\"echo\",\"t\":\"req\",\"v\":\"1.0\"}", "error": "invalid_message" }
+  ]
+}

@@ -245,6 +245,8 @@ export interface CrosslinkServerConfig {
     pairingRateLimitMs?: number;
     /** Only accept connections from devices on the same LAN subnet. Default false. */
     localNetworkOnly?: boolean;
+    /** Hybrid X25519 + ML-KEM-768 session exchange. Default `disabled`. */
+    hybridPq?: "disabled" | "preferred" | "required";
   };
   /**
    * Host-authored permission policy, applied to every pairing request before
@@ -1460,6 +1462,7 @@ export class CrosslinkServer extends EventEmitter {
         appId: this.config.application.id,
         lookupDevice: (id) => this.deviceStore.get(id),
         maxFrameBytes: undefined,
+        hybridPq: this.config.security?.hybridPq ?? "disabled",
         logger: this.log,
         ...(offersPairing
           ? {

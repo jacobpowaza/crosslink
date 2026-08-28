@@ -107,6 +107,8 @@ export interface CrosslinkClientOptions {
   };
   /** Connection preference: controls candidate selection. */
   networkMode?: "auto" | "local-only" | "lan-and-relay";
+  /** Hybrid X25519 + ML-KEM-768 session exchange. Default `disabled`. */
+  hybridPq?: "disabled" | "preferred" | "required";
 }
 
 interface StoredHints {
@@ -478,7 +480,8 @@ export class CrosslinkClient {
       autoReconnect: true,
       requestTimeoutMs: this.options.requestTimeoutMs,
       onStateChange: (state, detail) => this.publishState(state, detail),
-      logger: this.options.logger
+      logger: this.options.logger,
+      hybridPq: this.options.hybridPq ?? "disabled"
     });
     this.link = link;
     await link.connect();

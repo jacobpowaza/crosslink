@@ -5,11 +5,13 @@ export { shortAuthString } from "./sas.js";
 export { SessionCipher, type TrafficKeys, type Role } from "./session-cipher.js";
 export {
   HANDSHAKE_VERSION,
+  HYBRID_PQ_SUITE,
   clientBeginSession,
   clientCompleteSession,
   hostCompleteSession,
   type TrustedPeerPubs,
-  type ClientHandshakeState
+  type ClientHandshakeState,
+  type HybridPqMode
 } from "./handshake.js";
 export {
   CapabilityRegistry,

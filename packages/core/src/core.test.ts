@@ -123,6 +123,75 @@ describe("handshake (CLX1)", () => {
     expect(same(clientKeys.h2c, hostResult.keys.h2c)).toBe(true);
   });
 
+  it("establishes transcript-bound hybrid X25519 + ML-KEM-768 keys", () => {
+    const { client, host } = makePeers();
+    const { init, state } = clientBeginSession(client, target("com.example.pq", host), {
+      hybridPq: "required"
+    });
+    const hostResult = hostCompleteSession(host, "com.example.pq", client.edPublicKey, init, {
+      hybridPq: "required"
+    });
+    const clientKeys = clientCompleteSession(
+      client,
+      state,
+      init,
+      hostResult.accept,
+      { pubEd: host.edPublicKey, pubX: host.xPublicKey }
+    );
+    expect(init.pq?.suite).toBe("ML-KEM-768");
+    expect(hostResult.accept.pq?.suite).toBe("ML-KEM-768");
+    expect(clientKeys.c2h).toEqual(hostResult.keys.c2h);
+    expect(clientKeys.h2c).toEqual(hostResult.keys.h2c);
+    expect(state.pqSecretKey?.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("fails closed when either peer requires hybrid PQ", () => {
+    const { client, host } = makePeers();
+    const classical = clientBeginSession(client, target("app", host));
+    expect(() => hostCompleteSession(host, "app", client.edPublicKey, classical.init, {
+      hybridPq: "required"
+    })).toThrow(/hybrid PQ exchange is required/);
+
+    const hybrid = clientBeginSession(client, target("app", host), { hybridPq: "required" });
+    const accepted = hostCompleteSession(host, "app", client.edPublicKey, hybrid.init, {
+      hybridPq: "preferred"
+    }).accept;
+    delete accepted.pq;
+    expect(() => clientCompleteSession(
+      client,
+      hybrid.state,
+      hybrid.init,
+      accepted,
+      { pubEd: host.edPublicKey, pubX: host.xPublicKey }
+    )).toThrow(/required hybrid PQ/);
+  });
+
+  it("detects tampering with PQ offer and ciphertext through handshake signatures", () => {
+    const { client, host } = makePeers();
+    const offered = clientBeginSession(client, target("app", host), { hybridPq: "required" });
+    offered.init.pq!.ek = bytesToBase64(base64ToBytes(offered.init.pq!.ek).map((byte, index) =>
+      index === 0 ? byte ^ 1 : byte
+    ));
+    expect(() => hostCompleteSession(host, "app", client.edPublicKey, offered.init, {
+      hybridPq: "required"
+    })).toThrow(/signature invalid/);
+
+    const clean = clientBeginSession(client, target("app", host), { hybridPq: "required" });
+    const hostResult = hostCompleteSession(host, "app", client.edPublicKey, clean.init, {
+      hybridPq: "required"
+    });
+    hostResult.accept.pq!.ct = bytesToBase64(
+      base64ToBytes(hostResult.accept.pq!.ct).map((byte, index) => index === 0 ? byte ^ 1 : byte)
+    );
+    expect(() => clientCompleteSession(
+      client,
+      clean.state,
+      clean.init,
+      hostResult.accept,
+      { pubEd: host.edPublicKey, pubX: host.xPublicKey }
+    )).toThrow(/signature invalid/);
+  });
+
   it("binds the handshake to the application id", () => {
     const { client, host } = makePeers();
     const { init } = clientBeginSession(client, target("com.example.notes", host), {

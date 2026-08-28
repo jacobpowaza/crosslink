@@ -44,11 +44,15 @@ import {
 } from "./crypto/primitives.js";
 import { DEVICE_ID_PREFIX, type DeviceIdentity } from "./identity.js";
 import type { TrafficKeys } from "./session-cipher.js";
+import { ml_kem768 } from "@noble/post-quantum/ml-kem.js";
 
 const DEVICE_ID_RE = /^cd1_[0-9a-f]{32}$/;
 
 export const HANDSHAKE_VERSION = "CLX1";
 const KEY_INFO = "crosslink-session-keys-v1";
+const PQ_KEY_INFO = "crosslink-session-keys-v1+ml-kem-768";
+export const HYBRID_PQ_SUITE = "ML-KEM-768" as const;
+export type HybridPqMode = "disabled" | "preferred" | "required";
 
 /** Peer's long-term public keys, always sourced from trusted records. */
 export interface TrustedPeerPubs {
@@ -59,11 +63,15 @@ export interface TrustedPeerPubs {
 export interface HandshakeContext {
   nowMs?: number;
   clockSkewMs?: number;
+  /** `required` is fail-closed; host-side `preferred` also accepts legacy clients. */
+  hybridPq?: HybridPqMode;
 }
 
 export interface ClientHandshakeState {
   ephPrivate: Uint8Array;
   nonceClient: Uint8Array;
+  pqSecretKey?: Uint8Array;
+  pqMode: HybridPqMode;
 }
 
 export interface HostHandshakeResult {
@@ -81,7 +89,9 @@ function transcript(
   hostEdB64: string,
   hostXB64: string,
   epkH?: string,
-  nh?: string
+  nh?: string,
+  pqInit?: SessionInitFrame["pq"],
+  pqAccept?: SessionAcceptFrame["pq"]
 ): Uint8Array {
   const parts = [
     HANDSHAKE_VERSION,
@@ -93,7 +103,9 @@ function transcript(
     hostEdB64,
     hostXB64
   ];
+  if (pqInit) parts.push("pq", pqInit.suite, pqInit.ek);
   if (epkH !== undefined && nh !== undefined) parts.push(epkH, nh);
+  if (pqAccept) parts.push(pqAccept.suite, pqAccept.ct);
   return sha256Bytes(new TextEncoder().encode(canonicalJson(parts)));
 }
 
@@ -118,6 +130,11 @@ export function clientBeginSession(
   const ephPrivate = randomBytes(32);
   const ephPublic = x25519Public(ephPrivate);
   const nonceClient = randomBytes(32);
+  const pqMode = ctx.hybridPq ?? "disabled";
+  const pqKeys = pqMode === "disabled" ? undefined : ml_kem768.keygen();
+  const pq = pqKeys
+    ? { suite: HYBRID_PQ_SUITE, ek: bytesToBase64(pqKeys.publicKey) }
+    : undefined;
 
   const sig = signBytes(
     transcript(
@@ -127,7 +144,10 @@ export function clientBeginSession(
       bytesToBase64(ephPublic),
       bytesToBase64(nonceClient),
       host.pubEdB64,
-      host.pubXB64
+      host.pubXB64,
+      undefined,
+      undefined,
+      pq
     ),
     identity.edPrivateKey
   );
@@ -141,10 +161,19 @@ export function clientBeginSession(
     epk: bytesToBase64(ephPublic),
     nc: bytesToBase64(nonceClient),
     ts: ctx.nowMs ?? Date.now(),
-    sig: bytesToBase64(sig)
+    sig: bytesToBase64(sig),
+    ...(pq ? { pq } : {})
   };
 
-  return { init, state: { ephPrivate, nonceClient } };
+  return {
+    init,
+    state: {
+      ephPrivate,
+      nonceClient,
+      pqMode,
+      ...(pqKeys ? { pqSecretKey: pqKeys.secretKey } : {})
+    }
+  };
 }
 
 /** Completes the client side after receiving SessionAcceptFrame. */
@@ -160,6 +189,15 @@ export function clientCompleteSession(
   if (epkH.length !== 32 || nh.length !== 32) {
     throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "bad accept key material lengths");
   }
+  if (state.pqMode === "required" && !accept.pq) {
+    throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "peer did not complete required hybrid PQ exchange");
+  }
+  if (Boolean(state.pqSecretKey) !== Boolean(accept.pq)) {
+    throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "hybrid PQ negotiation does not match the offer");
+  }
+  if (accept.pq && accept.pq.suite !== HYBRID_PQ_SUITE) {
+    throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "unsupported hybrid PQ suite");
+  }
 
   const transcriptHash = transcript(
     sentInit.app,
@@ -170,7 +208,9 @@ export function clientCompleteSession(
     bytesToBase64(trustedHost.pubEd),
     bytesToBase64(trustedHost.pubX),
     accept.epk,
-    accept.nh
+    accept.nh,
+    sentInit.pq,
+    accept.pq
   );
   if (!verifySignature(base64ToBytes(accept.sig), transcriptHash, trustedHost.pubEd)) {
     throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "host handshake signature invalid");
@@ -178,8 +218,27 @@ export function clientCompleteSession(
 
   const sharedE = diffieHellman(state.ephPrivate, epkH);
   const sharedS = diffieHellman(identity.xPrivateKey, trustedHost.pubX);
-  const okm = deriveOkm(concat(sharedE, sharedS), concat(state.nonceClient, nh), KEY_INFO, 64);
-  return { c2h: okm.slice(0, 32), h2c: okm.slice(32, 64) };
+  let pqShared: Uint8Array | undefined;
+  try {
+    if (accept.pq && state.pqSecretKey) {
+      const ciphertext = base64ToBytes(accept.pq.ct);
+      if (ciphertext.length !== ml_kem768.lengths.cipherText) {
+        throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "bad ML-KEM ciphertext length");
+      }
+      pqShared = ml_kem768.decapsulate(ciphertext, state.pqSecretKey);
+    }
+    const ikm = pqShared ? concat(concat(sharedE, sharedS), pqShared) : concat(sharedE, sharedS);
+    const okm = deriveOkm(
+      ikm,
+      concat(state.nonceClient, nh),
+      pqShared ? PQ_KEY_INFO : KEY_INFO,
+      64
+    );
+    return { c2h: okm.slice(0, 32), h2c: okm.slice(32, 64) };
+  } finally {
+    state.pqSecretKey?.fill(0);
+    pqShared?.fill(0);
+  }
 }
 
 /* ---------------------------------- host ------------------------------- */
@@ -203,6 +262,16 @@ export function hostCompleteSession(
   if (init.app !== appId) {
     throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "handshake targets a different application");
   }
+  const pqMode = ctx.hybridPq ?? "disabled";
+  if (pqMode === "required" && !init.pq) {
+    throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "hybrid PQ exchange is required");
+  }
+  if (init.pq && init.pq.suite !== HYBRID_PQ_SUITE) {
+    throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "unsupported hybrid PQ suite");
+  }
+  if (init.pq && pqMode === "disabled") {
+    throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "hybrid PQ exchange is disabled");
+  }
   if (!DEVICE_ID_RE.test(init.dev)) {
     throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "device id malformed");
   }
@@ -224,7 +293,10 @@ export function hostCompleteSession(
     init.epk,
     init.nc,
     hostEdB64,
-    hostXB64
+    hostXB64,
+    undefined,
+    undefined,
+    init.pq
   );
   if (!verifySignature(base64ToBytes(init.sig), t0Hash, clientPubEd)) {
     throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "client handshake signature invalid");
@@ -233,6 +305,17 @@ export function hostCompleteSession(
   const ephPrivate = randomBytes(32);
   const ephPublic = x25519Public(ephPrivate);
   const nonceHost = randomBytes(32);
+  let pqShared: Uint8Array | undefined;
+  let pqAccept: SessionAcceptFrame["pq"] | undefined;
+  if (init.pq) {
+    const encapsulationKey = base64ToBytes(init.pq.ek);
+    if (encapsulationKey.length !== ml_kem768.lengths.publicKey) {
+      throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "bad ML-KEM encapsulation key length");
+    }
+    const encapsulated = ml_kem768.encapsulate(encapsulationKey);
+    pqShared = encapsulated.sharedSecret;
+    pqAccept = { suite: HYBRID_PQ_SUITE, ct: bytesToBase64(encapsulated.cipherText) };
+  }
 
   const t1Hash = transcript(
     appId,
@@ -243,19 +326,29 @@ export function hostCompleteSession(
     hostEdB64,
     hostXB64,
     bytesToBase64(ephPublic),
-    bytesToBase64(nonceHost)
+    bytesToBase64(nonceHost),
+    init.pq,
+    pqAccept
   );
   const accept: SessionAcceptFrame = {
     kind: "sack",
     v: "1.0",
     epk: bytesToBase64(ephPublic),
     nh: bytesToBase64(nonceHost),
-    sig: bytesToBase64(signBytes(t1Hash, identity.edPrivateKey))
+    sig: bytesToBase64(signBytes(t1Hash, identity.edPrivateKey)),
+    ...(pqAccept ? { pq: pqAccept } : {})
   };
 
   const sharedE = diffieHellman(ephPrivate, epkC);
   const sharedS = diffieHellman(identity.xPrivateKey, sxC);
-  const okm = deriveOkm(concat(sharedE, sharedS), concat(ncC, nonceHost), KEY_INFO, 64);
+  const ikm = pqShared ? concat(concat(sharedE, sharedS), pqShared) : concat(sharedE, sharedS);
+  const okm = deriveOkm(
+    ikm,
+    concat(ncC, nonceHost),
+    pqShared ? PQ_KEY_INFO : KEY_INFO,
+    64
+  );
+  pqShared?.fill(0);
 
   return {
     accept,

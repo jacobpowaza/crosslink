@@ -12,7 +12,7 @@ import {
   encodeMessage,
   type CrosslinkMessage,
 } from "@crosslink/protocol";
-import { clientBeginSession, clientCompleteSession } from "../handshake.js";
+import { clientBeginSession, clientCompleteSession, type HybridPqMode } from "../handshake.js";
 import type { DeviceIdentity } from "../identity.js";
 import { noopLogger, type Logger } from "../logger.js";
 import type { PairedAppRecord } from "../pairing/types.js";
@@ -62,6 +62,8 @@ export interface ClientLinkOptions {
   handshakeTimeoutMs?: number;
   autoReconnect?: boolean;
   logger?: Logger;
+  /** Optional X25519 + ML-KEM-768 handshake mode. */
+  hybridPq?: HybridPqMode;
 }
 
 interface QueuedCall {
@@ -330,7 +332,7 @@ export class ClientLink {
       appId: this.options.appId,
       pubEdB64: record.pubEdB64,
       pubXB64: record.pubXB64
-    });
+    }, { hybridPq: this.options.hybridPq ?? "disabled" });
 
     let reply: Record<string, unknown>;
     try {

@@ -15,7 +15,7 @@ import {
   type CrosslinkMessage,
   type SessionInitFrame,
 } from "@crosslink/protocol";
-import { hostCompleteSession } from "../handshake.js";
+import { hostCompleteSession, type HybridPqMode } from "../handshake.js";
 import type { DeviceIdentity } from "../identity.js";
 import { noopLogger, type Logger } from "../logger.js";
 import type { TrustedDeviceRecord } from "../pairing/types.js";
@@ -28,6 +28,8 @@ export interface AcceptorDeps {
   lookupDevice(deviceId: string): TrustedDeviceRecord | undefined;
   maxFrameBytes?: number;
   logger?: Logger;
+  /** Optional X25519 + ML-KEM-768 handshake mode. */
+  hybridPq?: HybridPqMode;
   /**
    * Enables pairing directly over this transport, with no rendezvous service.
    *
@@ -198,7 +200,8 @@ export class HostAcceptor {
         this.deps.identity,
         this.deps.appId,
         base64ToBytes(record.pubEd),
-        init
+        init,
+        { hybridPq: this.deps.hybridPq ?? "disabled" }
       );
       record.lastSeen = Date.now();
 

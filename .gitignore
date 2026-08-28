@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+target/
+.build/
+.gradle/
 # Guard against a bare `tsc` emitting beside sdk-node sources. Those files
 # shadow the `.ts` modules in Vitest because local imports use `.js` specifiers.
 packages/sdk-node/src/*.js
