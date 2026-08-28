@@ -1,0 +1,93 @@
+---
+title: "Building With Crosslink"
+description: "What you actually write, what the SDK writes for you, and the order to build a Crosslink app in."
+---
+
+Crosslink connects **one app you run** to **one or more devices you own**. You
+write the host, you write (or borrow) the client page, and the SDK owns
+everything between them: identity, pairing, encryption, capability
+enforcement, transport selection and reconnection.
+
+This section is the developer's path through that. Read it in order the first
+time; after that, the [API Reference](/reference/api) and
+[Configuration](/reference/configuration) are the pages you will keep open.
+
+## The shape of a Crosslink app
+
+```text
+┌─────────────────────────────┐         ┌──────────────────────────┐
+│ Host  (@crosslink/sdk-node) │         │ Client (@crosslink/      │
+│                             │         │         sdk-browser)     │
+│  application  { id, name }  │         │                          │
+│  capabilities [ … ]         │◄───────►│  pairFromQr(uri, caps)   │
+│  expose("thing.do", fn)     │  CLX1   │  connect()               │
+│  declareEvent("thing.tick") │   E2E   │  rpc.call / rpc.subscribe│
+│  lan.httpHandler  ← serves  │         │                          │
+│    the client page itself   │         │  installed to home screen│
+└─────────────────────────────┘         └──────────────────────────┘
+```
+
+Three properties fall out of that picture, and most design questions answer
+themselves once you hold them:
+
+- **The host is the authority.** Capabilities are enforced host-side. A client
+  can ask for anything; the host decides. Never gate a sensitive action in
+  client code alone.
+- **There is no Crosslink account, and no Crosslink server in the path.** A LAN
+  pairing touches nothing you do not run. Signaling and relay are optional, and
+  you can host them yourself.
+- **The pairing QR is generated, never assembled.** `getPairingCode()` is the
+  only supported source of a pairing URI. Endpoints come from
+  `connectionEndpoints()`, which advertises only routes that genuinely exist.
+
+## Build order
+
+<Steps>
+  <Step title="Decide what the phone is allowed to do">
+    Write the capability list before any code. It is the app's security model,
+    and retrofitting one is far more work than declaring it up front.
+    See [Capabilities and RPC](/build/capabilities-and-rpc).
+  </Step>
+  <Step title="Stand up a host">
+    `createCrosslinkServer`, `expose`, `declareEvent`, `start`. Ten minutes.
+    See [Your First App](/build/first-app).
+  </Step>
+  <Step title="Give the phone a page to load">
+    Serve your client UI from the host's own listener with `lan.httpHandler`,
+    so one port serves both the page and the socket.
+    See [Serving the client](/build/first-app#serving-the-client-from-the-host).
+  </Step>
+  <Step title="Pick a network mode">
+    Same-Wi-Fi only, relayed, or reachable from anywhere.
+    See [Connection Modes](/guides/connection-modes) and
+    [Remote Access](/guides/remote-access).
+  </Step>
+  <Step title="Harden and ship">
+    Real pairing prompts, device management, revocation, persistence.
+    See [Production Checklist](/build/production-checklist).
+  </Step>
+</Steps>
+
+## Which package do I import?
+
+| You are writing | Import |
+| --- | --- |
+| A Node/Electron/Tauri host process | `@crosslink/sdk-node` |
+| A browser, PWA or phone client | `@crosslink/sdk-browser` |
+| A React client UI | `@crosslink/react` (on top of `sdk-browser`) |
+| A host and a client from one dependency | `@crosslink/sdk` |
+| Your own signaling/relay deployment | `@crosslink/signaling`, `@crosslink/relay` |
+
+Full map, including the packages you should not need to import directly, in
+[Package Map](/reference/packages).
+
+## What Crosslink does not do
+
+Being explicit about this saves you from designing against the wrong tool:
+
+- **No cloud sync.** There is no server holding your data. If two phones must
+  agree while the host is off, Crosslink is not the piece that does it.
+- **No user accounts or multi-tenancy.** Trust is device-to-host, established by
+  a physical pairing act. There is no notion of "log in as someone else".
+- **No inbound reach it cannot honestly obtain.** Behind carrier-grade NAT, the
+  host says so rather than pretending. See [Remote Access](/guides/remote-access).

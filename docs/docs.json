@@ -1,5 +1,5 @@
 {
-  "$schema": "https://mintlify.com/schema.json",
+  "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Crosslink",
   "logo": {
@@ -13,87 +13,93 @@
     "dark": "#4f46e5"
   },
   "navigation": {
-    "languages": [
+    "groups": [
       {
-        "tab": "English",
-        "groups": [
-          {
-            "group": "GET STARTED",
-            "pages": [
-              "introduction",
-              "quickstart",
-              "installation"
-            ]
-          },
-          {
-            "group": "CONCEPTS",
-            "pages": [
-              "concepts/architecture",
-              "concepts/hosts-and-clients",
-              "concepts/links",
-              "concepts/sessions",
-              "concepts/pairing",
-              "concepts/permissions"
-            ]
-          },
-          {
-            "group": "CLIENT",
-            "pages": [
-              "client/pwa",
-              "client/custom-ui"
-            ]
-          },
-          {
-            "group": "CONNECTIONS",
-            "pages": [
-              "connections/connection-lifecycle",
-              "connections/networking",
-              "connections/reconnection",
-              "connections/offline-behavior"
-            ]
-          },
-          {
-            "group": "SECURITY",
-            "pages": [
-              "security/overview",
-              "security/authentication",
-              "security/encryption",
-              "security/threat-model",
-              "security/permissions"
-            ]
-          },
-          {
-            "group": "GUIDES",
-            "pages": [
-              "guides/react",
-              "guides/electron",
-              "guides/tauri",
-              "guides/node",
-              "guides/self-hosting",
-              "guides/connection-modes",
-              "guides/remote-access",
-              "guides/security"
-            ]
-          },
-          {
-            "group": "REFERENCE",
-            "pages": [
-              "reference/api",
-              "reference/configuration",
-              "reference/events",
-              "reference/errors",
-              "reference/cli",
-              "reference/protocol"
-            ]
-          },
-          {
-            "group": "RESOURCES",
-            "pages": [
-              "resources/examples",
-              "resources/troubleshooting",
-              "resources/faq"
-            ]
-          }
+        "group": "GET STARTED",
+        "pages": [
+          "introduction",
+          "quickstart",
+          "installation"
+        ]
+      },
+      {
+        "group": "BUILD",
+        "pages": [
+          "build/overview",
+          "build/first-app",
+          "build/capabilities-and-rpc",
+          "build/local-development",
+          "build/production-checklist"
+        ]
+      },
+      {
+        "group": "CONCEPTS",
+        "pages": [
+          "concepts/architecture",
+          "concepts/hosts-and-clients",
+          "concepts/links",
+          "concepts/sessions",
+          "concepts/pairing",
+          "concepts/permissions"
+        ]
+      },
+      {
+        "group": "CLIENT",
+        "pages": [
+          "client/pwa",
+          "client/custom-ui"
+        ]
+      },
+      {
+        "group": "CONNECTIONS",
+        "pages": [
+          "connections/connection-lifecycle",
+          "connections/networking",
+          "connections/reconnection",
+          "connections/offline-behavior"
+        ]
+      },
+      {
+        "group": "SECURITY",
+        "pages": [
+          "security/overview",
+          "security/authentication",
+          "security/encryption",
+          "security/threat-model",
+          "security/permissions"
+        ]
+      },
+      {
+        "group": "GUIDES",
+        "pages": [
+          "guides/react",
+          "guides/electron",
+          "guides/tauri",
+          "guides/node",
+          "guides/self-hosting",
+          "guides/connection-modes",
+          "guides/remote-access",
+          "guides/security"
+        ]
+      },
+      {
+        "group": "REFERENCE",
+        "pages": [
+          "reference/packages",
+          "reference/api",
+          "reference/configuration",
+          "reference/events",
+          "reference/errors",
+          "reference/cli",
+          "reference/protocol"
+        ]
+      },
+      {
+        "group": "RESOURCES",
+        "pages": [
+          "resources/examples",
+          "resources/troubleshooting",
+          "resources/faq"
         ]
       }
     ]

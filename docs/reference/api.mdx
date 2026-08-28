@@ -28,7 +28,11 @@ const server = createCrosslinkServer(options);
 | `lan` | `{ enabled?, port?, bind?, host?, httpHandler? }` | No | LAN binding options — see [Configuration](/reference/configuration) |
 | `pairing` | `{ ttlMs?, autoApprove?, approve?, bootstrapUrl? }` | No | Pairing configuration |
 | `networkMode` | `"auto" \| "local-only" \| "lan-and-relay" \| "remote"` | No | Which transports the host offers |
-| `remote` | `{ enabled?, externalPort?, lifetimeSeconds?, autoRenew? }` | No | Direct inbound access via router port mapping (PCP/NAT-PMP/UPnP) |
+| `remote` | `{ enabled?, externalPort?, lifetimeSeconds?, autoRenew?, portForwarded?, publicHost? }` | No | Direct inbound access via router port mapping (PCP/NAT-PMP/UPnP), or a forward you added by hand — see [Remote Access](/guides/remote-access) |
+| `onConsentRequest` | `ConsentPrompt` | No | Asked before each use of a `confirmEachUse` capability |
+| `consent` | `{ alwaysTtlMs?, sessionTtlMs?, promptTimeoutMs? }` | No | How long consent answers are remembered |
+| `webrtc` | `{ createPeer, capability?, maxPending?, timeoutMs? }` | No | Accept WebRTC upgrades from paired devices |
+| `secrets` | `{ service?, passphrase?, allowPlaintextFallback?, preferFile? }` | No | Secret-store selection and fallbacks |
 | `security` | `{ maxDevices?, maxActivePairingSessions?, pairingRateLimitMs?, localNetworkOnly? }` | No | Security hardening |
 | `permissions` | `PermissionPolicy` | No | Host-authored capability policy applied before pairing approval |
 | `logger` | `Logger` | No | Custom logger |
@@ -116,7 +120,21 @@ server.expose("app.status", () => ({ ok: true }), {
 });
 ```
 
-`options` also accepts `inputSchema` (a `MiniSchema`), `validate` (a custom validator function), `idempotent` (safe to auto-retry across reconnects), and `timeoutMs`.
+`options` also accepts `inputSchema` (a `MiniSchema`), `validate` (a custom validator function), `idempotent` (safe to auto-retry across reconnects), and `timeoutMs`. `capability` may be an array, in which case all of them are required.
+
+The handler receives `(input, ctx)`:
+
+```ts
+interface RpcContext {
+  deviceId: string;      // which paired device is calling
+  requestId: string;
+  signal: AbortSignal;   // aborts on client cancel or session loss
+  log: Logger;           // pre-bound with device, method, request id
+  emitProgress(d: Json): void;  // progress events without ending the request
+}
+```
+
+See [Capabilities and RPC](/build/capabilities-and-rpc) for how to use them.
 
 #### `server.declareEvent(name, options?)`
 
@@ -176,9 +194,50 @@ const status = server.getConnectivity();
 // { reach: "local-only" | "relayed" | "offline", lan, relay, signaling, webrtc, message, transports }
 ```
 
+#### `server.connectionEndpoints(mode?)`
+
+Every route a client could use to reach the host right now, in the order a
+client should try them. This is the single source of truth for pairing
+endpoints — it never invents a route, and a `wan` entry appears only when one
+genuinely exists.
+
+```js
+server.connectionEndpoints();
+// [{ kind: "lan", url: "ws://192.168.1.83:57525" },
+//  { kind: "wan", url: "ws://203.0.113.9:57525" }]
+```
+
+`kind` is one of `"lan" | "wan" | "sig" | "relay" | "tunnel"`. Passing `mode`
+filters to what that network mode allows, without changing the host's own mode.
+
+#### `server.enableRemoteAccess()`
+
+Opens remote access now, if it is not already open. Needed only when
+`networkMode` becomes `"remote"` after `start()` — a settings toggle rather than
+a constant. `getPairingCode(undefined, "remote")` calls it for you; call it
+directly when the UI wants the diagnostics before it renders a QR.
+
+Requires the LAN listener to be bound to all interfaces (`lan: { bind: "all" }`).
+
+#### `server.status()`
+
+A structured snapshot for a diagnostics panel: application info, device id and
+fingerprint, active transports, network mode, device count, secret-store
+backend, and the permission policy in force.
+
+```js
+const { secrets, transports, networkMode } = server.status();
+```
+
 #### `server.getRemoteDiagnostics()`
 
 What the router said about the last port-mapping attempt (protocol tried, public address, CGNAT detection), or `null` if remote access was never attempted.
+
+#### `server.getInstallHandoff(handoffId)`
+
+Resolves a device-link handoff minted over RPC, used by the iOS "Add to Home
+Screen" flow so an installed PWA inherits trust from the browser tab that
+paired it. Returns `null` once it is used or expired.
 
 ### Server events
 
@@ -196,6 +255,25 @@ Subscribe with `server.typedOn(event, callback)` or the inherited `EventEmitter#
 ---
 
 ## Client SDK (`@crosslink/sdk-browser`)
+
+### `createSecureCrosslinkClient(options?)`
+
+The preferred browser entry point. Identity and paired-app records are
+encrypted at rest under a non-extractable WebCrypto key.
+
+```js
+import { createSecureCrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await createSecureCrosslinkClient({ deviceName: "Phone" });
+```
+
+Accepts `allowPlaintextFallback` to permit unencrypted storage when
+WebCrypto/IndexedDB is unavailable.
+
+### `createCrosslinkClient(options?)`
+
+Synchronous factory that defaults storage to `localStorage`. Use it when you
+supply your own `storage`, or need a client without awaiting.
 
 ### `CrosslinkClient.create(options?)`
 

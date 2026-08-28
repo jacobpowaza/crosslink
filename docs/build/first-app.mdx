@@ -1,0 +1,202 @@
+---
+title: "Your First App"
+description: "A complete host and phone client on one port: expose an action, emit an event, pair by QR, and install to the home screen."
+---
+
+The [Quickstart](/quickstart) proves the connection works with two Node
+processes. This page builds the thing you would actually ship: a host that
+**serves its own client page**, so the phone loads a URL, scans nothing twice,
+and can install the result to its home screen.
+
+## 1. Project
+
+```bash
+mkdir lamp && cd lamp && npm init -y
+npm install @crosslink/sdk-node
+npm install --save-dev esbuild @crosslink/sdk-browser
+```
+
+The browser SDK is a dev dependency because it gets bundled into the page the
+host serves, rather than imported at runtime by Node.
+
+## 2. Capabilities first
+
+Decide what a paired phone may do before writing a handler. Every capability is
+a promise to the user in the pairing prompt, so name them for what they let
+someone do, not for the function they call.
+
+```js
+const capabilities = [
+  { id: "lamp.read",  title: "See whether the lamp is on", risk: "low"  },
+  { id: "lamp.write", title: "Turn the lamp on and off",   risk: "medium" }
+];
+```
+
+`risk` drives the default policy: `low` may be auto-granted, `medium` and above
+require a human decision. See [Capabilities and RPC](/build/capabilities-and-rpc).
+
+## 3. The host
+
+`host.mjs`:
+
+```js
+import { readFile } from "node:fs/promises";
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+let on = false;
+
+const server = createCrosslinkServer({
+  application: {
+    id: "com.example.lamp",
+    name: "Lamp",
+    version: "1.0.0",
+    pwaConfig: { shortName: "Lamp", themeColor: "#0f172a", startUrl: "/" }
+  },
+  capabilities: [
+    { id: "lamp.read",  title: "See whether the lamp is on", risk: "low" },
+    { id: "lamp.write", title: "Turn the lamp on and off",   risk: "medium" }
+  ],
+  // One port serves both the page and the WebSocket the page connects over.
+  lan: { enabled: true, bind: "all", httpHandler: serveClient },
+  pairing: {
+    approve: async (req) => {
+      console.log(`\n  "${req.deviceName}" wants: ${req.requestedCaps.join(", ")}`);
+      console.log(`  Confirm these digits match the phone: ${req.sas}\n`);
+      return true; // replace with a real prompt before shipping
+    }
+  }
+});
+
+server.expose("lamp.status", () => ({ on }), { capability: "lamp.read" });
+server.expose("lamp.set", ({ on: next }) => {
+  on = Boolean(next);
+  server.emit("lamp.changed", { on });
+  return { on };
+}, { capability: "lamp.write" });
+
+server.declareEvent("lamp.changed", { capability: "lamp.read" });
+
+async function serveClient(req, res) {
+  const url = new URL(req.url ?? "/", "http://local.invalid");
+  if (url.pathname === "/bundle.js") {
+    res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+    res.end(await readFile(new URL("./public/bundle.js", import.meta.url)));
+    return;
+  }
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+  res.end(await readFile(new URL("./public/index.html", import.meta.url)));
+}
+
+await server.start();
+const info = await server.getPairingCode();
+console.log(`Pair with: ${info.uri}`);
+for (const e of server.connectionEndpoints()) console.log(`  ${e.kind}  ${e.url}`);
+```
+
+<Note>
+`bind: "all"` is what makes the listener reachable from another device on the
+network. `bind: "loopback"` is the safe default for a host that has not decided
+yet — it produces no `lan` endpoint at all, because `ws://127.0.0.1` on a phone
+means the phone itself.
+</Note>
+
+## 4. The client page
+
+`public/client.js`:
+
+```js
+import { createSecureCrosslinkClient } from "@crosslink/sdk-browser";
+
+const client = await createSecureCrosslinkClient({
+  deviceName: navigator.userAgent.includes("iPhone") ? "iPhone" : "Phone",
+  onConfirmPairing: async ({ sas }) =>
+    confirm(`Do these digits match the host?\n\n${sas}`)
+});
+
+// The host's QR points here with the pairing manifest in the fragment.
+const pairUri = new URLSearchParams(location.hash.slice(1)).get("pair");
+if (pairUri && !client.listApps().length) {
+  await client.pairFromQr(pairUri, ["lamp.read", "lamp.write"]);
+  history.replaceState(null, "", location.pathname); // do not leave a used code in history
+}
+
+const rpc = await client.connect();
+
+client.onStateChange((state) => {
+  document.body.dataset.state = state;
+});
+
+const render = ({ on }) => {
+  document.querySelector("#lamp").textContent = on ? "ON" : "OFF";
+};
+
+render(await rpc.call("lamp.status"));
+rpc.subscribe("lamp.changed", render);
+
+document.querySelector("#toggle").onclick = async () => {
+  const { on } = await rpc.call("lamp.status");
+  await rpc.call("lamp.set", { on: !on });
+};
+```
+
+Bundle it into the file the host serves:
+
+```bash
+npx esbuild public/client.js --bundle --format=esm --outfile=public/bundle.js
+```
+
+`public/index.html` needs nothing more than a container and
+`<script type="module" src="/bundle.js"></script>`.
+
+## 5. Run it
+
+```bash
+node host.mjs
+```
+
+Open the printed `lan` URL on a phone on the same Wi-Fi, or render `info.qrSvg`
+on a screen and scan it. The phone confirms the SAS digits, pairs, and the
+toggle works.
+
+## Serving the client from the host
+
+The single-port arrangement above is deliberate, and worth keeping even as the
+app grows:
+
+- **One mapping.** Remote access forwards exactly one port. A page on port 3000
+  and a socket on port 54676 needs two, and the second one is the one people
+  forget.
+- **One origin.** The browser stores the page's origin as the app's identity.
+  When the page and the socket share it, an installed PWA keeps working without
+  cross-origin exceptions.
+- **No route mismatch.** A page that loads cannot then fail to reach the socket,
+  because they are the same listener.
+
+If your UI is served by a dev server during development (Vite, for example),
+add its origin to `lan.allowedOrigins` rather than moving the socket.
+
+## Making it installable
+
+Set `application.pwaConfig` (as above), serve a web app manifest and an icon
+from your `httpHandler`, and the phone can add the page to its home screen. The
+installed app opens straight into a paired, connected session.
+
+iOS needs one extra thing: a `crosslink://` URI has no handler in the camera
+app, so the QR must be an `https://` link to a page. Set
+`pairing.bootstrapUrl` to a static HTTPS page you control and
+`getPairingCode()` returns a `bootstrapUri` (and a QR for it) instead. Details
+in [PWA](/client/pwa).
+
+## Next
+
+<CardGroup>
+  <Card title="Capabilities and RPC" icon="key" href="/build/capabilities-and-rpc">
+    Designing the permission surface and the method surface
+  </Card>
+  <Card title="Connection Modes" icon="wifi" href="/guides/connection-modes">
+    Same Wi-Fi, relayed, or reachable from anywhere
+  </Card>
+  <Card title="Production Checklist" icon="list-check" href="/build/production-checklist">
+    What to fix before other people run this
+  </Card>
+</CardGroup>

@@ -274,7 +274,13 @@ See [docs/security/overview.mdx](docs/security/overview.mdx) and
 
 The full documentation site lives in `docs/` (Mintlify). Start here:
 
-- [Quickstart](docs/quickstart.mdx) — build your first pair of apps
+- [Quickstart](docs/quickstart.mdx) — a working connection in five minutes
+- [Building with Crosslink](docs/build/overview.mdx) — the developer's path, in order
+- [Your first app](docs/build/first-app.mdx) — host + phone client on one port
+- [Capabilities and RPC](docs/build/capabilities-and-rpc.mdx) — the permission and method surfaces
+- [Local development](docs/build/local-development.mdx) — repo layout, build, tests, demos
+- [Production checklist](docs/build/production-checklist.mdx) — before other people run it
+- [Package map](docs/reference/packages.mdx) — what to import, and what not to
 - [Connection modes](docs/guides/connection-modes.mdx) — the four host network modes
 - [Remote access](docs/guides/remote-access.mdx) — router port mapping, and its real limits
 - [Architecture](docs/concepts/architecture.mdx) — how the pieces fit
@@ -288,7 +294,7 @@ The full documentation site lives in `docs/` (Mintlify). Start here:
 ## Development
 
 ```bash
-npm test          # 423 tests: unit, both SDKs, full-stack integration
+npm test          # 450 tests: unit, both SDKs, full-stack integration
 npm run typecheck # strict TS across every workspace
 npm run build     # 18 build targets
 ```

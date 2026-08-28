@@ -1,0 +1,136 @@
+---
+title: "Local Development"
+description: "Working in the Crosslink repo: layout, build, tests, demos, and testing a connection without a network."
+---
+
+This page is for working **on** Crosslink, or for running its demos while
+building against it. If you are only consuming the published packages, you need
+[Your First App](/build/first-app) instead.
+
+## Requirements
+
+- Node.js **>= 20** (22 recommended)
+- npm (the repo uses npm workspaces)
+
+```bash
+git clone https://github.com/jacobpowaza/crosslink
+cd crosslink
+npm install
+npm run build
+```
+
+## Layout
+
+```text
+packages/     protocol, core, sdk-node, sdk-browser, sdk, react, nat-map, dev-tokens
+adapters/     webrtc
+services/     signaling, relay
+apps/         chat, demo-pwa
+examples/     echo-host, notes-host, todo-host, todo-client, react-tsx, vanilla, webrtc-upgrade
+scripts/      operational scripts (check-remote-access, chat tunnel runner)
+docs/         this documentation site (Mintlify)
+tests/        cross-package integration tests
+```
+
+Each workspace under `packages/`, `adapters/` and `services/` has the same two
+scripts: `build` and `typecheck`.
+
+## Build, typecheck, test
+
+```bash
+npm run build       # every workspace, via tsup
+npm run typecheck   # strict TypeScript across the monorepo
+npm test            # vitest: unit, both SDKs, full-stack integration
+```
+
+<Warning>
+Packages consume each other through their built `dist/`, not through TypeScript
+project references. After changing a package that another one imports, rebuild
+it — `npm run build -w @crosslink/core` — or the consumer will typecheck against
+stale declarations. A `TS2353: object literal may only specify known properties`
+on an option you just added is almost always this.
+</Warning>
+
+Run a single workspace's tests with vitest's path filter:
+
+```bash
+npx vitest run packages/core
+npx vitest run packages/sdk-node/src/server.test.ts
+```
+
+## Running the demos
+
+```bash
+npm run demo:echo            # minimal host; prints a pairing code and QR
+npm run demo:pwa             # browser client on http://localhost:8090
+npm run demo:chat            # full chat app (host + mobile client, one port)
+npm run demo:notes           # notes sync host
+npm run demo:todo            # todo host
+npm run demo:todo-client     # its client
+npm run demo:webrtc          # relay -> direct WebRTC upgrade host
+npm run demo:webrtc-client   # its client
+```
+
+Cross-network variants:
+
+```bash
+npm run stack                # signaling :8081 + relay :8082
+npm run demo:echo:remote     # host asks the router for an inbound port
+npm run demo:chat:remote     # same, for the chat app
+npm run demo:chat:tunnel     # chat app behind a provider tunnel
+```
+
+The usual loop is two terminals: `npm run demo:echo` in one,
+`npm run demo:pwa` in the other, then scan the printed QR with a phone on the
+same Wi-Fi. Nothing else needs to be running.
+
+## Checking reachability
+
+```bash
+npm run check:remote                             # ephemeral port
+node scripts/check-remote-access.mjs 8100        # a specific port
+node scripts/check-remote-access.mjs 8100 --forwarded
+node scripts/check-remote-access.mjs 8100 --public-host home.example.net
+```
+
+It runs the same discovery a host runs at startup and prints what each router
+protocol answered, so you can tell a Crosslink bug from a router that refuses
+mappings. See [Remote Access](/guides/remote-access).
+
+## Testing
+
+Both SDKs are unit-testable with no network. `@crosslink/sdk-browser` exports
+`MockSocket`, an in-memory `WsLike` pair, so a test can drive a real
+`HostPairingManager` and `HostAcceptor` and produce every failure deliberately —
+a revoked device, a mismatched SAS, a dropped session mid-request.
+
+```ts
+import { MockSocket } from "@crosslink/sdk-browser";
+
+const [clientSide, hostSide] = MockSocket.pair();
+```
+
+Two rules keep the suite fast and honest:
+
+- **Never touch the real network in a unit test.** Anything that would negotiate
+  a router mapping must be mocked — `vi.mock("@crosslink/nat-map", …)` — or the
+  test's result depends on the machine it runs on and takes seconds instead of
+  milliseconds.
+- **Assert on the diagnostics, not just the outcome.** A host that reports
+  `reachable: false` with the right reason is a passing test; one that reports it
+  with no attempts recorded is a bug that will reach a user as an empty error.
+
+## Working on the docs
+
+The documentation site is Mintlify, rooted at `docs/`. `docs/docs.json` is the
+only configuration file — page paths in its `navigation.groups` are relative to
+`docs/`, and every in-page link (`/guides/remote-access`) is too.
+
+```bash
+npm i -g mint
+cd docs && mint dev        # local preview on http://localhost:3000
+```
+
+Adding a page means creating the `.mdx` file with `title` and `description`
+frontmatter **and** listing it in `docs/docs.json`. A page that is not listed
+does not appear in the sidebar, and Mintlify will not warn you.

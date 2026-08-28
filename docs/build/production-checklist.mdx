@@ -1,0 +1,183 @@
+---
+title: "Production Checklist"
+description: "What to change before other people run your Crosslink app: approval, secrets, persistence, ports, revocation and diagnostics."
+---
+
+Everything below is something that is fine in development and wrong in
+production. Work down the list before you ship.
+
+## Pairing
+
+<Check>**Replace `autoApprove` with a real prompt.**</Check>
+
+`pairing.autoApprove: true` is a development convenience. The policy still caps
+it at `low` risk, so it cannot silently hand out write access, but a shipped app
+must show a human the device name and the requested capabilities.
+
+<Check>**Show the SAS digits and make the user compare them.**</Check>
+
+`req.sas` is nine digits, shown identically on both devices. That comparison is
+the whole defense against a machine-in-the-middle during pairing. A dialog with
+only an "Approve" button throws it away.
+
+<Check>**Set a policy, not just a hook.**</Check>
+
+```ts
+permissions: {
+  maxAutoGrantRisk: "none",
+  requireApproval: "high",
+  maxDevices: 10,
+  grantTtlMs: 90 * 24 * 3600_000
+}
+```
+
+The policy is evaluated before your approval hook, so a bug in the hook cannot
+exceed it.
+
+## Secrets and identity
+
+<Check>**Know where your keys are stored.**</Check>
+
+The host picks the strongest backend available: the OS keychain, then an
+AES-256-GCM encrypted file with a machine-derived key, then plaintext. Check
+which one you got:
+
+```ts
+console.log(server.status().secrets); // { backend, detail }
+```
+
+<Check>**Do not ship `secrets.allowPlaintextFallback: true`.**</Check>
+
+It exists for headless CI. In production it silently downgrades key storage to a
+readable file.
+
+<Check>**Persist the storage directory.**</Check>
+
+Identity, paired devices and the remembered listen port live in
+`.crosslink-data/<appId>/`. Wiping it unpairs every device and changes the host
+fingerprint, so every phone must re-scan. In a container, that directory must be
+a volume.
+
+## Networking
+
+<Check>**Pin the port if anything forwards to it.**</Check>
+
+The listen port is remembered across restarts, but a hand-written router
+forward should point at an explicit `lan.port` rather than a remembered one.
+
+<Check>**Choose the network mode deliberately.**</Check>
+
+| Mode | Use when |
+| --- | --- |
+| `local-only` | The app must never leave the house. No relay, signaling, tunnel or port mapping |
+| `auto` | LAN, plus whatever remote path happens to be available |
+| `lan-and-relay` | You run signaling and relay and want a path that works behind CGNAT |
+| `remote` | You want direct inbound reach with no infrastructure — and want startup to fail loudly if it is not achievable |
+
+See [Connection Modes](/guides/connection-modes).
+
+<Check>**Check the remote diagnostics rather than trusting the mode.**</Check>
+
+```ts
+const d = server.getRemoteDiagnostics();
+if (d?.vpnSuspected) warn(d.message);
+```
+
+A VPN or secure-DNS client holding the default route produces the worst failure
+mode there is: the router forwards, the reply leaves through the tunnel, and the
+phone hangs on a blank page instead of getting an error. `vpnSuspected` is set
+when STUN and the router disagree about the public address, which is that
+situation. See [Remote Access](/guides/remote-access).
+
+<Check>**Give installed clients a stable address.**</Check>
+
+A home IP changes when the ISP renews its lease, which breaks every endpoint a
+phone already stored. Set `remote.publicHost` to a dynamic-DNS name, or
+`pairing.bootstrapUrl` to an origin you control.
+
+<Check>**Bind deliberately.**</Check>
+
+`lan.bind: "all"` is required for another device to reach the host, and is what
+`remote` mode sets for you. `"loopback"` produces no `lan` endpoint at all —
+which is the right answer for a host that is not meant to be reachable.
+
+## Operations
+
+<Check>**Expose device management.**</Check>
+
+`listDevices()`, `revokeDevice(id)`, `revokeAllDevices()` and
+`setDeviceCaps(id, caps)` are the whole surface. A user who loses a phone needs
+`revokeDevice` reachable from your UI, not from a REPL.
+
+<Check>**Log, with a real logger.**</Check>
+
+`logger` defaults to a no-op, so the SDK never writes to your stdout uninvited.
+Pass a sink of your own, or `consoleLogger()` from `@crosslink/core`, or you
+will be debugging a production pairing failure with nothing to read.
+
+```ts
+import { consoleLogger } from "@crosslink/core";
+
+createCrosslinkServer({ /* … */, logger: consoleLogger({ level: "info" }) });
+```
+
+<Check>**Subscribe to `connectivity`.**</Check>
+
+```ts
+server.typedOn("connectivity", (status) => render(status.message));
+```
+
+Reachability changes while the app runs — a lease lapses, a network changes.
+`status.message` is written to be shown to a user as-is.
+
+<Check>**Rate-limit and cap.**</Check>
+
+```ts
+security: {
+  maxDevices: 10,
+  maxActivePairingSessions: 3,
+  pairingRateLimitMs: 5000,
+  localNetworkOnly: false
+}
+```
+
+The defaults are sane; `maxDevices` is the one that is unlimited unless you set
+it.
+
+## Services, if you run them
+
+<Check>**Do not run signaling or relay open.**</Check>
+
+Set `relayToken` / `signalingToken` (or `CROSSLINK_RELAY_TOKEN` /
+`CROSSLINK_SIGNALING_TOKEN`) on both the services and the clients.
+`@crosslink/dev-tokens` generates per-machine tokens so the defaults are not
+open to anyone who finds the port. Deployment detail in
+[Self-Hosting](/guides/self-hosting).
+
+Neither service can read your traffic — the relay forwards ciphertext and holds
+no keys — but an open one is capacity someone else can spend.
+
+## Validate everything
+
+<Check>**Every exposed method has `inputSchema` or `validate`.**</Check>
+
+An unvalidated handler trusts a remote device to send well-formed data. That is
+the one trust assumption Crosslink's design does not make for you.
+
+<Check>**No `idempotent: true` on anything that appends, charges or sends.**</Check>
+
+It is a licence for the client to replay the call after a reconnect.
+
+## Related
+
+<CardGroup>
+  <Card title="Security Overview" icon="shield" href="/security/overview">
+    Invariants the design guarantees
+  </Card>
+  <Card title="Threat Model" icon="crosshairs" href="/security/threat-model">
+    What is and is not defended against
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/resources/troubleshooting">
+    When it does not work
+  </Card>
+</CardGroup>

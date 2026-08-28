@@ -1,0 +1,81 @@
+---
+title: "Package Map"
+description: "Every published package and service, what it is for, and whether you should import it directly."
+---
+
+Crosslink is a monorepo of small packages. Most applications need exactly one
+or two of them; the rest are layers those two are built on.
+
+## Packages you import
+
+| Package | Import it when | Entry points |
+| --- | --- | --- |
+| `@crosslink/sdk-node` | You are writing the **host** — a Node, Electron or Tauri process that owns the data | `createCrosslinkServer`, `composeCrosslinkHost` |
+| `@crosslink/sdk-browser` | You are writing the **client** — a browser page, PWA or phone UI | `createSecureCrosslinkClient`, `createCrosslinkClient`, `CrosslinkClient` |
+| `@crosslink/react` | Your client UI is React and you want connection state as hooks | React bindings over `sdk-browser` |
+| `@crosslink/sdk` | You want one dependency that resolves to the host entry in Node and the client entry in a browser | Umbrella re-export |
+
+`@crosslink/sdk-browser` also ships testing tools, notably `MockSocket` — an
+in-memory `WsLike` pair that drives a real host pairing manager and acceptor
+with no network at all. See [Testing](/build/local-development#testing).
+
+## Packages the SDKs are built on
+
+You rarely import these, but reading them is how you answer "what does it
+actually do":
+
+| Package | Contents |
+| --- | --- |
+| `@crosslink/protocol` | The wire spec: envelopes, framing, canonical JSON, error codes, conformance fixtures. The language-neutral part — a non-JavaScript implementation targets this |
+| `@crosslink/core` | Transport-agnostic engine: identity, CLX1 handshake, sessions, capability registry, RPC router, pairing state machines |
+| `@crosslink/nat-map` | Inbound reachability: PCP, NAT-PMP and UPnP IGD port mapping, plus STUN address discovery. Used by `remote` network mode |
+| `@crosslink/dev-tokens` | Per-machine development tokens, so the default signaling and relay are not open to unauthenticated use |
+
+Import `@crosslink/core` directly only when you are building a transport, or
+embedding Crosslink in a runtime that cannot use the `sdk-node` listener.
+`composeCrosslinkHost(config)` (from `sdk-node`) is the halfway point: it builds
+the identity, pairing manager, grant store and capability registry and hands
+them back for you to attach to your own server, without starting one.
+
+## Adapters
+
+| Package | Contents |
+| --- | --- |
+| `@crosslink/webrtc-adapter` | WebRTC DataChannel transport and SDP exchange over an existing Crosslink session, used to upgrade a relayed connection to a direct one |
+
+## Services you can host
+
+| Package | Role | Default port |
+| --- | --- | --- |
+| `@crosslink/signaling` | Presence directory and pairing-code router. Helps two devices find each other across networks; never sees plaintext | `8081` |
+| `@crosslink/relay` | Stateless encrypted-pipe fallback when no direct route exists. Forwards ciphertext; holds no keys | `8082` |
+
+Neither is required for same-network use, and neither is required at all if you
+use [`remote` mode](/guides/remote-access). Running your own is covered in
+[Self-Hosting](/guides/self-hosting).
+
+```bash
+npm run stack   # signaling :8081 + relay :8082, from the repo root
+```
+
+## Apps and examples in the repo
+
+| Path | What it demonstrates |
+| --- | --- |
+| `apps/chat` | The full pattern: web host plus installable mobile client on one port, device management, network-mode switching |
+| `apps/demo-pwa` | Reference installable PWA client |
+| `examples/echo-host` | The smallest useful host — one method, ~20 lines |
+| `examples/notes-host` | State sync over RPC and events |
+| `examples/todo-host`, `examples/todo-client` | A host and client pair, local and relay modes |
+| `examples/webrtc-upgrade` | Relay connection upgraded to direct WebRTC, end to end |
+| `examples/react-tsx`, `examples/vanilla` | Minimal client UIs |
+
+Run any of them from the repo root:
+
+```bash
+npm run demo:echo        # host, prints a pairing code and QR
+npm run demo:pwa         # browser client on http://localhost:8090
+npm run demo:chat        # the full chat app
+```
+
+The complete list of demo scripts is in [Local Development](/build/local-development).

@@ -1,0 +1,210 @@
+---
+title: "Capabilities and RPC"
+description: "Designing the permission surface and the method surface: gating, validation, per-use consent, progress and cancellation."
+---
+
+Two surfaces make up everything a paired device can reach: the **capabilities**
+you declare and the **methods and events** you expose. They are enforced in one
+place — the host — and a client cannot talk its way past either.
+
+## Declaring capabilities
+
+```ts
+capabilities: [
+  { id: "notes.read",   title: "Read your notes",        risk: "low" },
+  { id: "notes.write",  title: "Create and edit notes",  risk: "medium" },
+  { id: "notes.delete", title: "Delete notes permanently", risk: "high",
+    description: "Deleted notes cannot be recovered.",
+    confirmEachUse: true }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable identifier used in `expose({ capability })` and in grants |
+| `title` | Shown in the pairing prompt. Write it for the person holding the phone |
+| `risk` | `"low"` \| `"medium"` \| `"high"` — drives the default policy |
+| `description` | Extra detail for the prompt |
+| `defaultGranted` | Granted at pairing when requested, without a separate decision |
+| `confirmEachUse` | A standing grant is not enough; ask again per invocation |
+
+### Naming them
+
+Capabilities are read by a human under time pressure, at the exact moment they
+are deciding whether to trust a device. Two rules follow:
+
+- **Group by consequence, not by function.** `notes.delete` is one capability
+  even if three methods can delete. `notes.rpcCall` is not a capability, it is a
+  bypass.
+- **Split when the answer could differ.** If someone might reasonably say yes to
+  reading and no to writing, those are two capabilities.
+
+Ten capabilities is a lot. If you are past that, the prompt has stopped being a
+decision and become a formality.
+
+## Policy: what the host will allow at all
+
+`capabilities` says what exists. `permissions` says what may ever be granted,
+and it is evaluated **before** your approval hook runs — a bug in that hook
+cannot hand out more than the policy permits.
+
+```ts
+permissions: {
+  allow: "*",                  // or a hard allowlist
+  deny: ["notes.delete"],      // wins over allow, and over any human approval
+  maxAutoGrantRisk: "low",     // default: auto-approval never exceeds low risk
+  requireApproval: "high",     // default: high-risk always needs a human
+  grantTtlMs: 30 * 24 * 3600_000,
+  maxCapabilitiesPerDevice: 8,
+  maxDevices: 5
+}
+```
+
+The defaults are already the conservative answer: auto-approval is capped at
+`low`, and every `high`-risk capability forces a human decision regardless of
+what `pairing.approve` returns.
+
+## Approving a pairing
+
+```ts
+pairing: {
+  approve: async (req) => {
+    // req.sas                     nine digits ("042 517 903"), shown on the phone too
+    // req.deviceName, deviceId
+    // req.requestedCaps           what the client asked for
+    // req.requiresExplicitApproval which of those the policy will not auto-grant
+    // req.deniedCaps              [{ id, reason }] the policy already refused
+    const ok = await showDialog(req);
+    return ok ? { approved: true, caps: req.requestedCaps } : false;
+  }
+}
+```
+
+A return of `true` grants everything requested; an array or `{ caps }` grants a
+subset; `false` refuses. **Compare the SAS digits on both screens** — that
+comparison is the entire defense against a machine-in-the-middle during
+pairing, and skipping it silently gives that defense up.
+
+`pairing.autoApprove: true` exists for development. It is capped by
+`maxAutoGrantRisk`, so it cannot silently grant write access, but it should
+never reach production.
+
+## Exposing methods
+
+```ts
+server.expose("notes.create", (input, ctx) => {
+  ctx.log.info("creating", { device: ctx.deviceId });
+  return db.create(input);
+}, {
+  capability: "notes.write",
+  inputSchema: {
+    type: "object",
+    required: ["title"],
+    properties: {
+      title: { type: "string", minLen: 1, maxLen: 200 },
+      body:  { type: "string", maxLen: 100_000 }
+    }
+  },
+  idempotent: false,
+  timeoutMs: 10_000
+});
+```
+
+| Option | Effect |
+| --- | --- |
+| `capability` | One capability id, or an array — all of which are required |
+| `inputSchema` | Declarative validation, applied before your handler runs |
+| `validate` | Any custom validator (Zod, Ajv, …); takes precedence over `inputSchema` |
+| `idempotent` | Safe for the client to auto-retry after a reconnect |
+| `timeoutMs` | Per-method request timeout |
+
+<Warning>
+Validate every input. Compile-time types say nothing about bytes arriving from
+another device. A method without `inputSchema` or `validate` is trusting a
+remote peer to be well-behaved.
+</Warning>
+
+### The handler context
+
+```ts
+server.expose("notes.export", async (input, ctx) => {
+  for (const [i, note] of notes.entries()) {
+    if (ctx.signal.aborted) return { cancelled: true };  // client called rpc.cancel
+    ctx.emitProgress({ done: i, total: notes.length });   // stream without ending
+    await write(note);
+  }
+  return { ok: true };
+});
+```
+
+- `ctx.deviceId` — which paired device is calling. Use it for per-device state.
+- `ctx.requestId` — correlates with the client's request.
+- `ctx.signal` — aborts when the client cancels or the session drops. Long
+  handlers should check it.
+- `ctx.emitProgress(json)` — progress events for the same request.
+- `ctx.log` — a logger pre-bound with device, method and request id.
+
+`idempotent: true` is a promise you are making to the client: it may replay this
+call after a reconnect without asking you. Do not set it on anything that
+appends, charges, or sends.
+
+## Events
+
+```ts
+server.declareEvent("notes.changed", { capability: "notes.read" });
+server.emit("notes.changed", { id, action: "updated" });
+```
+
+Events are broadcast to every connected device that holds the capability. There
+is no per-device event targeting — if a payload is not fit for every device that
+can subscribe, send it as an RPC result instead.
+
+Declare events before emitting them. Declaration is what carries the capability
+gate; an undeclared event has no gate to apply.
+
+## Per-use consent
+
+A capability marked `confirmEachUse: true` is refused outright unless the host
+supplies a prompt:
+
+```ts
+onConsentRequest: async ({ deviceName, title, risk, input }) => {
+  const answer = await showConsentDialog({ deviceName, title, risk, input });
+  return answer; // "once" | "session" | "always" | false
+},
+consent: {
+  alwaysTtlMs: 24 * 3600_000,  // how long "always" is remembered
+  promptTimeoutMs: 60_000      // unanswered means refused
+}
+```
+
+`"session"` lasts until that device disconnects; `"always"` until the TTL
+expires or the grant is revoked. An unanswered prompt is a refusal, not a hang —
+which is why the timeout defaults to 60 seconds rather than infinity.
+
+## Calling from the client
+
+```js
+const rpc = await client.connect();
+
+const note = await rpc.call("notes.create", { title: "Hello" }, { timeoutMs: 5000 });
+const off  = rpc.subscribe("notes.changed", (payload) => render(payload));
+```
+
+A call the host refuses rejects with a `capability_denied` error rather than
+returning an empty result — see [Error Codes](/reference/errors). Handle it as a
+UI state ("this device is not allowed to do that"), not as a network failure.
+
+## Next
+
+<CardGroup>
+  <Card title="Permissions concept" icon="lock" href="/concepts/permissions">
+    The model behind the policy
+  </Card>
+  <Card title="API Reference" icon="code" href="/reference/api">
+    Every method and option
+  </Card>
+  <Card title="Production Checklist" icon="list-check" href="/build/production-checklist">
+    Before other people run this
+  </Card>
+</CardGroup>
