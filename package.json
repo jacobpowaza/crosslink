@@ -26,6 +26,7 @@
     "demo:notes": "node examples/notes-host/src/cli.ts",
     "demo:pwa": "npm run serve -w @crosslink/demo-pwa",
     "demo:chat": "npm run dev -w @crosslink/demo-chat",
+    "demo:chat:tunnel": "node scripts/run-chat-tunnel.mjs",
     "demo:todo": "node examples/todo-host/src/cli.ts",
     "demo:todo:remote": "node examples/todo-host/src/cli.ts --remote",
     "demo:todo-client": "npm run dev -w @crosslink/example-todo-client",
@@ -34,6 +35,9 @@
     "demo:echo:remote": "node examples/echo-host/src/cli.ts --remote",
     "demo:chat:remote": "CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat",
     "check:remote": "node scripts/check-remote-access.mjs"
+  },
+  "dependencies": {
+    "untun": "^0.2.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

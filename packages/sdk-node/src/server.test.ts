@@ -719,6 +719,17 @@ describe("connectivity", () => {
     expect(status.message).toContain("No inbound path");
   });
 
+  it("reports internet reachability when a tunnel is configured", async () => {
+    const server = await startServer({
+      lan: { enabled: true, bind: "all" },
+      tunnelUrl: "https://crosslink-test.trycloudflare.com",
+    });
+    const status = server.getConnectivity();
+    expect(status.reach).toBe("relayed");
+    expect(status.message).toContain("anywhere");
+    expect(status.transports.tunnel).toBe("https://crosslink-test.trycloudflare.com");
+  });
+
   it("emits connectivity event on startup", async () => {
     const events: string[] = [];
     const server = createCrosslinkServer({

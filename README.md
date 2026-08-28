@@ -79,6 +79,21 @@ on the host's socket.
 
 ### From another network
 
+For the chat demo, the most reliable development path is a temporary HTTPS
+tunnel. It works across different Wi-Fi networks, cellular data, carrier-grade
+NAT, and routers that refuse inbound mappings:
+
+```bash
+npm run demo:chat:tunnel
+```
+
+The first run asks you to accept Cloudflare's terms before downloading the
+`cloudflared` helper. The command prints the public phone URL and puts its HTTPS
+page plus matching secure WebSocket endpoint into the pairing QR. The URL is
+temporary, so restart the command and re-pair if the tunnel address changes.
+
+For hosts that can accept an inbound router mapping without a tunnel:
+
 ```bash
 npm run demo:echo -- --remote
 ```

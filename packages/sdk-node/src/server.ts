@@ -994,8 +994,9 @@ export class CrosslinkServer extends EventEmitter {
     const relay = this.relay?.connected === true;
     const webrtc = this.webrtcExposed;
     const direct = this.remote?.reachable === true;
+    const tunneled = endpoints.some((e) => e.kind === "tunnel");
     const reach: ConnectivityStatus["reach"] =
-      direct || relay ? "relayed" : lan ? "local-only" : "offline";
+      direct || relay || tunneled ? "relayed" : lan ? "local-only" : "offline";
 
     // The message is what a non-technical user reads, so it describes what they
     // can do rather than which transport is up.
@@ -1008,6 +1009,8 @@ export class CrosslinkServer extends EventEmitter {
       message = webrtc
         ? "Relayed; devices will upgrade to direct when possible."
         : "Phones can reach you from anywhere through the relay.";
+    } else if (tunneled) {
+      message = "Phones can reach you from anywhere through the secure tunnel.";
     } else if (lan) {
       const remote = this.remote?.diagnostics;
       message = remote
@@ -1033,6 +1036,7 @@ export class CrosslinkServer extends EventEmitter {
     if (this.lan) out.lan = this.lan.url();
     if (this.relay) out.relay = this.relay.channelId;
     if (this.signaling) out.signaling = this.signaling.url;
+    if (this.config.tunnelUrl) out.tunnel = this.config.tunnelUrl;
     return out;
   }
 

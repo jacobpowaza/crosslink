@@ -25,6 +25,7 @@
  *
  * Usage:
  *   npm run demo:chat                      # LAN
+ *   npm run demo:chat:tunnel               # any Wi-Fi through a public HTTPS tunnel
  *   CROSSLINK_NETWORK_MODE=remote npm run demo:chat   # LAN + router port mapping
  */
 import http from "node:http";
@@ -42,6 +43,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
 
 const controlPort = Number(process.env.PORT ?? 8100);
+const lanPort = process.env.CROSSLINK_LAN_PORT
+  ? Number(process.env.CROSSLINK_LAN_PORT)
+  : undefined;
+const tunnelUrl = process.env.CROSSLINK_TUNNEL_URL;
 
 /**
  * `remote` asks the SDK to make this machine reachable from outside the local
@@ -103,8 +108,9 @@ const host = createCrosslinkServer({
   // machine — no service to deploy, nothing to pay for.
   signalingUrl: process.env.CROSSLINK_SIGNALING_URL,
   relayUrl: process.env.CROSSLINK_RELAY_URL,
+  tunnelUrl,
   networkMode,
-  lan: { enabled: true, bind: "all", httpHandler: serveBootstrap },
+  lan: { enabled: true, bind: "all", port: lanPort, httpHandler: serveBootstrap },
   // A demo pairs unattended; a real app should leave this off so a human sees
   // and confirms the SAS before a device is trusted.
   pairing: { autoApprove: true, ttlMs: 120_000 }
@@ -334,21 +340,6 @@ const control = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === "/api/revoke" && req.method === "POST") {
-    try {
-      const { deviceId } = (await readJsonBody(req)) as { deviceId?: string };
-      const target = String(deviceId ?? "").trim();
-      if (!target) {
-        json(res, 400, { ok: false, error: "deviceId required" });
-        return;
-      }
-      json(res, 200, { ok: host.revokeDevice(target), deviceId: target });
-    } catch (err) {
-      json(res, 400, { ok: false, error: (err as Error).message });
-    }
-    return;
-  }
-
   // Everything the SDK knows about reachability, including what each router
   // protocol answered — the panel a developer looks at when pairing fails.
   if (pathname === "/api/diagnostics" && req.method === "GET") {
@@ -412,10 +403,16 @@ async function serveBootstrap(
 function bootstrapOrigin(): string {
   const endpoints = host.connectionEndpoints();
   const preferred =
-    endpoints.find((e) => e.kind === "wan")?.url ?? endpoints.find((e) => e.kind === "lan")?.url;
+    endpoints.find((e) => e.kind === "tunnel")?.url ??
+    endpoints.find((e) => e.kind === "wan")?.url ??
+    endpoints.find((e) => e.kind === "lan")?.url;
   if (!preferred) return `http://127.0.0.1:${controlPort}`;
-  const { hostname, port } = new URL(preferred);
-  return `http://${hostname}:${port}`;
+  const url = new URL(preferred);
+  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  url.pathname = "";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
 }
 
 control.listen(controlPort, "127.0.0.1", () => {

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -28,7 +28,13 @@
       --red: #f87171;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+    }
     body {
       font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
       background: var(--bg);
@@ -36,15 +42,17 @@
       display: flex;
       flex-direction: column;
       -webkit-tap-highlight-color: transparent;
+      min-height: 100dvh;
     }
 
     /* ── Developer Chat App Container ───────────────────── */
     #chatApp {
       display: none;
       flex-direction: column;
-      height: 100%;
+      height: 100dvh;
       width: 100%;
       min-height: 0;
+      overflow: hidden;
     }
 
     /* ── header ─────────────────────────────────────────── */
@@ -60,6 +68,7 @@
     }
     header h1 { font-size: 16px; font-weight: 600; }
     .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+    .status button { min-width: 44px; min-height: 44px; touch-action: manipulation; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
     .dot.on { background: var(--green); box-shadow: 0 0 6px #4ade8060; }
 
@@ -77,6 +86,10 @@
       display: flex;
       flex-direction: column;
       gap: 6px;
+      min-height: 0;
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
     .msg {
       max-width: 80%;
@@ -128,13 +141,14 @@
     }
     .composer input {
       flex: 1;
+      min-width: 0;
       background: var(--bg);
       color: var(--text);
       border: 1px solid var(--line);
       border-radius: 999px;
       padding: 9px 14px;
       font: inherit;
-      font-size: 14px;
+      font-size: 16px;
       outline: none;
     }
     .composer input:focus { border-color: var(--accent); }
@@ -150,6 +164,8 @@
       font-size: 14px;
       cursor: pointer;
       min-width: 56px;
+      min-height: 44px;
+      touch-action: manipulation;
     }
     .composer button:disabled { opacity: 0.3; }
     .composer button:active { transform: scale(0.96); }
