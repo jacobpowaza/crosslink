@@ -83,6 +83,13 @@ async function importBonjour(): Promise<{ Bonjour: new () => BonjourInstance }> 
  * Clients can discover this by browsing for `_crosslink._tcp.local`.
  */
 export async function advertiseMdns(options: MdnsOptions): Promise<MdnsBrowser> {
+  if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
+    throw new Error("mDNS port must be an integer from 1 to 65535");
+  }
+  if (!validAppId(options.appId)) throw new Error("mDNS appId has an invalid shape");
+  if (!/^[a-f0-9]{16,}$/i.test(options.fingerprint)) {
+    throw new Error("mDNS fingerprint must contain at least 16 hexadecimal characters");
+  }
   const { Bonjour } = await importBonjour();
   const bonjour = new Bonjour();
 
@@ -120,6 +127,33 @@ export interface MdnsHost {
   port: number;
   appId: string;
   fingerprintPrefix: string;
+  /** Discovery is only a hint; the CLX1 handshake must verify the full key. */
+  verified: false;
+}
+
+/** Parses one untrusted DNS-SD answer into a bounded, local-only candidate. */
+export function parseMdnsService(service: ServiceLike): MdnsHost | null {
+  const address = service.referer?.address ?? service.addresses?.find(isLocalAddress) ?? "";
+  const appId = String(service.txt?.id ?? "");
+  const fingerprintPrefix = String(service.txt?.fp ?? "");
+  if (
+    service.type !== SERVICE_TYPE ||
+    !Number.isInteger(service.port) || service.port < 1 || service.port > 65535 ||
+    !isLocalAddress(address) ||
+    !validAppId(appId) ||
+    !/^[a-f0-9]{16}$/i.test(fingerprintPrefix) ||
+    String(service.txt?.v ?? "") !== "1.0"
+  ) {
+    return null;
+  }
+  return {
+    name: sanitizeName(service.name),
+    host: address,
+    port: service.port,
+    appId,
+    fingerprintPrefix: fingerprintPrefix.toLowerCase(),
+    verified: false
+  };
 }
 
 /**
@@ -134,15 +168,17 @@ export async function browseMdns(
 ): Promise<{ close(): void }> {
   const { Bonjour } = await importBonjour();
   const bonjour = new Bonjour();
+  const seen = new Set<string>();
 
   const browser = bonjour.find({ type: SERVICE_TYPE }, (service: ServiceLike) => {
-    const host: MdnsHost = {
-      name: service.name ?? "unknown",
-      host: service.referer?.address ?? service.addresses?.[0] ?? "unknown",
-      port: service.port,
-      appId: String(service.txt?.id ?? ""),
-      fingerprintPrefix: String(service.txt?.fp ?? "")
-    };
+    const host = parseMdnsService(service);
+    if (!host) {
+      logger?.warn("mdns.rejected", { name: sanitizeName(service.name) });
+      return;
+    }
+    const key = `${host.appId}|${host.fingerprintPrefix}|${host.host}|${host.port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
     logger?.debug("mdns.found", { name: host.name, host: host.host, port: host.port });
     onFound(host);
   });
@@ -154,4 +190,22 @@ export async function browseMdns(
       logger?.debug("mdns.browse-stopped");
     }
   };
+}
+
+function validAppId(appId: string): boolean {
+  return appId.length >= 1 && appId.length <= 128 && /^[a-z0-9][a-z0-9._-]*$/i.test(appId);
+}
+
+function sanitizeName(name: string | undefined): string {
+  return (name ?? "Crosslink host").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 64) || "Crosslink host";
+}
+
+function isLocalAddress(input: string): boolean {
+  const address = input.toLowerCase().split("%")[0];
+  return /^10\./.test(address) ||
+    /^192\.168\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(address) ||
+    /^169\.254\./.test(address) ||
+    /^fe[89ab][0-9a-f]:/.test(address) ||
+    /^f[cd][0-9a-f]{2}:/.test(address);
 }
