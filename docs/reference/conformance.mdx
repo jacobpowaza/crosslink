@@ -3,8 +3,15 @@ title: Protocol conformance
 description: Shared corpus and adapter contract for Crosslink implementations.
 ---
 
-`@crosslink/conformance` runs the same language-neutral cases against any
-implementation with four operations:
+Every Crosslink implementation — JavaScript, Swift, Kotlin, Rust, or a language
+none of the current SDKs cover — must agree on how a message is serialized,
+framed, and rejected. `@crosslink/conformance` is the referee: it runs one
+language-neutral corpus against any implementation and reports byte-exact
+differences instead of "looks right."
+
+## The adapter contract
+
+An implementation proves compliance by implementing four operations:
 
 ```ts
 interface ProtocolAdapter {
@@ -15,15 +22,96 @@ interface ProtocolAdapter {
 }
 ```
 
-Each positive fixture supplies an input value, exact canonical JSON, and exact frame
-bytes. Negative fixtures supply malformed JSON/protocol messages and the stable error
-code expected from every SDK. A report contains passed and failed counts plus
-operation-level differences.
+| Operation | Must produce |
+| --- | --- |
+| `canonicalJson` | Deterministic JSON: object keys sorted byte-wise, no insignificant whitespace, finite numbers only |
+| `encodeFrame` | `canonicalJson` output UTF-8 bytes, prefixed with a 4-byte big-endian length |
+| `decodeMessage` | The parsed value from a frame's payload bytes, or a thrown error |
+| `errorCode` | The stable error code (e.g. `parse_error`, `version_unsupported`) for a thrown error |
+
+`errorCode` is what makes negative fixtures portable — every SDK maps its own
+exception type to the same small set of wire error codes, so a Swift
+`CrosslinkProtocolError.invalidJSON` and a TypeScript `CrosslinkError` with code
+`invalid_message` are asserted against the same expected string.
+
+## The corpus
+
+Positive and negative fixtures live in separate files and are combined at test
+time:
+
+- `packages/protocol/fixtures/messages-v1.json` — one entry per message kind
+  (`req`, `res`, `err`, `chunk-binary`, `end`, `event`, `sub`, `cancel`, `ping`),
+  each with the input object, its exact canonical JSON string, and the exact
+  frame bytes as hex.
+- `packages/conformance/fixtures/invalid-v1.json` — malformed inputs (truncated
+  JSON, an unsupported protocol version, an unknown message type, a request
+  missing its id) paired with the error code every implementation must raise.
+
+```json
+{
+  "name": "request",
+  "obj": { "v": "1.0", "t": "req", "i": "AAAAAAAAAAAAAAAA", "m": "echo", "p": { "hello": "world", "n": 42 } },
+  "canonical": "{\"i\":\"AAAAAAAAAAAAAAAA\",\"m\":\"echo\",\"p\":{\"hello\":\"world\",\"n\":42},\"t\":\"req\",\"v\":\"1.0\"}",
+  "frame_hex": "000000547b226922..."
+}
+```
+
+Positive fixtures are regenerated from the TypeScript reference implementation
+with `npm run gen:fixtures -w @crosslink/protocol` — never hand-edited. Negative
+fixtures are curated by hand, since they encode intentionally malformed input.
+
+## Running the report
 
 ```ts
-const report = runConformance(adapter, corpus);
+import { runConformance } from "@crosslink/conformance";
+
+const report = runConformance(adapter, { version: 1, cases, invalid });
 if (report.failed) throw new Error(JSON.stringify(report.failures, null, 2));
 ```
 
-Conformance establishes wire compatibility only. It does not replace handshake tamper
-tests, transport end-to-end tests, fuzzing, or application capability tests.
+Each positive fixture is checked three ways — `canonicalJson(obj)` matches
+exactly, `encodeFrame(obj)` matches the expected hex bytes, and round-tripping
+through `decodeMessage` then re-encoding reproduces the same canonical string.
+Each negative fixture must throw, and the thrown error's `errorCode` must equal
+the fixture's expected code; an adapter that silently accepts malformed input
+is reported as a failure with `actual: "accepted"`.
+
+```ts
+interface ConformanceFailure {
+  case: string;
+  operation: "canonical" | "frame" | "decode" | "negative";
+  expected: string;
+  actual: string;
+}
+```
+
+`report.passed` counts every check that succeeded (`cases.length * 3 +
+invalid.length` on a fully-passing adapter), so a partial pass is visible at a
+glance without diffing.
+
+## Wiring it into a new SDK
+
+The TypeScript reference lives in `packages/protocol`, and the pattern each
+native SDK follows is the same one shown in [Native protocol
+SDKs](/guides/native-sdks): implement the four adapter operations, load both
+fixture files, and call `runConformance` from that language's own test runner.
+The Rust crate does it in `sdks/rust/tests/conformance.rs`, driven by
+`cargo test`; Kotlin and Swift do the equivalent in their own test targets.
+
+## What conformance does not cover
+
+Conformance establishes wire compatibility only — that two implementations
+serialize and parse the same bytes for the same logical message. It does not
+replace:
+
+- **Handshake tamper tests** — CLX1's signature and transcript-binding
+  properties (see [Encryption](/security/encryption))
+- **Transport end-to-end tests** — actually opening a WebSocket/WebRTC
+  connection and completing a session
+- **Fuzzing** — conformance fixtures are curated, not randomly generated
+- **Application capability tests** — permission gating happens above the wire
+  protocol (see [Capabilities and RPC](/build/capabilities-and-rpc))
+
+A new SDK that passes conformance has a correct wire protocol implementation
+and nothing more; it is not yet a usable Crosslink client until it also
+implements transport selection, the handshake, and identity persistence.

@@ -8,12 +8,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./crosslink.global.js": "./dist/crosslink.global.js",
+    "./package.json": "./package.json"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean --platform browser --external @crosslink/protocol --external @crosslink/core",
-    "typecheck": "tsc --noEmit"
+    "build": "tsup src/index.ts --format esm --dts --clean --platform browser --external @crosslink/protocol --external @crosslink/core && npm run bundle",
+    "typecheck": "tsc --noEmit",
+    "bundle": "esbuild src/index.ts --bundle --minify --format=iife --global-name=CrosslinkSDK --platform=browser --outfile=dist/crosslink.global.js"
   },
   "dependencies": {
     "@crosslink/core": "*",
@@ -22,6 +27,7 @@
   },
   "devDependencies": {
     "tsup": "^8.3.6",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "esbuild": "^0.28.2"
   }
 }

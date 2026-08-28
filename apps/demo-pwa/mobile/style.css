@@ -1,0 +1,245 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f172a;
+  --card: #1e293b;
+  --line: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --danger: #f87171;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  -webkit-tap-highlight-color: transparent;
+}
+main {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+}
+h1 { font-size: 34px; line-height: 1.15; margin: 8px 0 16px; letter-spacing: -0.02em; }
+h2 { margin: 0; font-size: 20px; }
+h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+.hint { color: var(--muted); font-size: 14px; }
+code { background: var(--card); padding: 1px 6px; border-radius: 6px; }
+
+/* -------------------------- QR / Pairing Card -------------------------- */
+#pairCardContainer {
+  margin-bottom: 20px;
+}
+
+/* ------------------------------ inputs ------------------------------- */
+textarea, input {
+  width: 100%;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  font: inherit;
+  margin-bottom: 12px;
+}
+textarea:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+button {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 18px;
+  font: inherit;
+  cursor: pointer;
+  min-height: 44px; /* touch target */
+}
+button.primary { background: var(--accent); border-color: transparent; color: #082f49; font-weight: 600; }
+button:active { transform: scale(0.98); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.status { min-height: 1.4em; color: var(--accent); }
+.status.err { color: var(--danger); }
+
+.pair-actions { margin: 0 0 16px; }
+.scanner-btn { border-color: var(--accent); color: var(--accent); }
+
+/* ---------------------------- SAS screen ----------------------------- */
+.sas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 16px 0; }
+.sas-grid span {
+  display: grid; place-items: center;
+  aspect-ratio: 1.6;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; font-size: 26px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.caps { color: var(--muted); }
+.row { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+
+/* ------------------------------ notes -------------------------------- */
+.bar { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; gap: 12px; }
+.header-actions { display: flex; align-items: center; gap: 10px; }
+.icon-btn {
+  background: none;
+  border: none;
+  padding: 6px;
+  min-height: 36px;
+  min-width: 36px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--line); color: var(--text); }
+.pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.pill.online { color: #4ade80; border-color: #16653440; }
+
+.composer { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 14px 0; }
+.composer input, .composer textarea { background: var(--bg); margin-bottom: 10px; }
+
+#noteList { list-style: none; padding: 0; display: grid; gap: 10px; }
+#noteList li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+#noteList li b { display: block; margin-bottom: 2px; overflow-wrap: anywhere; }
+#noteList li p { margin: 4px 0 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+#noteList li time { float: right; color: var(--muted); font-size: 12px; }
+#eventLog { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+
+/* ---------------------------- QR scanner ----------------------------- */
+.scanner-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(2, 6, 23, 0.96);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px;
+}
+/* display:flex above would otherwise override the hidden attribute */
+.scanner-overlay[hidden] { display: none; }
+.scanner-overlay video {
+  width: min(100%, 420px);
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 2px solid var(--accent);
+  background: #000;
+}
+
+/* ------------------------------ footer ------------------------------- */
+.app-footer {
+  text-align: center;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  color: var(--muted);
+  font-size: 13px;
+  border-top: 1px solid var(--line);
+}
+.app-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.app-footer a:hover { text-decoration: underline; }
+
+/* ---------------------------- settings -------------------------------- */
+.settings-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(2, 6, 23, 0.96);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  padding: 24px 16px;
+}
+.settings-panel[hidden] { display: none; }
+.settings-content {
+  width: 100%;
+  max-width: 480px;
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.settings-header h2 { margin: 0; }
+.settings-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+.settings-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.settings-option:hover { border-color: var(--accent); }
+.settings-option input[type="radio"] {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.settings-option div { display: flex; flex-direction: column; gap: 2px; }
+.settings-option strong { font-size: 15px; }
+.settings-option .hint { font-size: 13px; margin: 0; }
+.settings-section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 12px;
+}
+.settings-section h3 { margin: 0 0 8px; }
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.settings-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+}
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.device-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.device-item:last-child { border-bottom: none; }
+.device-item .hint { font-size: 12px; }
+.device-revoke {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  min-height: auto;
+}
+.device-revoke:hover { background: var(--danger); color: var(--bg); }

@@ -133,6 +133,7 @@ export {
   encodeEndpoints,
   decodeEndpoints,
   filterEndpoints,
+  filterEndpointsForOrigin,
   sortEndpoints,
   isValidEndpointUrl,
   isLoopbackHost,
@@ -141,7 +142,9 @@ export {
   toWebSocketUrl,
   toHttpUrl,
   type EndpointKind,
-  type PairingEndpoint
+  type PairingEndpoint,
+  type EndpointReachability,
+  type BlockedEndpoint
 } from "./pairing/endpoints.js";
 export {
   deviceIdFromPublicKey,

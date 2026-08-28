@@ -187,3 +187,10 @@ export function useCrosslinkClientState(client: CrosslinkClient): ConnectionStat
 
 export type { ConnectionState, CrosslinkClientOptions, PairedAppRecord, RpcClient };
 export { CrosslinkClient };
+
+/* -------------------------------------------------------------
+   Crosslink-owned UI. `createPairingCard` is the same component
+   every Crosslink application shows; React only mounts it.
+   ------------------------------------------------------------- */
+export { CrosslinkPairingCard, type CrosslinkPairingCardProps } from "./pairing-card.js";
+export type { PairingSession, PairingSource } from "@crosslink/sdk-browser";

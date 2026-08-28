@@ -17,6 +17,8 @@
  *   node examples/todo-host/src/cli.ts
  */
 import { createInterface } from "node:readline";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCrosslinkServer, NotificationService } from "@crosslink/sdk-node";
 import QRCode from "qrcode";
 import { randomUUID } from "node:crypto";
@@ -56,7 +58,26 @@ const todos = new Map<string, Todo>([
 /* ------------------------------------------------------------------ */
 
 const server = createCrosslinkServer({
-  application: { id: "com.example.todo", name: "Todo List", version: "1.0.0" },
+  application: {
+    id: "com.example.todo",
+    name: "Todo List",
+    version: "1.0.0",
+    shortName: "Todo",
+    accentColor: "#6366f1",
+    backgroundColor: "#0f0f14",
+    appearance: "dark"
+  },
+  // The developer's mobile page, and nothing else. Crosslink serves it along
+  // with the manifest, the service worker, the icons, the browser SDK and its
+  // own pairing, install, offline and revoked screens.
+  mobile: {
+    entry: path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "mobile",
+      "index.html"
+    )
+  },
   capabilities: [
     { id: "todos.read", title: "View your todos", risk: "low", defaultGranted: true },
     { id: "todos.write", title: "Create and edit todos", risk: "medium" },

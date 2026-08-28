@@ -4,6 +4,7 @@ import {
   RpcClient,
   createClaim,
   filterEndpoints,
+  filterEndpointsForOrigin,
   noopLogger,
   normalPairingTarget,
   parsePairingUri,
@@ -344,7 +345,20 @@ export class CrosslinkClient {
     const dialTimeoutMs = this.options.dialTimeoutMs ?? 10_000;
     const failures: string[] = [];
 
-    for (const endpoint of filterEndpoints(uri.endpoints, ["lan", "wan", "tunnel"])) {
+    // A page served over https cannot open a `ws://` socket at all — the
+    // browser blocks it as mixed content, and the failure is indistinguishable
+    // from a host that is switched off. Naming the blocked routes here is what
+    // turns "cannot reach the host" into an error that says why.
+    const { usable, blocked } = filterEndpointsForOrigin(uri.endpoints, this.pageOrigin());
+    for (const entry of blocked) {
+      failures.push(`${entry.endpoint.kind} ${entry.endpoint.url}: ${entry.reason}`);
+      this.log.warn("client.endpoint-blocked", {
+        endpoint: entry.endpoint.kind,
+        reason: entry.reason
+      });
+    }
+
+    for (const endpoint of filterEndpoints(usable, ["lan", "wan", "tunnel"])) {
       try {
         const channel = await DirectPairingChannel.open(
           toWebSocketUrl(endpoint.url),
@@ -359,7 +373,7 @@ export class CrosslinkClient {
       }
     }
 
-    for (const endpoint of filterEndpoints(uri.endpoints, ["sig"])) {
+    for (const endpoint of filterEndpoints(usable, ["sig"])) {
       const wsUrl = `${toWebSocketUrl(endpoint.url).replace(/\/$/, "")}/ws`;
       try {
         const peer = await SignalingPeer.open(() => this.ws(wsUrl), dialTimeoutMs);
@@ -372,9 +386,25 @@ export class CrosslinkClient {
 
     throw new Error(
       `cannot reach the host on any route from this QR code.\nTried:\n  ${failures.join("\n  ")}\n` +
-        "If the phone is not on the same Wi-Fi, the host needs remote access " +
-        "(networkMode: \"remote\") or a signaling service."
+        (blocked.length > 0 && usable.length === 0
+          ? "Every route this host advertises is insecure, and this page is served over https, " +
+            "so the browser refuses all of them. The host needs a wss:// route — a relay or a " +
+            "tunnel — to be reachable from an installable Crosslink origin."
+          : "If the phone is not on the same Wi-Fi, the host needs remote access " +
+            '(networkMode: "remote") or a signaling service.')
     );
+  }
+
+  /**
+   * The origin of the page this client is running in, or null off-browser.
+   *
+   * Used to decide which advertised endpoints the browser will actually permit;
+   * a Node or native client has no such restriction and gets null.
+   */
+  private pageOrigin(): string | null {
+    if (typeof location === "undefined") return null;
+    const origin = location.origin;
+    return origin && origin !== "null" ? origin : null;
   }
 
   /** Connects to a previously paired app; returns the RPC client when online. */
@@ -416,6 +446,13 @@ export class CrosslinkClient {
     const addDirect = (url: string, kind: "lan" | "wan"): void => {
       if (seenUrls.has(url)) return;
       seenUrls.add(url);
+      // Same mixed-content rule as pairing. Queuing a route the browser will
+      // refuse costs a dial timeout on every reconnect attempt, on the one
+      // screen — the offline shell — where the delay is most visible.
+      if (filterEndpointsForOrigin([{ kind: "lan", url }], this.pageOrigin()).usable.length === 0) {
+        this.log.warn("client.candidate-blocked", { kind, url });
+        return;
+      }
       candidates.push({
         // Both are direct sockets to the host; `lan` is the transport kind the
         // protocol layer understands, and the endpoint kind is only about which

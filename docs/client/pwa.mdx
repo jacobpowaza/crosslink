@@ -1,169 +1,84 @@
 ---
-title: PWA
-description: Progressive Web App client setup
+title: PWA and Installation
+description: Crosslink generates and serves the PWA infrastructure
 ---
 
-Crosslink clients work as installable PWAs on iOS, Android, and desktop browsers.
-
-## QR scan to PWA lifecycle
-
-```text
-User scans QR with phone camera
-  |
-Safari / Chrome opens
-  |
-Crosslink landing page loads
-  |
-Prompt: "Add to Home Screen"
-  |
-PWA installs
-  |
-Crosslink client initializes
-  |
-Pairing flow completes
-  |
-App is ready
-```
-
-<Frame>
-  <img src="/assets/pairing/pairing-code-page.jpg" alt="Crosslink mobile pairing code entry screen in Safari" />
-</Frame>
-
-On iOS, Crosslink's onboarding nudge is centered above the bottom toolbar and its
-arrow points down at Safari's Share button. The user can always choose Continue in
-browser if they do not want to install the app.
-
-## Setting up the PWA
-
-### Service worker
-
-Create `sw.js` for offline support:
-
-```js
-const CACHE_NAME = "crosslink-v1";
-const PRECACHE = ["/", "/index.html", "/app.js"];
-
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(PRECACHE)));
-});
-
-self.addEventListener("fetch", (e) => {
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request))
-  );
-});
-```
-
-### Manifest
-
-Create `manifest.json`:
-
-```json
-{
-  "name": "My Crosslink Client",
-  "short_name": "MyApp",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ]
-}
-```
-
-### HTML
-
-```html
-<link rel="manifest" href="/manifest.json">
-<script>
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js");
-  }
-</script>
-```
-
-## Deep linking
-
-The PWA can accept `crosslink://pair?...` deep links. Handle them in your app:
-
-```js
-// Check if launched via deep link
-const hash = window.location.hash;
-if (hash.startsWith("#pair=")) {
-  const uri = decodeURIComponent(hash.slice(6));
-  await client.pairFromQr(uri, ["read", "write"]);
-}
-```
-
-## iOS-specific behavior
+Crosslink applications install to a phone's home screen. You do not write a
+manifest, a service worker, an icon pipeline or a registration snippet —
+Crosslink generates and serves all of it from your `application` metadata.
 
 <Warning>
-iOS has specific PWA limitations that affect Crosslink:
+An earlier version of this page told you to create `sw.js` and
+`manifest.webmanifest` by hand. Don't. Crosslink emits both, keeps them in step
+with your metadata, and versions the cache for you.
 </Warning>
 
-- **No WebCrypto in Private Mode** -- `IndexedDbSecureStorage` falls back to `localStorage` with `storageEncrypted === false`
-- **Safari opens instead of PWA** -- Users must manually "Add to Home Screen" from Safari's share menu
-- **Service worker limitations** -- Background sync is restricted
-- **IndexedDB quirks** -- Some versions clear storage aggressively
+## What you write
 
-Handle the iOS flow:
-
-```js
-const client = await CrosslinkClient.create({
-  onConfirmPairing: async ({ sas, hostName, grantedCaps }) => {
-    // iOS doesn't support window.confirm in PWAs well
-    // Use a custom UI instead
-    return showCustomConfirm(sas, hostName, grantedCaps);
-  }
-});
-
-if (!client.storageEncrypted) {
-  console.warn("Storage not encrypted -- WebCrypto unavailable");
-}
-```
-
-## Android behavior
-
-Chrome on Android handles PWAs well:
-
-- "Add to Home Screen" prompt appears automatically
-- WebCrypto is available (IndexedDB + non-extractable keys)
-- Service workers work reliably
-- Deep links work via intent filters
-
-## Desktop browsers
-
-Desktop PWAs work but are less common. The client functions identically:
-
-```js
-const client = await CrosslinkClient.create();
-await client.pairFromQr(uri, ["read"]);
-const rpc = await client.connect();
-```
-
-## Connection states
-
-The PWA should reflect the connection state in the UI:
-
-```text
-offline        -- waiting for pairing code or URI
-discovering    -- looking for the host
-pairing        -- pairing in progress
-connecting     -- establishing session
-direct         -- connected, LAN or WebRTC (RPC available)
-turn-relayed   -- connected via TURN relay (RPC available)
-crosslink-relayed -- connected via the relay service (RPC available)
-reconnecting   -- lost connection, attempting to restore
-unauthorized   -- host rejected this device
-revoked        -- device access was revoked
-protocol-incompatible -- host/client protocol versions don't match
-```
-
-```js
-const client = createCrosslinkClient({
-  onStateChange: (state) => {
-    updateUI(state); // reflect in your UI
-  }
+```ts
+createCrosslinkServer({
+  application: {
+    id: "com.example.notes",
+    name: "Example Notes",
+    shortName: "Notes",
+    icon: "/icon-192.png",
+    accentColor: "#f97316",
+    backgroundColor: "#101014"
+  },
+  mobile: { entry: "./mobile/index.html" }
 });
 ```
+
+## What Crosslink serves
+
+| Path | Generated from |
+| --- | --- |
+| `/manifest.webmanifest` | Your `application` metadata |
+| `/sw.js` | Root-scoped worker precaching the Crosslink shell |
+| `/__crosslink/icon-192.png`, `-512.png` | Your `icon`, or generated from your accent |
+| `/__crosslink/sdk.js` | The browser SDK |
+| `/__crosslink/boot.js` | Registration, upgrade handling, bootstrap wiring |
+| `/` | Your `mobile.entry`, with the installable head injected |
+
+The worker is served at the root so its scope covers the whole origin: an
+installed app reopening on a deep path is still claimed by it, which is what
+lets the offline screen render at all.
+
+## Upgrades
+
+The boot script reloads the page once when a new worker takes control, guarded
+by `sessionStorage` so it cannot loop. Without that, an updated install keeps
+running the previous bundle out of the old cache — a failure that looks like a
+bug in your app.
+
+## Install handoff
+
+iOS does not share storage between the Safari tab that paired and the installed
+app launched from the home screen. Crosslink handles this with a single-use
+handoff: the tab mints an opaque id, the manifest's `start_url` carries it, and
+the installed app redeems it at `/__crosslink/install/:id` to inherit the trust
+that was just established.
+
+This is why installing does not ask for a second pairing code.
+
+## Whether install actually works
+
+Installability is a property of the origin, not of Crosslink. On a plain-HTTP
+LAN address the browser refuses to register a service worker, and Add to Home
+Screen produces a bookmark with no cached shell.
+
+```ts
+console.log(host.describeMobileDelivery().message);
+```
+
+[Durable Origins](/client/durable-origin) explains the rules, what each setup
+delivers, and how to publish a free static origin that makes installs durable.
+
+## Publishing the installable origin
+
+```ts
+await host.writeStaticBootstrap("./dist-bootstrap");
+```
+
+Publish that directory to any free static host and set
+`pairing.bootstrapUrl` to the published URL.

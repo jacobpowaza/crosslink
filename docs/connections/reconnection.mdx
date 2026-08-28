@@ -3,7 +3,21 @@ title: Reconnection
 description: Automatic reconnection with backoff
 ---
 
-Crosslink automatically reconnects when a connection is lost.
+Crosslink automatically reconnects when a connection is lost. On a mobile
+client this is presented by Crosslink's own reconnect screen — you do not build
+one, and `crosslink.onConnected(rpc)` fires again on the other side of it.
+
+Reconnection reuses the device's existing trust. Closing the desktop app,
+sleeping or restarting the machine, changing Wi-Fi or moving the phone between
+networks all reconnect silently. A new pairing code is required only when the
+trust relationship itself is invalid — revoked, removed, or unreadable.
+
+<Note>
+A route the browser refuses is not retried as if the host were down. A page
+served over `https` cannot open a `ws://` socket, so those endpoints are
+reported as blocked with the reason, rather than burning a dial timeout on each
+attempt. See [Durable Origins](/client/durable-origin).
+</Note>
 
 ## How reconnection works
 

@@ -411,17 +411,21 @@ describe("Service Worker generation", () => {
     expect(sw).toContain("/challenge");
     expect(sw).toContain('url.searchParams.has("crosslink_install")');
     expect(sw).toContain('fetch(request, { cache: "no-store" })');
+    expect(sw).toContain("const NAVIGATION_TIMEOUT_MS = 4000;");
+    expect(sw).toContain("fetchNavigation(request)");
   });
 
   it("respects custom version and precache assets", () => {
     const sw = generateServiceWorker({
       version: "2.4.0",
-      precacheAssets: ["/custom-app.html", "/app.js", "/logo.png"]
+      precacheAssets: ["/custom-app.html", "/app.js", "/logo.png"],
+      navigationTimeoutMs: 2500
     });
     expect(sw).toContain("const CACHE_NAME = \"crosslink-shell-v2.4.0\";");
     expect(sw).toContain("/custom-app.html");
     expect(sw).toContain("/app.js");
     expect(sw).toContain("/logo.png");
+    expect(sw).toContain("const NAVIGATION_TIMEOUT_MS = 2500;");
   });
 
   it("creates service worker config from PWA config", () => {

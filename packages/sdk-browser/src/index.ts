@@ -40,10 +40,13 @@ export { SignalingPeer } from "./signaling-peer.js";
 export { wsTransport, type WsLike } from "./ws.js";
 export { NotificationHandler, type NotificationHandlerOptions } from "./notifications.js";
 /* -------------------------------------------------------------
-   Optional framework integrations: pairing UI, bootstrap screens,
-   offline shell, service-worker generator. These are independent
-   of any frontend framework and can be used with React, Vue,
-   Svelte, vanilla JS, etc., or replaced entirely by the developer.
+   Crosslink-owned UI: the pairing widget, the mobile bootstrap
+   screens, the offline shell and the service-worker generator.
+   These are framework-independent — React, Vue, Svelte and plain
+   pages all mount the same implementation — and they are the
+   experience Crosslink ships, not a starting point applications
+   are expected to reimplement. What an application configures is
+   its name, its icon and its colours.
    ------------------------------------------------------------- */
 export {
   PairingCard,
@@ -56,6 +59,36 @@ export {
   type PairingCardEndpoint,
   type NetworkMode
 } from "./ui/pairing-card.js";
+export {
+  createHttpPairingSource,
+  CONTROL_ROUTES,
+  type PairingSession,
+  type PairingSource,
+  type PairingSourceEvent
+} from "./ui/pairing-source.js";
+export {
+  crosslinkLogoSvg,
+  createCrosslinkLogo,
+  resolveCrosslinkTheme,
+  contrastRatio,
+  parseColor,
+  CROSSLINK_LOGO_PATH,
+  CROSSLINK_LOGO_VIEWBOX,
+  CROSSLINK_REPOSITORY,
+  CROSSLINK_ATTRIBUTION_TEXT,
+  CROSSLINK_ATTRIBUTION_LINK_TEXT,
+  LOGO_MIN_CONTRAST,
+  ATTRIBUTION_MIN_CONTRAST,
+  type CrosslinkTheme,
+  type ResolvedCrosslinkTheme,
+  type CrosslinkLogoOptions
+} from "./ui/branding.js";
+export {
+  PoweredByCrosslink,
+  createPoweredByCrosslink,
+  type PoweredByCrosslinkOptions,
+  type PoweredByPlacement
+} from "./ui/powered-by-crosslink.js";
 
 export {
   CrosslinkOfflineShell,
@@ -81,7 +114,9 @@ export {
   DEFAULT_SERVICE_WORKER,
   DEFAULT_SERVICE_WORKER_CONFIG,
   createServiceWorkerConfig,
-  type ServiceWorkerConfig
+  type ServiceWorkerConfig,
+  describeBootstrapEnvironment,
+  type BootstrapEnvironment
 } from "./offline/index.js";
 
 /** Browser entry convenience: default storage = localStorage. */

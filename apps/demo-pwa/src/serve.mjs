@@ -1,40 +1,20 @@
 #!/usr/bin/env node
 /**
- * Serves apps/demo-pwa/public and prints pairing instructions.
- * Run the whole stack with: npm run stack -w root
+ * Serves the generated Crosslink bootstrap for local development.
  *
- * Security notes:
- *  - Path traversal is blocked by resolving against the web root and
- *    rejecting anything that escapes it (encoded or not).
- *  - Every response carries a strict CSP and related hardening headers.
+ * Bound to loopback deliberately. `127.0.0.1` is a secure context, so the
+ * service worker registers, the offline shell is cached and Add to Home Screen
+ * behaves like an install — the full experience, on the one address that gets
+ * it without a certificate. On a LAN address over plain http the browser gives
+ * none of that, which is why the published site in `dist/` exists.
  */
 import http from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import { fileURLToPath } from "node:url";
-import QRCode from "qrcode";
 
-const root = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public"));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const port = Number(process.env.PORT ?? 8090);
-
-function getQrTarget() {
-  if (process.env.CROSSLINK_QR_URL) return process.env.CROSSLINK_QR_URL;
-  if (process.env.CROSSLINK_PUBLIC_URL) return process.env.CROSSLINK_PUBLIC_URL;
-  try {
-    const tunnelPath = path.resolve(root, "..", "..", ".tunnel-urls.json");
-    if (existsSync(tunnelPath)) {
-      const urls = JSON.parse(readFileSync(tunnelPath, "utf8"));
-      const hit = urls.pwa || urls.notes || urls.web || urls.public;
-      if (hit) return hit.endsWith("/") ? hit : `${hit}/`;
-    }
-  } catch {}
-  return defaultLanUrl();
-}
-
-/** URL encoded by the QR widget. */
-const qrTarget = getQrTarget();
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -47,86 +27,36 @@ const types = {
 };
 
 const securityHeaders = {
-  "content-security-policy": [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self' data:",
-    "connect-src 'self' ws: wss: http: https:",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'"
-  ].join("; "),
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
-  "permissions-policy": "camera=(self), microphone=(), geolocation=()",
   "cross-origin-opener-policy": "same-origin"
 };
 
-let qrSvgPromise = null;
-function getQrSvg() {
-  qrSvgPromise ??= QRCode.toString(qrTarget, {
-    type: "svg",
-    margin: 1,
-    width: 320,
-    color: { dark: "#0f172a", light: "#e2e8f0" }
-  });
-  return qrSvgPromise;
-}
-
-function defaultLanUrl() {
-  // CROSSLINK_LAN_HOST pins the address (see @crosslink/sdk-node's
-  // resolveLanHost) - useful when the machine has more than one active
-  // network and auto-detection picks an interface the phone can't reach.
-  const pinned = process.env.CROSSLINK_LAN_HOST;
-  if (pinned) return `http://${pinned}:${port}/`;
-  for (const list of Object.values(os.networkInterfaces())) {
-    for (const nic of list ?? []) {
-      if (nic.family === "IPv4" && !nic.internal) return `http://${nic.address}:${port}/`;
-    }
-  }
-  return `http://127.0.0.1:${port}/`;
-}
-
 const server = http.createServer(async (req, res) => {
-  for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
-
-  let urlPath;
-  try {
-    urlPath = decodeURIComponent((req.url ?? "/").split("?")[0].split("#")[0]);
-  } catch {
-    res.writeHead(400).end("bad request");
-    return;
-  }
-
-  if (urlPath === "/qr.svg") {
-    res.setHeader("cache-control", "public, max-age=300");
-    res.writeHead(200, { "content-type": types[".svg"] }).end(await getQrSvg());
-    return;
-  }
-
-  // Resolve inside the web root; reject anything that escapes it.
-  const file = path.resolve(root, "." + (urlPath === "/" ? "/index.html" : urlPath));
-  if (file !== root && !file.startsWith(root + path.sep)) {
+  const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+  const requested = url.pathname === "/" ? "/index.html" : url.pathname;
+  const resolved = path.resolve(path.join(root, requested));
+  // The separator is part of the check: a sibling directory whose name merely
+  // starts with the root's name would otherwise pass.
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     res.writeHead(403).end("forbidden");
     return;
   }
-
   try {
-    const data = await readFile(file);
-    const ext = path.extname(file);
-    res.setHeader(
-      "cache-control",
-      ext === ".html" ? "no-cache" : "public, max-age=3600"
-    );
-    res.writeHead(200, { "content-type": types[ext] ?? "application/octet-stream" });
-    res.end(data);
+    const body = await readFile(resolved);
+    for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
+    res.writeHead(200, {
+      "content-type": types[path.extname(resolved)] ?? "application/octet-stream",
+      "cache-control": "no-cache"
+    });
+    res.end(body);
   } catch {
     res.writeHead(404).end("not found");
   }
 });
 
-server.listen(port, () => {
-  console.log(`demo PWA → http://127.0.0.1:${port}`);
-  console.log(`QR widget encodes → ${qrTarget} (override with CROSSLINK_QR_URL)`);
+server.listen(port, "127.0.0.1", () => {
+  console.log(`\n  Crosslink bootstrap (generated) → http://127.0.0.1:${port}`);
+  console.log(`  Serving ${root}`);
+  console.log(`  Run \`npm run build\` first if that directory is empty.\n`);
 });

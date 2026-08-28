@@ -1,0 +1,150 @@
+---
+title: Mobile Bootstrap
+description: What happens between the QR scan and your mobile app
+---
+
+When someone scans a Crosslink QR, Crosslink runs the whole onboarding. Your
+mobile page is handed a trusted, connected RPC channel and nothing else.
+
+```text
+Desktop app
+    ↓  createPairingCard
+QR scanned
+    ↓
+Crosslink mobile bootstrap        ← pairing, code entry, SAS confirmation
+    ↓
+Trust persisted on the device
+    ↓
+Add to Home Screen  ── or ──  Continue in browser
+    ↓
+crosslink.onConnected(rpc)        ← your app starts here
+```
+
+Every screen above the last line is Crosslink's. You do not build, style or
+replace them.
+
+## Turning it on
+
+Declare your application and point at your mobile page:
+
+```ts
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
+const host = createCrosslinkServer({
+  application: {
+    id: "com.example.notes",
+    name: "Example Notes",
+    shortName: "Notes",
+    icon: "/icon-192.png",
+    accentColor: "#f97316",
+    backgroundColor: "#101014",
+    appearance: "dark"
+  },
+  mobile: { entry: "./mobile/index.html" },
+  capabilities: [{ id: "notes.read", title: "Read notes", risk: "low" }]
+});
+
+host.expose("notes.list", () => notes, { capability: "notes.read" });
+await host.start();
+```
+
+That is the entire mobile setup. From `mobile.entry` alone, Crosslink serves:
+
+| Path | What it is |
+| --- | --- |
+| `/` | Your page, with the installable head injected |
+| `/manifest.webmanifest` | Generated from your `application` metadata |
+| `/sw.js` | Generated service worker, at root scope |
+| `/__crosslink/sdk.js` | The browser SDK — you need no bundler |
+| `/__crosslink/boot.js` | Boot script carrying your metadata |
+| `/__crosslink/icon-*.png` | Your icon, or a generated one |
+| `/__crosslink/install/:id` | Install handoff, so an installed app does not re-pair |
+
+It rides on the same port as the Crosslink transport, so the installable page
+and the socket it opens share an origin and a router mapping.
+
+## What your mobile page looks like
+
+Your markup, plus one callback:
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Notes</title>
+</head>
+<body>
+  <ul id="notes" hidden></ul>
+
+  <script>
+    crosslink.onConnected(async (rpc) => {
+      document.getElementById("notes").hidden = false;
+      render(await rpc.call("notes.list"));
+    });
+
+    crosslink.onDisconnected(() => {
+      document.getElementById("notes").hidden = true;
+    });
+  </script>
+</body>
+</html>
+```
+
+No manifest link. No apple-touch-icon. No `navigator.serviceWorker.register`.
+No SDK script tag. No pairing screen. Crosslink injects what the page needs and
+publishes `window.crosslink` before any of your scripts run.
+
+`onConnected` fires again after every reconnect, so there is no reconnect
+handling to write either.
+
+### The `crosslink` object
+
+| Member | Purpose |
+| --- | --- |
+| `onConnected(fn)` | Runs now if connected, and after every reconnect. Returns an unsubscribe. |
+| `onDisconnected(fn)` | Runs when the trusted channel goes away. |
+| `onStateChange(fn)` | Bootstrap state transitions. |
+| `rpc` | The current channel, or `null`. |
+| `reset()` | Clears this device's identity and pairs again. |
+
+Corresponding DOM events (`crosslink:connected`, `crosslink:disconnected`,
+`crosslink:state`) fire too, for pages that prefer listeners.
+
+## Mounting it on a server you already run
+
+A host with its own HTTP server can mount the same handler instead of letting
+Crosslink attach it to the transport port:
+
+```ts
+const bootstrap = host.createBootstrapHandler();
+myServer.use((req, res) => bootstrap(req, res));
+```
+
+## Using the bootstrap directly
+
+`CrosslinkMobileBootstrap` is the class behind all of this, and it is public.
+Construct it yourself only when you are not serving the page from a Crosslink
+host — a native shell, or a page hosted somewhere Crosslink cannot inject into:
+
+```ts
+import { CrosslinkMobileBootstrap } from "@crosslink/sdk-browser";
+
+new CrosslinkMobileBootstrap({
+  appId: "com.example.notes",
+  appName: "Example Notes",
+  capabilities: ["notes.read"],
+  onAuthorized: (rpc) => mountNotes(rpc),
+  onUnauthorized: () => unmountNotes()
+}).start();
+```
+
+The screens are identical either way. `mobile.entry` is the same thing with the
+metadata filled in from your host.
+
+## Before you ship
+
+Add to Home Screen and the cached offline screen depend on the origin the page
+is served from, not on Crosslink. Read
+[Durable Origins](/client/durable-origin) before you assume a LAN address is
+enough — it is not, and the failure only shows up on a phone.

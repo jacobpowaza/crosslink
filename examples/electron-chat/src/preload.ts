@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("crosslink", {
   getPairingCode: () => ipcRenderer.invoke("crosslink:pair"),
   sendMessage: (text: string) => ipcRenderer.invoke("crosslink:send", text),
   revokeDevice: (deviceId: string) => ipcRenderer.invoke("crosslink:revoke", deviceId),
+  setBackgroundEnabled: (enabled: boolean) => ipcRenderer.invoke("crosslink:set-background", enabled),
   onState: (listener: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown) => listener(state);
     ipcRenderer.on("crosslink:state", handler);

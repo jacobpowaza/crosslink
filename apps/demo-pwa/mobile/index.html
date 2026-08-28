@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Crosslink Notes</title>
+  <link rel="stylesheet" href="./style.css" />
+  <!--
+    This file is the whole of the developer's mobile app.
+
+    There is no pairing screen, no SAS confirmation, no Add to Home Screen
+    screen, no offline screen, no manifest link, no service-worker
+    registration and no SDK bundle here, because Crosslink owns all of them.
+    `writeStaticBootstrap` injects what this page needs, and
+    `CrosslinkMobileBootstrap` has already run every one of those screens by
+    the time `crosslink.onConnected` fires.
+  -->
+</head>
+<body>
+  <main id="app" hidden>
+    <header class="bar">
+      <h2>Notes</h2>
+      <span id="connState" class="pill">connected</span>
+    </header>
+
+    <form id="newNote" class="composer">
+      <input id="title" placeholder="Title" required maxlength="200" autocomplete="off" />
+      <textarea id="body" rows="3" placeholder="Body" maxlength="10000"></textarea>
+      <button class="primary">Add note</button>
+    </form>
+    <p id="formStatus" class="status err" role="alert"></p>
+
+    <ul id="noteList" class="notes"></ul>
+    <p id="emptyState" class="hint">No notes yet.</p>
+    <p id="eventLog" class="status"></p>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fmt = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    let rpc = null;
+
+    async function renderNotes() {
+      if (!rpc) return;
+      try {
+        const notes = await rpc.call("notes.list");
+        const ul = $("noteList");
+        ul.replaceChildren();
+        $("emptyState").hidden = notes.length > 0;
+        for (const n of notes) {
+          const li = document.createElement("li");
+          const time = document.createElement("time");
+          time.textContent = fmt(n.createdAt);
+          const title = document.createElement("b");
+          title.textContent = n.title;
+          li.append(time, title);
+          if (n.body) {
+            const body = document.createElement("p");
+            body.textContent = n.body;
+            li.appendChild(body);
+          }
+          ul.appendChild(li);
+        }
+      } catch (err) {
+        $("eventLog").textContent = err.message;
+      }
+    }
+
+    $("newNote").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      $("formStatus").textContent = "";
+      try {
+        await rpc.call("notes.create", { title: $("title").value, body: $("body").value });
+        $("title").value = "";
+        $("body").value = "";
+        await renderNotes();
+      } catch (err) {
+        $("formStatus").textContent = err.message;
+      }
+    });
+
+    // Crosslink hands over a trusted, connected RPC channel. It runs again by
+    // itself after every reconnect, so there is no reconnect logic here either.
+    crosslink.onConnected(async (connected) => {
+      rpc = connected;
+      $("app").hidden = false;
+      $("connState").textContent = "connected";
+      connected.subscribe("notes.changed", (payload) => {
+        $("eventLog").textContent = `notes.changed @ ${fmt(payload?.at ?? Date.now())}`;
+        renderNotes();
+      });
+      await renderNotes();
+    });
+
+    crosslink.onDisconnected(() => {
+      rpc = null;
+      $("app").hidden = true;
+    });
+  </script>
+</body>
+</html>

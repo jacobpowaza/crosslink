@@ -47,7 +47,11 @@
       {
         "group": "CLIENT",
         "pages": [
+          "client/pairing-card",
+          "client/mobile-bootstrap",
           "client/pwa",
+          "client/durable-origin",
+          "client/branding",
           "client/custom-ui"
         ]
       },
@@ -103,6 +107,7 @@
         "group": "RESOURCES",
         "pages": [
           "resources/examples",
+          "resources/debugging-mobile-reconnect",
           "resources/troubleshooting",
           "resources/faq"
         ]

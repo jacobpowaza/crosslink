@@ -1,0 +1,119 @@
+---
+title: Durable Origins
+description: Why the installed app's address matters, and how to get one for free
+---
+
+Crosslink's mobile promise is:
+
+```text
+pair once → add to home screen → open it a week later with the desktop off
+  → Crosslink's reconnect screen → desktop comes back → app resumes, no re-pairing
+```
+
+Whether you actually get that depends on the **origin** the phone loaded the page
+from. This is browser policy, not a Crosslink setting, so it is worth
+understanding before you ship rather than discovering on a phone.
+
+## Three browser rules
+
+**A service worker needs a secure context.** No worker means no cached shell,
+which means an offline launch shows the browser's own *cannot connect to server*
+page instead of Crosslink's reconnect screen. Secure means `https://`, or
+`localhost` / `127.0.0.1`.
+
+**`crypto.subtle` needs a secure context too.** On an insecure origin Crosslink
+cannot wrap this device's identity in a non-extractable key and falls back to
+storing it in the clear.
+
+**An `https://` page cannot open a `ws://` socket.** Browsers block it as mixed
+content. So the origin that *can* cache an offline shell is exactly the origin
+that *cannot* take the LAN shortcut.
+
+That last one is the awkward part, and Crosslink does not paper over it: a
+blocked route is reported as blocked rather than retried until it times out.
+
+## What each setup actually delivers
+
+| Serving the page from | Offline shell | Add to Home Screen | Encrypted identity | Direct LAN route | Survives an IP change |
+| --- | --- | --- | --- | --- | --- |
+| `http://192.168.x.x:8787` (host's LAN address) | ✗ | bookmark only | ✗ | ✓ | ✗ |
+| `http://127.0.0.1:8787` (same machine) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A published static site over `https` | ✓ | ✓ | ✓ | ✗ — needs `wss` | ✓ |
+| An `https` tunnel to the host | ✓ | ✓ | ✓ | via the tunnel | only with a stable hostname |
+
+The default LAN setup is fine for development and for a companion app used while
+the desktop is running. It is not enough for an installed app that must open
+when the desktop is off.
+
+Your host tells you which row you are in:
+
+```ts
+console.log(host.describeMobileDelivery().message);
+```
+
+```text
+http://192.168.1.83:8787 is plain HTTP on a non-local address. Phones can pair
+and use the app over it, but the browser will not register a service worker
+there, so Add to Home Screen produces a bookmark rather than an app, the offline
+screen is never cached, and this device's Crosslink identity is stored
+unencrypted.
+```
+
+## Getting a durable origin for free
+
+Publish Crosslink's bootstrap as a static site. It costs nothing, needs no
+domain and no certificate, and it never has to be online for your app to work —
+it is only a shell.
+
+```ts
+await host.writeStaticBootstrap("./dist-bootstrap");
+```
+
+That writes `index.html`, `sw.js`, `manifest.webmanifest`, the browser SDK, your
+icons and a `.nojekyll` marker, all with relative links so a GitHub Pages project
+site (`https://you.github.io/your-app/`) works unchanged.
+
+Publish it once, then point your host at it:
+
+```ts
+createCrosslinkServer({
+  application: { /* … */ },
+  mobile: { entry: "./mobile/index.html" },
+  pairing: { bootstrapUrl: "https://you.github.io/your-app/" }
+});
+```
+
+Every QR your host mints now leads to that address. The published origin owns
+the install, the service worker and the cache; the desktop's address is
+something the shell *resolves* at connect time, from the pairing payload and the
+trusted device identity stored on the phone. Your laptop can change networks,
+change IP, or be off for a week — the installed app still opens, still shows
+Crosslink's reconnect screen, and still reconnects without a new pairing code.
+
+## The catch, stated plainly
+
+A published `https` origin cannot use `ws://`, so it cannot take the direct LAN
+route. For those installs the host needs a `wss://` route:
+
+- a **relay** (`relayUrl`) — Crosslink ships one you can self-host, and it only
+  ever sees ciphertext; or
+- a **tunnel** (`tunnelUrl`) you already run.
+
+Without one, `describeMobileDelivery()` says so:
+
+```text
+Installs from https://you.github.io/your-app/ are durable, but this host
+advertises no wss:// route. A page served over https cannot open a ws:// socket,
+so those installs cannot reach this machine. Configure a relay (relayUrl) or a
+tunnel (tunnelUrl).
+```
+
+## Choosing
+
+- **Building or demoing?** Use the defaults. Open the mobile page on
+  `127.0.0.1` when you want to exercise the full install and offline flow.
+- **Companion app used while the desktop is running, same Wi-Fi?** The LAN
+  origin is fine. Expect a bookmark rather than an install, and say so to users.
+- **Installed app that must open when the desktop is off?** Publish the static
+  bootstrap and configure a relay. This is the configuration the promise at the
+  top of this page describes.

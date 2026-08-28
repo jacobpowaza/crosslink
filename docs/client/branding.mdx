@@ -1,0 +1,94 @@
+---
+title: Branding and Theming
+description: The colours you set, and the identity that stays
+---
+
+Every Crosslink application shows the same pairing, install, offline and revoked
+screens. You give them your name, your icon and your colours; the layout and the
+Crosslink identity are the framework's.
+
+This is the whole customisation surface. It is small on purpose — a recognisable
+pairing screen is only worth anything if it is recognisable everywhere.
+
+## What you set
+
+Once, on the host. Everything else inherits it — the pairing card on the desktop,
+the bootstrap screens on the phone, the offline screen, the generated manifest
+and the generated icons.
+
+```ts
+createCrosslinkServer({
+  application: {
+    id: "com.example.notes",
+    name: "Example Notes",
+    shortName: "Notes",
+    icon: "/icon-192.png",
+    accentColor: "#f97316",
+    backgroundColor: "#101014",
+    textColor: "#f5f5f4",
+    appearance: "dark"
+  }
+});
+```
+
+| Field | Effect |
+| --- | --- |
+| `name` | Title on Crosslink-owned screens; `name` in the manifest. |
+| `shortName` | Home-screen tile label. |
+| `icon` | Your icon on Crosslink screens and the home screen. |
+| `accentColor` | Actions, and the tint applied to the Crosslink mark. |
+| `backgroundColor` | Screen background; decides light/dark when `appearance` is unset. |
+| `textColor` | Primary text. Derived from the background when omitted. |
+| `appearance` | `"light"`, `"dark"`, or derived. |
+
+## The Crosslink mark
+
+The mark is an SVG filled with `currentColor`, from one path in one module. It
+is tinted from your accent so it belongs to your application's palette, and it
+is never shipped as a recoloured copy.
+
+Before it is drawn, Crosslink checks it against your background and lifts it
+until it clears the WCAG contrast floor for graphical objects (3:1). An accent
+that would have rendered the mark as an invisible smudge keeps its hue and gains
+enough luminance to be legible. The attribution text is held to the 4.5:1 floor
+for body text the same way.
+
+```ts
+import { resolveCrosslinkTheme, contrastRatio, parseColor } from "@crosslink/sdk-browser";
+
+const theme = resolveCrosslinkTheme({ accentColor: "#050505", backgroundColor: "#000000" });
+// theme.logoColor is lifted away from #050505 until it is readable.
+```
+
+So two applications with different palettes show visibly different screens and
+the same identity.
+
+## What you cannot change
+
+The mark and the attribution appear on every Crosslink-owned screen, and no
+supported configuration removes them. There is no renderer option, no markup
+slot, and no "unbranded" mode:
+
+- the pairing card
+- the mobile pairing and code-entry screens
+- the Add to Home Screen screen
+- the offline and reconnecting screens
+- the revoked-device screen
+
+Your application icon and the Crosslink mark are separate things and are drawn
+separately — your icon says which app this is, the mark says what is securing it.
+
+## Your own UI
+
+Everything past the handoff is yours, with no Crosslink styling imposed:
+
+- your desktop application window
+- your mobile application, from `crosslink.onConnected(rpc)` onward
+- your RPC methods and business logic
+
+<Note>
+There is no supported path for replacing Crosslink's onboarding or connection
+screens. If you find yourself wanting to, the thing you probably want is a
+different `accentColor` — and if it genuinely isn't, that is worth raising as an
+issue rather than working around.
+</Note>

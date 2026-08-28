@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Crosslink Todo</title>
+  <link rel="stylesheet" href="./style.css" />
+  <!--
+    The whole of the developer's mobile app.
+
+    This file used to be accompanied by an install-gate screen, an "Add to Home
+    Screen" screen, a "Continue in browser" button, a network-mode picker, a
+    pairing screen, an offline screen, a service worker and a manifest — around
+    500 lines re-implementing what CrosslinkMobileBootstrap already owns. All of
+    it is gone: Crosslink runs those screens and hands over a trusted, connected
+    RPC channel through `crosslink.onConnected`.
+  -->
+</head>
+<body>
+  <div id="app-screen" class="screen" hidden>
+    <div class="container">
+      <div class="app-header">
+        <h1>Todo</h1>
+        <span id="conn-status" class="status-pill">connected</span>
+      </div>
+
+      <div class="card">
+        <div class="todo-input">
+          <input id="new-todo" placeholder="New todo..." />
+          <button id="add-btn" class="small" style="width:auto;padding:10px 16px">+</button>
+        </div>
+        <ul class="todo-list" id="todo-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let rpc = null;
+
+    async function loadTodos() {
+      if (!rpc) return;
+      const todos = await rpc.call("todos.list").catch(() => []);
+      const list = $("todo-list");
+      list.replaceChildren();
+      for (const t of todos) {
+        const li = document.createElement("li");
+        li.className = "todo-item" + (t.done ? " done" : "");
+
+        // Built as nodes rather than interpolated markup: a todo title is
+        // user-supplied text, and this list renders on a trusted device.
+        const title = document.createElement("span");
+        title.className = "todo-title";
+        title.textContent = t.title;
+        li.appendChild(title);
+
+        if (!t.done) {
+          const done = document.createElement("button");
+          done.className = "todo-btn";
+          done.textContent = "Done";
+          done.addEventListener("click", () => act("todos.complete", t.id));
+          li.appendChild(done);
+        }
+        const del = document.createElement("button");
+        del.className = "todo-btn del";
+        del.textContent = "x";
+        del.addEventListener("click", () => act("todos.delete", t.id));
+        li.appendChild(del);
+
+        list.appendChild(li);
+      }
+    }
+
+    async function act(method, id) {
+      try {
+        await rpc.call(method, { id });
+        await loadTodos();
+      } catch (err) {
+        console.error(method, err);
+      }
+    }
+
+    async function createTodo() {
+      const input = $("new-todo");
+      const title = input.value.trim();
+      if (!title || !rpc) return;
+      input.value = "";
+      await rpc.call("todos.create", { title }).catch((err) => console.error(err));
+      await loadTodos();
+    }
+
+    $("add-btn").addEventListener("click", createTodo);
+    $("new-todo").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") createTodo();
+    });
+
+    crosslink.onConnected(async (connected) => {
+      rpc = connected;
+      $("app-screen").hidden = false;
+      connected.subscribe("todos.changed", () => loadTodos());
+      await loadTodos();
+    });
+
+    crosslink.onDisconnected(() => {
+      rpc = null;
+      $("app-screen").hidden = true;
+    });
+  </script>
+</body>
+</html>

@@ -8,7 +8,21 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <header><div><strong>Crosslink</strong><span>Electron Chat</span></div><p id="reach">Starting securely…</p></header>
+    <header>
+      <div><strong>Crosslink</strong><span>Electron Chat</span></div>
+      <div class="header-actions">
+        <p id="reach">Starting securely…</p>
+        <button id="settings-button" class="settings-button" type="button" aria-label="Crosslink settings" aria-expanded="false">&#9881;</button>
+        <div id="settings-menu" class="settings-menu" hidden>
+          <p class="eyebrow">Crosslink settings</p>
+          <label class="settings-toggle">
+            <span><strong>Start at login and keep Crosslink running</strong><small>Closing the window keeps paired devices reachable in the background.</small></span>
+            <input id="background-toggle" type="checkbox">
+          </label>
+          <p id="background-status" class="settings-status"></p>
+        </div>
+      </div>
+    </header>
     <main>
       <section class="sidebar">
         <div class="intro"><p class="eyebrow">Trusted devices</p><h1>Your app.<br>Every network.</h1><p>Pair explicitly approved devices over an end-to-end encrypted Crosslink session.</p><button id="pair-button" type="button">Pair a device</button></div>

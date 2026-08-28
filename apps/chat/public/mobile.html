@@ -2,19 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#0f172a" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Crosslink Chat" />
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="icon-180.png" />
-  <link rel="icon" type="image/png" href="icon-192.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet" />
   <title>Crosslink Chat</title>
+  <!--
+    No manifest link, no apple-mobile-web-app meta, no icons, no service worker
+    registration and no SDK bundle: Crosslink injects all of that when it serves
+    this page, from the `application` block in src/server.ts. What is left is
+    this demo's own UI.
+  -->
   <style>
     :root {
       color-scheme: dark;
@@ -177,7 +171,7 @@
     <header>
       <h1>Crosslink Chat</h1>
       <div class="status">
-        <button id="resetBtn" onclick="window.CrosslinkSDK.resetDeviceStorage().then(() => location.reload())" style="background:rgba(255,255,255,0.08);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Reset</button>
+        <button id="resetBtn" onclick="crosslink.reset()" style="background:rgba(255,255,255,0.08);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;">Reset</button>
         <span class="dot on" id="dot"></span>
         <span id="stateText">Connected</span>
       </div>
@@ -195,27 +189,9 @@
   </div>
 
   <script>
-    // If an older Crosslink worker is already controlling this iPhone, reload
-    // once when the newly-installed worker claims the page so the install flow
-    // cannot continue running a stale bootstrap bundle from its old cache.
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "crosslink.sw-reloaded.v3";
-        if (!sessionStorage.getItem(key)) {
-          sessionStorage.setItem(key, "1");
-          location.reload();
-        }
-      });
-    }
-  </script>
-  <script src="./bundle.js?v=4.0.0"></script>
-  <script>
     const $ = id => document.getElementById(id);
     const vibrate = p => { try { navigator.vibrate?.(p); } catch {} };
 
-    let rpc = null;
-
-    // ── Chat logic ──
     function appendMessage(m, skipEmptyCheck) {
       if (!skipEmptyCheck) $("emptyChat")?.classList.add("hidden");
       const el = $("messages");
@@ -231,29 +207,7 @@
       el.scrollTop = el.scrollHeight;
     }
 
-    async function loadHistory() {
-      if (!rpc) return;
-      try {
-        const res = await rpc.call("chat.history");
-        const msgs = res?.messages ?? [];
-        for (const m of msgs) appendMessage(m, true);
-        if (msgs.length > 0) $("emptyChat")?.classList.add("hidden");
-      } catch (e) {
-        console.warn("Failed to load history:", e);
-      }
-    }
-
-    function subscribeToMessages() {
-      if (!rpc) return;
-      try {
-        rpc.subscribe("chat.new_message", (msg) => {
-          vibrate(15);
-          appendMessage(msg);
-        });
-      } catch (e) {
-        console.warn("Failed to subscribe to messages:", e);
-      }
-    }
+    let rpc = null;
 
     async function sendMsg() {
       const input = $("msgInput");
@@ -274,48 +228,27 @@
       }
     });
 
-    // ── Single Authoritative Crosslink Mobile Bootstrap Lifecycle ──
-    const bootstrap = new window.CrosslinkSDK.CrosslinkMobileBootstrap({
-      appId: "com.crosslink.chat",
-      appName: "Crosslink Chat",
-      capabilities: ["chat.send", "chat.read"],
-      clientOptions: {
-        dialTimeoutMs: 3000
-      },
-      offline: {
-        appName: "Crosslink Chat",
-        icon: "./icon-192.png",
-        title: "Crosslink Chat is offline",
-        message: "Open Crosslink Chat on your computer to reconnect automatically."
-      },
-      onboarding: {
-        appName: "Crosslink Chat",
-        icon: "./icon-192.png"
-      },
-      onAuthorized: async (connectedRpc) => {
-        rpc = connectedRpc;
-        // Mount & expose the developer chat app interface
-        $("chatApp").style.display = "flex";
-        $("dot").className = "dot on";
-        $("stateText").textContent = "Connected";
-        subscribeToMessages();
-        loadHistory();
-      },
-      onUnauthorized: () => {
-        rpc = null;
-        // Hide developer chat app interface immediately
-        $("chatApp").style.display = "none";
-      },
-      onStateChange: (state) => {
-        if (state === "offline") {
-          $("dot").className = "dot";
-          $("stateText").textContent = "Offline";
-        }
-      }
+    // Crosslink hands over here, once this device is paired and trusted. The
+    // pairing screen, the Add to Home Screen screen, the offline screen and the
+    // reconnect loop have all already happened; this callback runs again by
+    // itself after every reconnect.
+    crosslink.onConnected(async (connected) => {
+      rpc = connected;
+      $("chatApp").style.display = "flex";
+      $("dot").className = "dot on";
+      $("stateText").textContent = "Connected";
+      rpc.subscribe("chat.new_message", (msg) => {
+        vibrate(15);
+        appendMessage(msg);
+      });
+      const history = await rpc.call("chat.history").catch(() => ({ messages: [] }));
+      for (const m of history?.messages ?? []) appendMessage(m, true);
+      if ((history?.messages ?? []).length > 0) $("emptyChat")?.classList.add("hidden");
     });
 
-    bootstrap.start().catch((err) => {
-      console.error("[Crosslink Chat] Mobile bootstrap start failed:", err);
+    crosslink.onDisconnected(() => {
+      rpc = null;
+      $("chatApp").style.display = "none";
     });
   </script>
 </body>

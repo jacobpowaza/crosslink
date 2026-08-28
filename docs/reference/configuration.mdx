@@ -8,6 +8,7 @@ description: All configuration options
 ```js
 createCrosslinkServer({
   application: { ... },
+  mobile: { entry: "./mobile/index.html" },
   capabilities: [ ... ],
   signalingUrl: "...",
   relayUrl: "...",
@@ -20,11 +21,38 @@ createCrosslinkServer({
 
 ### application
 
+Identity and branding. Crosslink-owned screens, the generated manifest and the
+generated icons all come from here, so it is stated once.
+
 | Property | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | `string` | Yes | Unique application identifier (reverse-domain recommended) |
 | `name` | `string` | Yes | Human-readable name |
 | `version` | `string` | No | Semantic version |
+| `shortName` | `string` | No | Home-screen tile label. Defaults to `name` |
+| `icon` | `string` | No | Icon URL or path. A tile is generated from `accentColor` when omitted |
+| `accentColor` | `string` | No | Actions, and the tint applied to the Crosslink mark |
+| `backgroundColor` | `string` | No | Background of Crosslink-owned screens |
+| `textColor` | `string` | No | Primary text. Derived from the background when omitted |
+| `appearance` | `"light" \| "dark" \| "auto"` | No | Forces a palette instead of deriving one |
+
+See [Branding and Theming](/client/branding). There is no option that replaces
+Crosslink's screens or removes its mark and attribution.
+
+### mobile
+
+Your mobile application, and where Crosslink should serve it. Setting `entry`
+turns on the built-in bootstrap: Crosslink then owns the manifest, service
+worker, icons, browser SDK, install handoff and every onboarding screen.
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `entry` | `string` | Path to your mobile HTML entry point |
+| `assets` | `string \| string[]` | Extra directories served beside the entry |
+| `capabilities` | `string[]` | Capabilities the mobile client requests at pairing. Defaults to all declared |
+| `enabled` | `boolean` | Set `false` to serve nothing automatically and keep a custom handler |
+
+See [Mobile Bootstrap](/client/mobile-bootstrap).
 
 ### capabilities
 
@@ -60,7 +88,7 @@ validated endpoint and re-allocates after a regional/channel failure.
 | `port` | `number` | Port to bind (default: an ephemeral port, remembered across restarts) |
 | `bind` | `"loopback" \| "all"` | Bind address (default: `"loopback"`) |
 | `host` | `string` | Address to advertise for LAN pairing when `bind: "all"`. Overrides auto-detection (first non-internal interface, unreliable with more than one active network) — also settable via `CROSSLINK_LAN_HOST` |
-| `httpHandler` | `(req, res) => void \| Promise<void>` | Serves the app's own HTTP on the same port as the Crosslink transport (e.g. an installable mobile page) |
+| `httpHandler` | `(req, res) => void \| Promise<void>` | Serves your own HTTP on the transport port. Only needed when you are *not* using `mobile.entry` — Crosslink otherwise mounts its bootstrap here |
 
 ### pairing
 
@@ -70,7 +98,7 @@ validated endpoint and re-allocates after a regional/channel failure.
 | `autoApprove` | `boolean` | Dev convenience: skip human confirmation. Never grants above policy. Never for production |
 | `approve` | `(req: PairingApprovalRequest) => PairingApproval \| Promise<PairingApproval>` | Pairing approval callback |
 | `notifyApprovalRequest` | `(req) => void \| Promise<void>` | Raise a push/native notification before local approval. Delivery cannot approve by itself |
-| `bootstrapUrl` | `string` | Base URL of a hosted, installable client page for the iOS "Add to Home Screen" pairing flow |
+| `bootstrapUrl` | `string` | Published `https` origin of Crosslink's static bootstrap. Makes an installed app durable across host address changes — generate it with `host.writeStaticBootstrap()`. See [Durable Origins](/client/durable-origin) |
 
 ### mdns
 

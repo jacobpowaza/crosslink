@@ -1,5 +1,7 @@
 export { createCrosslinkServer, CrosslinkServer, composeCrosslinkHost } from "./server.js";
 export type {
+  ApplicationBranding,
+  MobileAppConfig,
   CrosslinkServerConfig,
   OfflineConfig,
   PwaConfig,
@@ -50,3 +52,34 @@ export {
   type MdnsHost,
   type MdnsBrowser,
 } from "./mdns.js";
+
+/* -------------------------------------------------------------
+   Crosslink-owned HTTP surfaces. `createCrosslinkServer` mounts
+   the bootstrap automatically when `mobile.entry` is set; these
+   exports are for hosts that already run their own server and
+   want to mount the same handlers themselves.
+   ------------------------------------------------------------- */
+export {
+  createBootstrapHandler,
+  injectBootstrap,
+  renderInjectedHead,
+  bootstrapPrecacheAssets,
+  isSecureContextRequest,
+  type BootstrapHostView,
+  type BootstrapHandlerOptions
+} from "./mobile/bootstrap-host.js";
+export {
+  createControlHandler,
+  isLoopbackRequest,
+  type ControlHostView,
+  type ControlEvent,
+  type ControlHandlerOptions
+} from "./mobile/control-host.js";
+export { renderBootScript, type BootPayload } from "./mobile/boot-script.js";
+export { readBrowserBundle, renderIconPng, renderMarkSvg } from "./mobile/assets.js";
+export {
+  writeStaticBootstrap,
+  STATIC_PRECACHE,
+  type StaticBootstrapOptions,
+  type StaticBootstrapResult
+} from "./mobile/static-bootstrap.js";

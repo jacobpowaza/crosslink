@@ -71,6 +71,75 @@ export function filterEndpoints(
   return endpoints.filter((e) => kinds.includes(e.kind));
 }
 
+/** An endpoint the current page is not permitted to open, and why. */
+export interface BlockedEndpoint {
+  endpoint: PairingEndpoint;
+  reason: string;
+}
+
+export interface EndpointReachability {
+  /** Endpoints this page may actually open a socket to. */
+  usable: PairingEndpoint[];
+  /** Endpoints the browser will refuse, with the rule that refuses them. */
+  blocked: BlockedEndpoint[];
+}
+
+/**
+ * Narrows a pairing payload's endpoints to the ones the *calling page* can use.
+ *
+ * A page served over https may not open a `ws://` socket: browsers classify it
+ * as mixed content and block the connection outright. That rule collides
+ * head-on with Crosslink's most attractive route — a direct `ws://192.168.x.x`
+ * link to the host — because the origin that can cache an offline shell (https)
+ * is exactly the origin that cannot take the LAN shortcut.
+ *
+ * Filtering here rather than at the dial site is deliberate: this module is
+ * already the single place that knows what an endpoint means, and a blocked
+ * endpoint that reaches the dialer looks identical to a host that is switched
+ * off. The `blocked` list exists so the caller can say which it was.
+ *
+ * `pageOrigin` is `null` outside a browser (Node hosts, native SDKs, tests),
+ * where no mixed-content rule applies and every endpoint stands.
+ */
+export function filterEndpointsForOrigin(
+  endpoints: readonly PairingEndpoint[],
+  pageOrigin: string | null | undefined
+): EndpointReachability {
+  if (!pageOrigin) return { usable: [...endpoints], blocked: [] };
+
+  let securePage: boolean;
+  try {
+    securePage = new URL(pageOrigin).protocol === "https:";
+  } catch {
+    return { usable: [...endpoints], blocked: [] };
+  }
+  if (!securePage) return { usable: [...endpoints], blocked: [] };
+
+  const usable: PairingEndpoint[] = [];
+  const blocked: BlockedEndpoint[] = [];
+  for (const endpoint of endpoints) {
+    let url: URL;
+    try {
+      url = new URL(endpoint.url);
+    } catch {
+      blocked.push({ endpoint, reason: "the endpoint URL could not be parsed" });
+      continue;
+    }
+    const secureScheme = url.protocol === "wss:" || url.protocol === "https:";
+    if (secureScheme || isLoopbackHost(url.hostname)) {
+      usable.push(endpoint);
+      continue;
+    }
+    blocked.push({
+      endpoint,
+      reason:
+        `this page is served over https, and browsers block an insecure ${url.protocol} ` +
+        `connection to ${url.hostname} as mixed content`
+    });
+  }
+  return { usable, blocked };
+}
+
 /**
  * Encodes endpoints for the `e` query parameter as `kind~url,kind~url`.
  *

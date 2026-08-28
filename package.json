@@ -2,7 +2,7 @@
   "name": "crosslink-monorepo",
   "private": true,
   "version": "0.1.0",
-  "description": "Crosslink — universal secure app-to-app connectivity framework",
+  "description": "Crosslink \u2014 universal secure app-to-app connectivity framework",
   "license": "Apache-2.0",
   "type": "module",
   "workspaces": [
@@ -16,7 +16,7 @@
     "node": ">=20.19"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "node scripts/build-workspaces.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -29,7 +29,6 @@
     "demo:chat:tunnel": "node scripts/run-chat-tunnel.mjs",
     "demo:todo": "node examples/todo-host/src/cli.ts",
     "demo:todo:remote": "node examples/todo-host/src/cli.ts --remote",
-    "demo:todo-client": "npm run dev -w @crosslink/example-todo-client",
     "demo:webrtc": "node examples/webrtc-upgrade/src/host.ts",
     "demo:webrtc-client": "npm run serve -w @crosslink/example-webrtc-upgrade",
     "demo:echo:remote": "node examples/echo-host/src/cli.ts --remote",
@@ -37,7 +36,7 @@
     "check:remote": "node scripts/check-remote-access.mjs",
     "docs:check": "node scripts/validate-docs.mjs && npm --prefix docs run check",
     "security:check": "npm audit --omit=dev --audit-level=high && node scripts/security-baseline.mjs",
-    "check:ci": "npm run typecheck && npm run build && npm test && npm run docs:check && npm run security:check"
+    "check:ci": "npm run build && npm run typecheck && npm test && npm run docs:check && npm run security:check"
   },
   "dependencies": {
     "untun": "^0.2.2"
@@ -46,6 +45,7 @@
     "@types/node": "^22.10.2",
     "concurrently": "^10.0.5",
     "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1",
     "typescript": "^5.9.2",
     "vitest": "^4.1.11"
   },

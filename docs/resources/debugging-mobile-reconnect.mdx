@@ -1,0 +1,41 @@
+---
+title: Debug mobile reconnection
+description: Recover a Crosslink mobile app when its desktop host is unavailable
+---
+
+On an HTTPS origin, Crosslink's installed mobile app keeps a small offline shell in the browser cache. If the desktop host stops, the shell opens after a bounded four-second network check, shows **Trying to reconnect**, and retries with backoff instead of exposing a browser connection-error page.
+
+## Try these steps in order
+
+1. Open the Crosslink-powered app on the computer.
+2. In the mobile reconnect screen, tap **Attempt reopening the app**.
+3. Confirm the phone and computer are on the same Wi-Fi when the host uses **Same network only**.
+4. If the host uses **Reachable from anywhere**, confirm that the desktop app reports an active public, tunnel, or relay route.
+5. Disable VPNs temporarily on both devices. A VPN can accept a router mapping while silently swallowing the return path.
+6. Check the computer's firewall and allow the desktop app to accept incoming connections.
+
+## If Safari shows its own connection error
+
+The offline shell becomes available after the mobile page has loaded successfully once and its service worker has taken control. Open the host once while it is reachable, wait a few seconds, and add the page to the Home Screen. Then test again from the installed app.
+
+<Warning>
+  A private-LAN URL such as `http://192.168.1.20` is not a secure browser context. Browsers do not allow that page to install a service worker, so a web app cannot intercept a later navigation after the host is gone. Use an HTTPS tunnel or another HTTPS bootstrap origin when the cached reconnect screen is a requirement.
+</Warning>
+
+Safari may also remove site data under storage pressure or after the user clears website data. In that case the browser no longer has a cached shell to display; open a fresh pairing QR from the desktop host to install it again.
+
+## Collect diagnostics
+
+On the desktop host, note:
+
+- the selected connection mode;
+- the routes listed in the pairing settings;
+- whether the host process is still running;
+- any `CL-P…` code shown in the pairing card;
+- the host's structured Crosslink logs around the failed attempt.
+
+For SDK integrations, log client state transitions and the host connectivity snapshot. See [Reconnection](/connections/reconnection) and [Troubleshooting](/resources/troubleshooting) for the relevant APIs and error categories.
+
+## Prevent the host from disappearing
+
+In packaged desktop apps that support it, open the settings cog and enable **Start at login and keep Crosslink running**. Closing the window then leaves the host active in the background, and the operating system starts it again after login.

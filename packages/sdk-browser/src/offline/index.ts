@@ -35,3 +35,7 @@ export {
   createServiceWorkerConfig,
   type ServiceWorkerConfig
 } from "./service-worker.js";
+export {
+  describeBootstrapEnvironment,
+  type BootstrapEnvironment
+} from "./environment.js";

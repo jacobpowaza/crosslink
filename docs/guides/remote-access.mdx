@@ -60,11 +60,12 @@ desktop app — or the whole machine — restarts.
 ## Turning it on after startup
 
 `networkMode` is often a runtime choice — a "reachable from anywhere" switch in
-a settings panel, not a constant in the source. Changing `config.networkMode`
-on a running host is enough: the next `getPairingCode(undefined, "remote")`
-opens remote access if it is not open yet. `server.enableRemoteAccess()` does
-the same thing explicitly, for a UI that wants the diagnostics before it shows a
-QR.
+a settings panel, not a constant in the source. Apply it with
+`await server.setNetworkMode("remote")`. Switching back with
+`await server.setNetworkMode("local-only")` releases the router mapping and
+disconnects signaling and relay reachability instead of merely hiding those
+routes from the next QR. `server.enableRemoteAccess()` is the lower-level probe
+for a UI that wants router diagnostics without changing the selected mode.
 
 The LAN listener must already be bound to all interfaces (`lan: { bind: "all" }`)
 for this to work — a mapping pointed at a loopback-only socket connects and then

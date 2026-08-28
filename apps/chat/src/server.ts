@@ -1,79 +1,42 @@
 #!/usr/bin/env node
 /**
- * Crosslink Chat Demo — desktop host + mobile PWA client.
+ * Crosslink Chat Demo — desktop host + mobile companion.
  *
- * The point of this demo is to show what a developer actually writes. Every
- * piece of pairing, QR, connectivity and transport logic lives in the SDK; this
- * file configures a host, exposes three RPC methods, and serves two pages.
+ * The point of this demo is what a developer actually writes. Pairing, QR
+ * codes, the mobile bootstrap, the installable manifest, the service worker,
+ * the offline screen and the reconnect flow are all Crosslink's; this file
+ * declares an application, exposes three RPC methods, and serves a desktop
+ * page with its own chat routes.
  *
  * Two HTTP surfaces, deliberately separated:
  *
- *   Control (127.0.0.1 only)  the desktop UI and its /api routes. These read
- *                             and mutate host state — pairing codes, the paired
- *                             device list, revocation — so they must not be
- *                             reachable from the network. Binding to loopback
- *                             is what enforces that; there is no token to leak.
- *   Bootstrap                 the mobile page, the SDK bundle, the service
- *                             worker and icons — served by the SDK on the very
- *                             same port as the Crosslink transport. One port
- *                             means one router mapping, so the installable page
- *                             is reachable from wherever the transport is.
- *                             Static files only, no host state.
- *
- * The phone never talks to the control surface at all: it pairs over the
- * Crosslink WebSocket endpoint carried in the QR code.
+ *   Control (127.0.0.1 only)  the desktop UI, its chat routes, and Crosslink's
+ *                             own `/__crosslink/*` control surface. These mint
+ *                             pairing codes and revoke devices, so they must
+ *                             not be reachable from the network — Crosslink's
+ *                             handler refuses non-loopback peers itself.
+ *   Bootstrap                 the mobile page and everything it needs, served
+ *                             by Crosslink on the same port as the transport.
+ *                             One port means one router mapping.
  *
  * Usage:
  *   npm run demo:chat                      # LAN
  *   npm run demo:chat:tunnel               # any Wi-Fi through a public HTTPS tunnel
  *   CROSSLINK_NETWORK_MODE=remote npm run demo:chat   # LAN + router port mapping
- *
- * When the router refuses UPnP/NAT-PMP, forward a port to this machine by hand
- * and say so — the public address is then advertised on that word alone:
- *   CROSSLINK_NETWORK_MODE=remote CROSSLINK_PORT_FORWARDED=1 \
- *     CROSSLINK_LAN_PORT=8787 npm run demo:chat
- *   CROSSLINK_PUBLIC_HOST=home.example.net npm run demo:chat  # survives an IP change
  */
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildInstallStartUrl,
-  createCrosslinkServer,
-  type CrosslinkServerConfig
-} from "@crosslink/sdk-node";
-import QRCode from "qrcode";
+import { createCrosslinkServer, type CrosslinkServerConfig } from "@crosslink/sdk-node";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
 
 const controlPort = Number(process.env.PORT ?? 8100);
-const lanPort = process.env.CROSSLINK_LAN_PORT
-  ? Number(process.env.CROSSLINK_LAN_PORT)
-  : undefined;
-const tunnelUrl = process.env.CROSSLINK_TUNNEL_URL;
-/**
- * A hand-added router port-forward. Nothing here can verify it, so it is opt-in:
- * `CROSSLINK_PUBLIC_HOST` additionally pins the address (use a dynamic-DNS name
- * so an installed home-screen app survives the ISP renewing the lease).
- */
-const portForwarded = process.env.CROSSLINK_PORT_FORWARDED === "1";
-const publicHost = process.env.CROSSLINK_PUBLIC_HOST;
-const externalPort = process.env.CROSSLINK_EXTERNAL_PORT
-  ? Number(process.env.CROSSLINK_EXTERNAL_PORT)
-  : undefined;
-
-/**
- * `remote` asks the SDK to make this machine reachable from outside the local
- * network, and to fail loudly if it cannot — rather than handing out a QR that
- * silently only works on this Wi-Fi.
- */
+const lanPort = process.env.CROSSLINK_LAN_PORT ? Number(process.env.CROSSLINK_LAN_PORT) : undefined;
 const networkMode = (process.env.CROSSLINK_NETWORK_MODE ?? "auto") as
   NonNullable<CrosslinkServerConfig["networkMode"]>;
-let pairingNetworkMode = networkMode;
-
-// ─── state ──────────────────────────────────────────────────────────────
 
 interface ChatMsg {
   id: string;
@@ -97,26 +60,16 @@ const host = createCrosslinkServer({
     id: "com.crosslink.chat",
     name: "Crosslink Chat",
     version: "1.0.0",
-    pwaConfig: {
-      shortName: "Chat",
-      icons: [
-        { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
-        { src: "/icon-512.png", sizes: "512x512", type: "image/png" }
-      ],
-      themeColor: "#0f172a",
-      bgColor: "#0f172a",
-      display: "standalone",
-      startUrl: "/mobile.html"
-    },
-    offline: {
-      title: "Crosslink Chat is offline",
-      message: "Open Crosslink Chat on your computer to reconnect automatically.",
-      icon: "/icon-192.png",
-      appName: "Crosslink Chat",
-      themeColor: "#0f172a",
-      bgColor: "#0f172a"
-    }
+    shortName: "Chat",
+    icon: "/icon-192.png",
+    accentColor: "#38bdf8",
+    backgroundColor: "#0f172a",
+    appearance: "dark"
   },
+  // The developer's mobile UI. Crosslink serves it, and everything around it:
+  // manifest, service worker, icons, browser SDK, install handoff, pairing,
+  // Add to Home Screen, offline and revoked screens.
+  mobile: { entry: path.join(publicDir, "mobile.html") },
   capabilities: [
     { id: "chat.send", title: "Send messages", risk: "low" },
     { id: "chat.read", title: "Read messages", risk: "low" }
@@ -125,16 +78,21 @@ const host = createCrosslinkServer({
   // machine — no service to deploy, nothing to pay for.
   signalingUrl: process.env.CROSSLINK_SIGNALING_URL,
   relayUrl: process.env.CROSSLINK_RELAY_URL,
-  tunnelUrl,
+  tunnelUrl: process.env.CROSSLINK_TUNNEL_URL,
   networkMode,
-  remote: { portForwarded, publicHost, externalPort },
-  lan: { enabled: true, bind: "all", port: lanPort, httpHandler: serveBootstrap },
+  remote: {
+    portForwarded: process.env.CROSSLINK_PORT_FORWARDED === "1",
+    publicHost: process.env.CROSSLINK_PUBLIC_HOST,
+    externalPort: process.env.CROSSLINK_EXTERNAL_PORT
+      ? Number(process.env.CROSSLINK_EXTERNAL_PORT)
+      : undefined
+  },
+  lan: { enabled: true, bind: "all", port: lanPort },
   // A demo pairs unattended; a real app should leave this off so a human sees
   // and confirms the SAS before a device is trusted.
   pairing: { autoApprove: true, ttlMs: 300_000 },
-  // Pairing codes are minted only through the loopback-bound desktop control
-  // surface, so mode changes can replace the QR immediately without exposing
-  // an internet-facing code-generation endpoint.
+  // Codes are minted only through the loopback control surface, so a mode
+  // change can replace the QR immediately without an internet-facing endpoint.
   security: { pairingRateLimitMs: 0 }
 });
 
@@ -172,11 +130,6 @@ host.declareEvent("chat.new_message");
 
 host.on("deviceConnected", (info) => broadcast("status", { mobile: true, deviceId: info.deviceId }));
 host.on("deviceDisconnected", (info) => broadcast("status", { mobile: false, deviceId: info.deviceId }));
-// A pairing code is single-use. Once a device redeems one — or a device is
-// revoked and has to pair again — the code still on screen would fail with
-// `pairing_expired`, so the browser mints a fresh one immediately.
-host.on("devicePaired", () => broadcast("pair.refresh", {}));
-host.on("deviceRevoked", () => broadcast("pair.refresh", {}));
 
 function addMessage(sender: string, text: string): ChatMsg {
   const msg: ChatMsg = {
@@ -192,7 +145,7 @@ function addMessage(sender: string, text: string): ChatMsg {
 
 await host.start();
 
-// ─── http plumbing ──────────────────────────────────────────────────────
+// ─── desktop control surface (loopback only) ────────────────────────────
 
 const securityHeaders: Record<string, string> = {
   "x-content-type-options": "nosniff",
@@ -206,8 +159,7 @@ const MIME: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json",
   ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".webmanifest": "application/manifest+json"
+  ".png": "image/png"
 };
 
 function respond(res: http.ServerResponse, status: number, ct: string, body: string | Buffer): void {
@@ -223,18 +175,12 @@ async function readJsonBody(req: http.IncomingMessage, maxBytes = 64 * 1024): Pr
   let body = "";
   for await (const chunk of req) {
     body += chunk;
-    // Bounded so a slow oversized upload cannot grow the process heap.
     if (body.length > maxBytes) throw new Error("request body too large");
   }
   return body ? JSON.parse(body) : {};
 }
 
-/**
- * Serves a file from `public/`, refusing anything that escapes it.
- *
- * The boundary check includes the separator: without it, a sibling directory
- * whose name merely starts with the public directory's name would pass.
- */
+/** Serves a file from `public/`, refusing anything that escapes it. */
 async function serveStatic(res: http.ServerResponse, pathname: string): Promise<void> {
   const requested = pathname === "/" ? "/index.html" : pathname;
   const resolved = path.resolve(path.join(publicDir, requested));
@@ -255,97 +201,17 @@ async function serveStatic(res: http.ServerResponse, pathname: string): Promise<
   }
 }
 
-function pwaManifest(installId?: string): unknown {
-  const app = host.config.application;
-  const cfg = app.pwaConfig ?? {};
-  const baseStartUrl = cfg.startUrl ?? "/mobile.html";
-  const validInstallId = installId && installId.length >= 24 && installId.length <= 256
-    ? installId
-    : undefined;
-  const startUrl = validInstallId ? buildInstallStartUrl(baseStartUrl, validInstallId) : baseStartUrl;
-  return {
-    name: app.name,
-    short_name: cfg.shortName ?? app.name,
-    id: baseStartUrl,
-    start_url: startUrl,
-    display: cfg.display ?? "standalone",
-    theme_color: cfg.themeColor ?? "#0f172a",
-    background_color: cfg.bgColor ?? "#0f172a",
-    icons: cfg.icons ?? [{ src: "/icon-192.png", sizes: "192x192" }]
-  };
-}
+/**
+ * Crosslink's control surface, with this demo's own routes behind it.
+ *
+ * The pairing widget in `index.html` talks to `/__crosslink/*`; nothing in
+ * this file mints a code, renders a QR or lists a device.
+ */
+const crosslinkControl = host.createControlHandler({ fallback: chatRoutes });
 
-/** Why there is no `wan` endpoint, when the host asked for one. */
-function remoteNote(): string | null {
-  const diagnostics = host.getRemoteDiagnostics();
-  // A `vpnSuspected` endpoint is reported reachable and still fails: the router
-  // forwards, the VPN swallows the reply. Say so rather than let the QR promise
-  // a route that hangs.
-  if (!diagnostics || (diagnostics.reachable && !diagnostics.vpnSuspected)) return null;
-  return diagnostics.message;
-}
-
-// ─── control surface (loopback only) ────────────────────────────────────
-
-const control = http.createServer(async (req, res) => {
+async function chatRoutes(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${controlPort}`);
   const pathname = url.pathname;
-
-  // The pairing QR. Endpoints, transport choice and the QR itself all come
-  // from the SDK — this demo does not construct a pairing URL.
-  if (pathname === "/api/pair" && req.method === "GET") {
-    try {
-      const requestedMode = url.searchParams.get("mode");
-      if (["auto", "local-only", "lan-and-relay", "remote"].includes(requestedMode ?? "")) {
-        pairingNetworkMode = requestedMode as typeof pairingNetworkMode;
-      }
-      host.config.networkMode = pairingNetworkMode;
-      const info = await host.getPairingCode();
-      const bootstrapUrl = `${bootstrapOrigin()}/mobile.html#pair=${encodeURIComponent(info.uri!)}`;
-      // The QR points at an https/http page rather than the `crosslink://`
-      // scheme because iOS has no handler for a custom scheme: the camera would
-      // simply refuse to open it.
-      const qrSvg = await QRCode.toString(bootstrapUrl, { type: "svg", margin: 1, width: 280 });
-      json(res, 200, {
-        code: info.code,
-        expiresAt: info.expiresAt,
-        mobileUrl: bootstrapUrl,
-        mobileQr: qrSvg,
-        endpoints: info.endpoints,
-        mode: pairingNetworkMode,
-        // Only present when remote access was attempted and did not produce a
-        // public route; the UI shows the reason rather than implying success.
-        remoteNote: remoteNote()
-      });
-    } catch (err) {
-      const message = (err as Error).message;
-      // The SDK throttles pairing-code generation, and refuses to hand out a QR
-      // that has no route at all; both are the caller's situation, not a fault.
-      const status = /rate limit/i.test(message)
-        ? 429
-        : /not reachable|no reachable endpoint/i.test(message)
-          ? 409
-          : 500;
-      json(res, status, { error: message });
-    }
-    return;
-  }
-
-  if (pathname === "/api/network-mode" && req.method === "POST") {
-    try {
-      const { mode } = (await readJsonBody(req)) as { mode?: string };
-      if (!mode || !["auto", "local-only", "lan-and-relay", "remote"].includes(mode)) {
-        json(res, 400, { error: "invalid network mode" });
-        return;
-      }
-      pairingNetworkMode = mode as typeof pairingNetworkMode;
-      host.config.networkMode = pairingNetworkMode;
-      json(res, 200, { mode: pairingNetworkMode });
-    } catch (err) {
-      json(res, 400, { error: (err as Error).message });
-    }
-    return;
-  }
 
   if (pathname === "/api/send" && req.method === "POST") {
     try {
@@ -376,45 +242,15 @@ const control = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === "/api/devices" && req.method === "GET") {
-    json(res, 200, {
-      devices: host.listDevices().filter((d) => d.revokedAt === undefined).map((d) => ({
-        deviceId: d.deviceId,
-        name: d.name,
-        firstPaired: d.addedAt,
-        lastConnected: d.lastSeen ?? null,
-        status: d.revokedAt ? "revoked" : d.lastSeen && Date.now() - d.lastSeen < 300_000 ? "online" : "offline",
-        caps: d.caps,
-        revokedAt: d.revokedAt ?? null
-      }))
-    });
-    return;
-  }
-
-  if (pathname === "/api/revoke" && req.method === "POST") {
-    try {
-      const { deviceId } = (await readJsonBody(req)) as { deviceId?: string };
-      const target = String(deviceId ?? "").trim();
-      if (!target) {
-        json(res, 400, { ok: false, error: "deviceId required" });
-        return;
-      }
-      json(res, 200, { ok: host.revokeDevice(target), deviceId: target });
-    } catch (err) {
-      json(res, 400, { ok: false, error: (err as Error).message });
-    }
-    return;
-  }
-
-  // Everything the SDK knows about reachability, including what each router
-  // protocol answered — the panel a developer looks at when pairing fails.
+  // Everything Crosslink knows about reachability — the panel a developer
+  // looks at when pairing fails.
   if (pathname === "/api/diagnostics" && req.method === "GET") {
     json(res, 200, {
       status: host.status(),
       connectivity: host.getConnectivity(),
       endpoints: host.connectionEndpoints(),
       remote: host.getRemoteDiagnostics(),
-      bootstrapOrigin: bootstrapOrigin(),
+      bootstrap: host.describeMobileDelivery(),
       messages: messages.length
     });
     return;
@@ -425,72 +261,32 @@ const control = http.createServer(async (req, res) => {
     return;
   }
 
-  await serveStatic(res, pathname === "/" ? "/index.html" : pathname);
+  await serveStatic(res, pathname);
+}
+
+const control = http.createServer((req, res) => {
+  crosslinkControl(req, res).catch((err) => {
+    console.error("[chat] control request failed", err);
+    if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain" });
+    res.end("internal error");
+  });
 });
 
-// ─── bootstrap surface (reachable from the phone) ───────────────────────
-
-async function serveBootstrap(
-  req: http.IncomingMessage,
-  res: http.ServerResponse
-): Promise<void> {
-  const requestUrl = new URL(req.url ?? "/", "http://bootstrap.invalid");
-  const pathname = requestUrl.pathname;
-  if (pathname === "/manifest.webmanifest") {
-    res.setHeader("cache-control", "no-store");
-    respond(
-      res,
-      200,
-      "application/manifest+json",
-      JSON.stringify(pwaManifest(requestUrl.searchParams.get("crosslink_install") ?? undefined))
-    );
-    return;
-  }
-  if (pathname.startsWith("/__crosslink/install/")) {
-    res.setHeader("cache-control", "no-store");
-    const handoffId = decodeURIComponent(pathname.slice("/__crosslink/install/".length));
-    const handoff = host.getInstallHandoff(handoffId);
-    json(res, handoff ? 200 : 404, handoff ?? { error: "install handoff unavailable or expired" });
-    return;
-  }
-  // Anything without a file extension is the mobile page: an installed PWA that
-  // reopens on a deep path must still boot rather than 404.
-  const asset = pathname === "/" ? "/mobile.html" : pathname;
-  await serveStatic(res, path.extname(asset) ? asset : "/mobile.html");
-}
-
-/**
- * Origin the phone should use for the installable page.
- *
- * Prefers the public route so an installed PWA keeps working off this Wi-Fi;
- * the origin is what the browser stores as the app's identity, so picking the
- * LAN address when a public one exists would pin the install to one network.
- */
-function bootstrapOrigin(): string {
-  const endpoints = host.connectionEndpoints();
-  const preferred =
-    endpoints.find((e) => e.kind === "tunnel")?.url ??
-    endpoints.find((e) => e.kind === "wan")?.url ??
-    endpoints.find((e) => e.kind === "lan")?.url;
-  if (!preferred) return `http://127.0.0.1:${controlPort}`;
-  const url = new URL(preferred);
-  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
-  url.pathname = "";
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/, "");
-}
-
 control.listen(controlPort, "127.0.0.1", () => {
+  const install = host.describeMobileDelivery();
   console.log(`\n  Crosslink Chat Demo`);
   console.log(`  ────────────────────`);
   console.log(`  Desktop UI → http://127.0.0.1:${controlPort}`);
-  console.log(`  Phone page → ${bootstrapOrigin()}/mobile.html`);
+  console.log(`  Phone page → ${install.origin ?? "(no route advertised yet)"}`);
   console.log(`\n  ${host.getConnectivity().message}`);
   for (const endpoint of host.connectionEndpoints()) {
     console.log(`  ${endpoint.kind.padEnd(7)} ${endpoint.url}`);
   }
-  console.log(`\n  Open the desktop UI, click "Show QR Code", scan it with your phone.\n`);
+  // Says plainly whether Add to Home Screen and the cached offline screen are
+  // actually available on this origin, rather than letting it be discovered on
+  // a phone.
+  console.log(`\n  ${install.message}`);
+  console.log(`\n  Open the desktop UI and scan the QR with your phone.\n`);
 });
 
 async function shutdown(): Promise<void> {

@@ -1,0 +1,125 @@
+---
+title: Pairing Card
+description: The pairing UI Crosslink ships, and the little you configure
+---
+
+Crosslink ships the desktop pairing experience. You mount it; you do not build it.
+
+```js
+import { createPairingCard } from "@crosslink/sdk-browser";
+
+createPairingCard({ target: "#crosslink", source: true });
+```
+
+That is a complete integration. The card renders the QR, the nine-digit code and
+the countdown, mints a fresh session when the current one is close to expiring,
+mints another when a device redeems one, exposes the connection-mode settings,
+lists paired devices and revokes them, and shows the Crosslink mark and
+attribution.
+
+<Note>
+`source: true` points the card at the Crosslink system endpoints your host
+already exposes (`/__crosslink/*`). You do not write those routes — see
+[Mobile Bootstrap](/client/mobile-bootstrap) for how they get there.
+</Note>
+
+## What you configure
+
+Your application's identity, and nothing structural.
+
+```js
+createPairingCard({
+  target: "#crosslink",
+  source: true,
+
+  appName: "Crosslink Chat",
+  appIcon: "/icon-192.png",
+  brand: {
+    accentColor: "#38bdf8",
+    backgroundColor: "#0f172a",
+    appearance: "dark"
+  },
+  blurb: "<strong>Connect another device</strong> to use Chat from your phone."
+});
+```
+
+| Option | What it does |
+| --- | --- |
+| `appName` | Shown beside the Crosslink mark. |
+| `appIcon` | Your icon, next to your name. Never replaces the Crosslink mark. |
+| `brand.accentColor` | Actions, and the tint applied to the Crosslink mark. |
+| `brand.backgroundColor` | Card background. Decides light/dark when `appearance` is unset. |
+| `brand.textColor` | Primary text. Derived from the background when omitted. |
+| `brand.appearance` | `"light"`, `"dark"`, or derived from the background. |
+| `blurb` | One sentence in your own words about what pairing does. |
+
+There is no option that replaces the card's markup, swaps its renderer, or
+removes the Crosslink mark and attribution. That is deliberate: the value of a
+recognisable pairing screen is that it is the same screen in every Crosslink
+application.
+
+## Framework bindings
+
+The card is plain DOM, so it works anywhere. React gets a thin wrapper that
+mounts the same implementation:
+
+```tsx
+import { CrosslinkPairingCard } from "@crosslink/react";
+
+<CrosslinkPairingCard
+  source
+  appName="Crosslink Chat"
+  brand={{ accentColor: "#38bdf8" }}
+/>;
+```
+
+Vue, Svelte and plain pages call `createPairingCard` directly. There is no
+framework-specific reimplementation to keep in step.
+
+## Reacting to pairing
+
+The card drives itself, so callbacks are for your UI, not for its behaviour.
+
+```js
+createPairingCard({
+  target: "#crosslink",
+  source: true,
+  onSession: (session) => console.log("code", session.code),
+  onDeviceConnected: (deviceId) => showDashboard(deviceId),
+  onError: (error) => console.warn("pairing unavailable:", error.message)
+});
+```
+
+`onError` fires *after* the card has already rendered the failure and scheduled
+a retry. You do not need to build recovery on top of it.
+
+## When your host is not reachable over HTTP
+
+An Electron renderer behind a preload bridge, or any page that cannot call the
+host directly, supplies its own source instead of `source: true`:
+
+```js
+createPairingCard({
+  target: "#crosslink",
+  source: {
+    getSession: (mode) => window.api.getPairingSession(mode),
+    setNetworkMode: (mode) => window.api.setNetworkMode(mode),
+    subscribe: (listener) => window.api.onCrosslinkEvent(listener)
+  }
+});
+```
+
+The source decides where a pairing session comes from. It never decides what the
+pairing screen looks like — both paths render the identical card.
+
+## Controlled mode
+
+Omit `source` entirely and the card renders only what you pass to `update()`.
+This exists for hosts that already own a pairing loop; it is not the normal
+integration path, and choosing it means writing the loop the card would
+otherwise run for you.
+
+```js
+const card = createPairingCard({ target: "#crosslink" });
+card.update({ code: "123456789", qr: svg, expiresAt: Date.now() + 120_000 });
+```

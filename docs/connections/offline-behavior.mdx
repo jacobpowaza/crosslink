@@ -3,6 +3,41 @@ title: Offline Behavior
 description: What happens when devices are unreachable
 ---
 
+## What the user sees
+
+An installed Crosslink app that is opened while the desktop host is off does not
+show the browser's *cannot connect to server* page. Crosslink caches its own
+shell, so the app opens to a Crosslink screen naming your application:
+
+```text
+Example Notes
+
+Your app is unavailable
+
+Crosslink isn't currently able to reach the computer running Example Notes.
+
+Trying to reconnect…
+```
+
+You do not build or register this screen. It is rendered by the mobile bootstrap
+from your `application` metadata, carries your colours and icon, and shows the
+Crosslink mark and attribution. It retries on its own, and when the host comes
+back it verifies the existing device identity and hands your app a fresh session
+— **no new pairing code**.
+
+Re-pairing is required only when the trust relationship is genuinely gone:
+revoked from the desktop, deleted, or unreadable. Not when the desktop was
+closed, the machine slept or restarted, the Wi-Fi changed, or the phone moved
+networks.
+
+<Warning>
+This depends on a cached service worker, which a browser only registers on a
+secure origin. Served from a plain-HTTP LAN address there is no cached shell and
+an offline launch falls back to the browser's error page. See
+[Durable Origins](/client/durable-origin) — and check
+`host.describeMobileDelivery()` before assuming you have this.
+</Warning>
+
 ## Client offline
 
 When the client loses connectivity:

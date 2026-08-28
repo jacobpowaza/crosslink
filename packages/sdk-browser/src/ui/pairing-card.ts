@@ -17,6 +17,22 @@
  *   --cl-bg, --cl-fg, --cl-muted, --cl-divider, --cl-pill, --cl-pill-text, --cl-radius
  */
 
+import {
+  createHttpPairingSource,
+  type PairingSession,
+  type PairingSource,
+  type PairingSourceEvent
+} from "./pairing-source.js";
+import {
+  crosslinkLogoSvg,
+  resolveCrosslinkTheme,
+  CROSSLINK_REPOSITORY,
+  CROSSLINK_ATTRIBUTION_TEXT,
+  CROSSLINK_ATTRIBUTION_LINK_TEXT,
+  type CrosslinkTheme,
+  type ResolvedCrosslinkTheme
+} from "./branding.js";
+
 export interface PairingCardTheme {
   bg?: string;
   fg?: string;
@@ -46,8 +62,20 @@ export interface PairingCardOptions {
   appName?: string;
   /** Informational blurb describing security and app pairing */
   blurb?: string;
-  /** URL or inline SVG for the logo. Defaults to Crosslink mark */
-  logo?: string;
+  /**
+   * URL or inline SVG of the *application's* icon, shown beside the app name.
+   *
+   * It never replaces the Crosslink mark: the card renders both, so a paired
+   * device sees which application it is joining and which framework is
+   * securing the connection.
+   */
+  appIcon?: string;
+  /**
+   * Application branding — name, icon, and colours. These are the only visual
+   * knobs the card exposes; there is no renderer or markup slot, because every
+   * Crosslink application is meant to present the same pairing experience.
+   */
+  brand?: CrosslinkTheme;
   /** Initial pairing code (e.g. "938472910") */
   code?: string;
   /** Initial QR code SVG string or image URL */
@@ -72,6 +100,31 @@ export interface PairingCardOptions {
   devicesEndpoint?: string;
   /** Endpoint URL to revoke device access. Default: /api/revoke */
   revokeEndpoint?: string;
+  /**
+   * Lets the card drive itself against a live host.
+   *
+   * `true` uses the Crosslink system endpoints at `/__crosslink` on the page's
+   * own origin; a string names a different base path; an object is a custom
+   * transport for a host the page cannot reach over HTTP. With any of them the
+   * card mints its own pairing session, renders the QR and code, replaces the
+   * code before it expires, mints a fresh one when a device redeems the old
+   * one, and applies connection-mode changes — the loop every application used
+   * to write beside it.
+   *
+   * Omit it to keep the card controlled: `update()` is then the only way state
+   * changes, which is what a host that already owns its own pairing loop wants.
+   */
+  source?: true | string | PairingSource;
+  /** Seconds of headroom before expiry at which a new code is minted. Default 15. */
+  refreshLeadSeconds?: number;
+  /** Called after the card mints a session. Self-driving mode only. */
+  onSession?: (session: PairingSession) => void;
+  /** Called when a paired device connects. Self-driving mode only. */
+  onDeviceConnected?: (deviceId?: string) => void;
+  /** Called after the card renders a minting failure. Self-driving mode only. */
+  onError?: (error: Error) => void;
+  /** Initial connection status line shown under the pairing code. */
+  status?: string;
   /** Whether to inject default CSS styles into document head. Default true */
   injectStyles?: boolean;
 }
@@ -81,19 +134,20 @@ export interface PairingCardState {
   qr?: string | null;
   expiresAt?: number | string | null;
   error?: string | null;
+  /** Short stable identifier rendered in the QR slot (for example `CL-P409`). */
+  errorCode?: string | null;
   loading?: boolean;
   networkMode?: NetworkMode;
   /** Routes the current QR advertises, straight from `PairingCodeInfo.endpoints`. */
   endpoints?: PairingCardEndpoint[] | null;
   /** Host-side note about remote access, e.g. why no `wan` endpoint exists. */
   remoteNote?: string | null;
+  /** Connection status line, e.g. "Waiting for a device to scan". */
+  status?: string | null;
+  /** True once a paired device is connected; the status line turns positive. */
+  connected?: boolean;
 }
 
-const DEFAULT_CROSSLINK_SVG = `
-<svg viewBox="105 363 1060 222" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M233.73 383.42C254.47 380.94 275.68 386.3 293.3 397.22C298.36 400.36 310.34 407.06 306.92 414.39C305.05 418.41 299.18 424.66 294.5 424.16C290.7 423.75 283.6 416.8 279.92 414.57C271.58 409.53 262.05 406.61 252.45 405.27C210.49 399.39 171.23 433.96 172.83 476.5C174.51 521.08 215.67 550.01 258.38 541.73C267.91 539.88 276.87 535.81 284.85 530.38C288.81 527.68 292.08 522.77 297.47 523.95C299.49 524.39 307.14 531.68 307.85 533.67C308.39 535.19 308.34 536.9 307.92 538.44C307.04 541.58 302.8 544.02 300.34 545.88C285.61 557.02 267.9 563.4 249.5 564.79C194.73 568.93 147.61 523.68 151.02 468.5C152.07 451.5 158.16 436.04 167.48 421.97C173.81 412.42 182.42 403.72 192.26 397.74C205.14 389.9 218.77 385.21 233.73 383.42ZM791.59 387.27C795.36 386.55 802.6 386.03 805.44 389.07C807.56 391.34 807.21 394.63 807.24 397.5C807.3 404.17 807.27 410.83 807.25 417.5C807.15 451.5 807.23 485.5 807.25 519.5C807.26 529.5 807.29 539.5 807.27 549.5C807.26 554.33 807.43 559.18 801.47 559.66C797.97 559.94 791 560.91 788.25 558.23C786.05 556.09 786.66 552.28 786.64 549.5C786.6 542.17 786.66 534.83 786.64 527.5C786.54 494.5 786.59 461.5 786.65 428.5C786.67 418.17 786.7 407.83 786.62 397.5C786.59 393.48 786.61 388.22 791.59 387.27ZM1047.5 490.33C1049.96 490.3 1052.92 490.63 1055.26 489.73C1058.8 488.37 1065.75 479.23 1068.61 476.12C1077.64 466.3 1086.84 456.19 1096.5 447C1100.43 443.26 1119.54 442.69 1123.5 445.8C1123.66 451.35 1115.32 457.13 1111.53 461.04C1099.51 473.43 1087.04 485.6 1075.57 498.5C1077.87 503.34 1082.73 507.17 1086.35 511.17C1095.38 521.13 1104.32 531.19 1113.52 541C1115.75 543.37 1125.96 553.61 1126.66 555.81C1127.01 556.89 1126.75 557.43 1126.8 558.5C1123.25 560.55 1118.53 559.73 1114.5 559.69C1110.76 559.66 1106.1 560.51 1102.63 558.88C1098.64 557 1095.59 552.04 1092.65 548.84C1085.62 541.2 1078.7 533.45 1071.74 525.76C1063.43 516.58 1060.8 509.28 1046.79 512.5C1044.96 522.02 1046.59 534.66 1046.57 544.5C1046.57 548.23 1047.48 553.75 1045.59 557.14C1043.49 560.88 1026.82 562.35 1025.95 554.5C1024.58 542.11 1025.96 527.16 1025.95 514.5C1025.94 486.17 1025.87 457.83 1025.93 429.5C1025.95 418.83 1025.94 408.17 1025.9 397.5C1025.89 393.57 1025.68 388.29 1030.61 387.24C1032.49 386.84 1034.59 387.09 1036.5 387.09C1038.56 387.1 1040.88 386.81 1042.81 387.66C1048.5 390.17 1046.49 406.98 1046.51 412.56C1046.56 430.21 1046.47 447.85 1046.53 465.5C1046.56 473.31 1045.12 482.95 1047.5 490.33ZM844.74 395.34C862.3 390.41 870.21 415.48 853.62 421.22C835.59 427.47 827.09 400.31 844.74 395.34ZM463.67 441.41C471.92 440.68 480.11 442.01 487.94 444.53C494.65 446.69 500.51 450.23 506.18 454.35C510.98 457.84 514.79 462.48 518.32 467.22C546.74 505.4 518.83 560.06 472.5 563.08C464.08 563.63 455.77 562.3 447.8 559.63C440.61 557.23 433.85 553.39 428.12 548.4C387.12 512.7 410.35 446.13 463.67 441.41ZM938.73 441.43C964.07 438.8 988.77 454.5 996.81 478.63C1001.03 491.31 999.84 505.34 999.82 518.5C999.8 528.5 999.67 538.5 999.8 548.5C999.85 552.1 1000.71 557.37 996.66 559.21C994.79 560.06 992.49 559.69 990.5 559.67C987.56 559.65 983.54 560.44 981.08 558.44C978.66 556.48 979.13 553.29 979.15 550.5C979.17 544.5 979.16 538.5 979.16 532.5C979.15 506.82 985.32 474.05 954.7 463.73C950.67 462.38 946.75 461.96 942.5 462.04C938.21 462.13 934.22 463.12 930.27 464.75C909.54 473.31 908.83 490.84 908.83 510.5C908.83 519.5 908.79 528.5 908.78 537.5C908.78 543.14 909.77 549.73 908.6 555.26C907.36 561.17 892.64 561.43 889.51 557.98C887.34 555.6 888.08 551.45 888.05 548.5C887.98 539.83 888.06 531.17 888.07 522.5C888.08 510.07 886.92 496.94 889.34 484.69C894.17 460.27 914.52 443.93 938.73 441.43ZM370.81 444.44C378.29 443.39 385.96 443.92 393.5 443.91C396.8 443.91 400.83 443.49 403.26 446.23C405.44 448.69 404.78 452.49 404.76 455.5C404.75 457.24 404.95 459.11 404.32 460.76C401.95 466.94 387.89 464.88 382.5 464.89C368.82 464.9 356.04 469.36 350.54 483.06C345.38 495.93 347.67 523.81 347.69 538.5C347.7 543.73 349 550.79 347.34 555.78C345.69 560.75 334.22 560.97 330.2 559.33C326.24 557.72 327 552.92 327 549.5C327 540.5 326.98 531.5 327 522.5C327.02 510.28 326.04 497.62 328.16 485.54C331.95 463.92 349.33 447.47 370.81 444.44ZM632.82 448.5C630.99 452.96 625.86 456.37 622.98 460.46C622.01 461.84 620.99 464.11 619.29 464.68C614.01 466.44 601.31 464.28 594.65 465.33C578.59 467.86 566.31 480.49 563.75 496.48C562.92 501.66 563.12 506.77 564.57 511.83C566.29 517.82 569.39 523.27 573.67 527.82C584.18 538.98 597.17 538.99 611.5 539.08C626.5 539.17 640.93 539.33 651.61 527.14C656.22 521.88 659.71 515.44 660.73 508.46C661.28 504.62 660.22 499.75 661.65 496.17C663.77 490.82 677.12 490.22 680.29 494.22C682.78 497.37 681.9 502.8 681.67 506.5C680.91 518.95 675.64 530.73 667.69 540.21C651.84 559.1 633.43 559.88 610.5 559.75C595.85 559.66 582.93 559.16 570.01 551.47C529.05 527.1 536.59 463.2 580.88 447.43C593.12 443.07 605.72 444 618.5 443.95C623.82 443.92 630.4 442.77 632.82 448.5ZM672.17 556.5C672.3 555.53 672.1 554.9 672.51 553.96C673.37 551.95 676.41 550 677.9 548.38C680.43 545.62 682.15 542.33 684.5 539.46C697.35 538.01 711.53 541.69 723.35 534.86C748.05 520.57 750.19 485.59 725.32 470.15C716.44 464.64 706.56 464.92 696.5 464.91C681.72 464.89 667.28 463.66 655.36 473.89C648.93 479.41 644.84 487.35 643.27 495.62C642.39 500.25 644.05 506.55 640.99 510.49C636.17 516.71 623.36 514.7 622.14 506.47C618.6 482.48 637.65 455.23 659.96 447.48C671.89 443.34 684.08 443.97 696.5 443.96C712.53 443.94 727.02 445.31 740.35 455.09C776.51 481.63 768.28 540.25 726.62 556.17C714.11 560.95 700.63 559.64 687.5 559.74C682.23 559.78 675.73 561.11 672.17 556.5ZM843.71 444.37C848.02 443.53 856.53 442.92 858.52 447.96C860.51 453 859.14 467.45 859.13 473.5C859.09 492.83 859.08 512.17 859.13 531.5C859.15 538.17 859.16 544.83 859.1 551.5C859.07 555.16 858.76 558.98 854.37 559.61C850.62 560.16 841.54 561.12 839.26 557.25C836.93 553.29 838.56 539.46 838.55 534.5C838.47 514.17 838.44 493.83 838.52 473.5C838.55 467.55 837.15 452.54 839.22 447.7C839.97 445.93 841.87 444.73 843.71 444.37ZM461.77 462.42C418.77 469.25 416.23 530.16 458.13 541.44C464.19 543.07 470.34 543.03 476.49 541.92C517.97 534.45 519.66 475.76 479.83 463.58C474.06 461.82 467.74 461.46 461.77 462.42Z" fill="currentColor" fill-rule="evenodd"/>
-</svg>
-`.trim();
 
 const PAIRING_CARD_STYLES = `
 .cl-pair-card {
@@ -115,7 +169,7 @@ const PAIRING_CARD_STYLES = `
   display: grid;
   grid-template-columns: 1.1fr auto 1fr auto 1fr;
   align-items: center;
-  gap: 28px;
+  gap: 28px 28px;
   box-sizing: border-box;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   text-align: left;
@@ -298,8 +352,69 @@ const PAIRING_CARD_STYLES = `
   width: auto;
   max-width: 140px;
   display: block;
-  margin-bottom: 14px;
+  /* Contrast-corrected in resolveCrosslinkTheme; currentColor carries it
+     into the SVG path so one variable tints the whole mark. */
+  color: var(--cl-logo, var(--cl-fg));
+}
+.cl-pair-logo-wrap {
+  margin-bottom: 10px;
+}
+.cl-pair-app {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.cl-pair-app[hidden] {
+  display: none;
+}
+.cl-pair-app-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+.cl-pair-app-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+.cl-pair-app-name {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--cl-fg);
+  letter-spacing: -0.01em;
+}
+.cl-pair-status {
+  font-size: 11px;
+  color: var(--cl-muted);
+  margin: 8px 0 0 0;
+  text-align: center;
+  min-height: 14px;
+}
+.cl-pair-status[hidden] {
+  display: none;
+}
+.cl-pair-status-on {
+  color: #4ade80;
+  font-weight: 600;
+}
+.cl-pair-attribution {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--cl-divider);
+  padding-top: 12px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--cl-attribution, var(--cl-muted));
+  text-align: center;
+}
+.cl-pair-attribution a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .cl-pair-blurb {
   font-size: 13px;
@@ -386,6 +501,51 @@ const PAIRING_CARD_STYLES = `
 .cl-qr-placeholder.cl-error {
   color: #f87171;
 }
+.cl-error-code {
+  color: #991b1b;
+  font: 700 18px/1.2 "SF Mono", "Fira Code", monospace;
+  letter-spacing: 0.04em;
+}
+.cl-error-details-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  font: 600 11px/1.2 inherit;
+  padding: 6px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cl-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+.cl-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.8), transparent);
+  animation: clSkeletonSweep 1.35s ease-in-out infinite;
+}
+.cl-qr-skeleton {
+  width: 132px;
+  height: 132px;
+  border-radius: 10px;
+}
+.cl-pill.cl-pill-skeleton {
+  min-width: 44px;
+  height: 52px;
+  padding: 0;
+}
+@keyframes clSkeletonSweep {
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cl-skeleton::after { animation: none; }
+}
 .cl-pair-code-pills {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -450,6 +610,20 @@ const PAIRING_CARD_STYLES = `
   align-items: center;
   justify-content: center;
   animation: clDropdownFade 0.15s ease-out;
+}
+.cl-error-modal {
+  max-width: 480px;
+}
+.cl-error-modal code {
+  color: #fca5a5;
+  font-size: 12px;
+}
+.cl-error-modal p {
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .cl-connected-modal {
   background: #0a0a0a;
@@ -578,11 +752,26 @@ export class PairingCard {
   private hintEl: HTMLElement;
   private settingsPopover: HTMLElement;
   private routeSummaryEl!: HTMLElement;
+  private appRowEl!: HTMLElement;
+  private statusEl!: HTMLElement;
+  private brand: ResolvedCrosslinkTheme;
   private currentMode: NetworkMode;
   private expiryTimer: any = null;
+  private source: PairingSource | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private unsubscribeSource: (() => void) | null = null;
+  private destroyed = false;
+  private inFlight: Promise<void> | null = null;
+  private refreshQueued = false;
+  private connectedDevices = new Set<string>();
 
   constructor(options: PairingCardOptions = {}) {
     this.options = options;
+    this.brand = resolveCrosslinkTheme({
+      appName: options.appName,
+      appIcon: options.appIcon,
+      ...options.brand
+    });
     this.currentMode = normalizeNetworkMode(options.networkMode);
 
     if (options.injectStyles !== false) {
@@ -592,6 +781,7 @@ export class PairingCard {
     this.element = document.createElement("div");
     this.element.className = "cl-pair-card";
 
+    this.applyBrand();
     this.applyTheme(options.theme);
 
     // Settings Cog Button
@@ -616,7 +806,12 @@ export class PairingCard {
 
     this.logoEl = document.createElement("div");
     this.logoEl.className = "cl-pair-logo-wrap";
-    this.renderLogo(options.logo);
+    this.renderBrandMark();
+
+    // Which application is being joined, beneath the framework that secures it.
+    this.appRowEl = document.createElement("div");
+    this.appRowEl.className = "cl-pair-app";
+    this.renderAppRow();
 
     this.blurbEl = document.createElement("p");
     this.blurbEl.className = "cl-pair-blurb";
@@ -630,6 +825,7 @@ export class PairingCard {
     this.refreshBtn.addEventListener("click", () => this.handleRefresh());
 
     left.appendChild(this.logoEl);
+    left.appendChild(this.appRowEl);
     left.appendChild(this.blurbEl);
     left.appendChild(this.refreshBtn);
 
@@ -670,9 +866,16 @@ export class PairingCard {
     this.hintEl.className = "cl-pair-hint";
     this.renderExpiry(options.expiresAt);
 
+    this.statusEl = document.createElement("p");
+    this.statusEl.className = "cl-pair-status";
+    this.statusEl.setAttribute("role", "status");
+    this.statusEl.setAttribute("aria-live", "polite");
+    this.renderStatus(options.status ?? null, false);
+
     right.appendChild(codeLabel);
     right.appendChild(this.codePillsEl);
     right.appendChild(this.hintEl);
+    right.appendChild(this.statusEl);
 
     // Assemble Card
     this.element.appendChild(cogBtn);
@@ -682,6 +885,7 @@ export class PairingCard {
     this.element.appendChild(center);
     this.element.appendChild(div2);
     this.element.appendChild(right);
+    this.element.appendChild(this.createAttribution());
 
     // Auto mount if target provided
     if (options.target) {
@@ -696,6 +900,143 @@ export class PairingCard {
         }
       });
     }
+
+    if (options.source !== undefined) this.attachSource(options.source);
+  }
+
+  /* ------------------- self-driving session lifecycle ------------------ */
+
+  /**
+   * Connects the card to a session source and starts the loop.
+   *
+   * Called from the constructor when `options.source` is set. Split out so a
+   * card built before its transport exists — an Electron renderer waiting for
+   * a preload bridge, say — can start driving later without a second class.
+   */
+  attachSource(source: true | string | PairingSource): void {
+    this.source =
+      typeof source === "object" ? source : createHttpPairingSource(source === true ? undefined : source);
+    this.options.devicesEndpoint ??= this.source.devicesEndpoint;
+    this.options.revokeEndpoint ??= this.source.revokeEndpoint;
+    this.unsubscribeSource =
+      this.source.subscribe?.((event) => this.handleSourceEvent(event)) ?? null;
+    void this.refresh();
+  }
+
+  /**
+   * Mints a fresh pairing session and renders it.
+   *
+   * Concurrent calls collapse onto the one in flight. The expiry timer, the
+   * refresh button and a host-side invalidation can all fire inside the same
+   * second, and three codes minted back to back would invalidate two of them
+   * before anybody could finish scanning.
+   *
+   * Collapsing cannot simply drop the extra calls, though. A request that
+   * arrives mid-flight may be the one that matters — the host reporting that a
+   * device just redeemed the code being minted — so it is remembered and run
+   * once the current mint settles, leaving the card showing a live code rather
+   * than one that is already spent.
+   */
+  async refresh(): Promise<void> {
+    if (!this.source) {
+      await this.handleRefresh();
+      return;
+    }
+    if (this.destroyed) return;
+    if (this.inFlight) {
+      this.refreshQueued = true;
+      return this.inFlight;
+    }
+    this.inFlight = this.mintSession().finally(() => {
+      this.inFlight = null;
+      if (this.refreshQueued && !this.destroyed) {
+        this.refreshQueued = false;
+        void this.refresh();
+      }
+    });
+    return this.inFlight;
+  }
+
+  private async mintSession(): Promise<void> {
+    const source = this.source;
+    if (!source) return;
+    this.clearRefreshTimer();
+    this.update({ loading: true, error: null });
+    try {
+      const session = await source.getSession(this.currentMode);
+      if (this.destroyed) return;
+      if (session.networkMode) this.currentMode = normalizeNetworkMode(session.networkMode);
+      this.update({
+        loading: false,
+        error: null,
+        qr: session.qrSvg ?? null,
+        code: session.code,
+        expiresAt: session.expiresAt,
+        networkMode: this.currentMode,
+        endpoints: session.endpoints ?? null,
+        remoteNote: session.remoteNote ?? null,
+        status: this.sessionStatusText(),
+        connected: this.connectedDevices.size > 0
+      });
+      this.scheduleSessionRefresh(session.expiresAt);
+      this.options.onSession?.(session);
+    } catch (err) {
+      if (this.destroyed) return;
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.update({
+        loading: false,
+        error: error.message || "Crosslink could not create a pairing code.",
+        errorCode: (error as Error & { code?: string }).code ?? "CL-P001"
+      });
+      this.options.onError?.(error);
+      // A host still starting up answers for a few hundred milliseconds. A short
+      // fixed retry turns that into a card that fills itself in, rather than one
+      // the user has to click to recover.
+      this.refreshTimer = setTimeout(() => void this.refresh(), 5_000);
+    }
+  }
+
+  private sessionStatusText(): string {
+    const count = this.connectedDevices.size;
+    if (count === 0) return "Waiting for a device to scan";
+    return count === 1 ? "Device connected" : `${count} devices connected`;
+  }
+
+  private scheduleSessionRefresh(expiresAt: number): void {
+    this.clearRefreshTimer();
+    const lead = (this.options.refreshLeadSeconds ?? 15) * 1000;
+    // Never under a second: a host handing out an already-expired code would
+    // otherwise spin this into a mint loop.
+    const delay = Math.max(1_000, expiresAt - Date.now() - lead);
+    this.refreshTimer = setTimeout(() => void this.refresh(), delay);
+  }
+
+  private clearRefreshTimer(): void {
+    if (this.refreshTimer !== null) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+  }
+
+  private handleSourceEvent(event: PairingSourceEvent): void {
+    if (this.destroyed) return;
+    switch (event.type) {
+      case "invalidate":
+        void this.refresh();
+        break;
+      case "connected":
+        this.connectedDevices.add(event.deviceId ?? "device");
+        this.update({ status: this.sessionStatusText(), connected: true });
+        this.options.onDeviceConnected?.(event.deviceId);
+        break;
+      case "disconnected":
+        this.connectedDevices.delete(event.deviceId ?? "device");
+        this.update({
+          status: this.sessionStatusText(),
+          connected: this.connectedDevices.size > 0
+        });
+        break;
+    }
   }
 
   private normalizeMode(mode: string): NetworkMode {
@@ -707,9 +1048,9 @@ export class PairingCard {
     pop.className = "cl-settings-dropdown";
     pop.hidden = true;
 
-    const remoteUrl = this.options.remoteGuideUrl || "https://github.com/jacobpowaza/crosslink/blob/main/docs/guides/remote-access.mdx";
-    const secUrl = this.options.securityGuideUrl || "https://github.com/jacobpowaza/crosslink/blob/main/docs/security/overview.mdx";
-    const lanUrl = this.options.lanGuideUrl || "https://github.com/jacobpowaza/crosslink/blob/main/docs/guides/connection-modes.mdx";
+    const remoteUrl = this.options.remoteGuideUrl || "https://crosslink.mintlify.site/guides/remote-access";
+    const secUrl = this.options.securityGuideUrl || "https://crosslink.mintlify.site/security/overview";
+    const lanUrl = this.options.lanGuideUrl || "https://crosslink.mintlify.site/guides/connection-modes";
     const norm = this.normalizeMode(this.currentMode);
 
     pop.innerHTML = `
@@ -831,9 +1172,30 @@ export class PairingCard {
     const radio = this.settingsPopover.querySelector(`input[value="${norm}"]`) as HTMLInputElement | null;
     if (radio) radio.checked = true;
 
+    if (this.source) {
+      void this.applyNetworkMode(norm);
+      return;
+    }
     if (this.options.onNetworkModeChange) {
       this.options.onNetworkModeChange(norm);
     }
+  }
+
+  private async applyNetworkMode(mode: NetworkMode): Promise<void> {
+    try {
+      await this.source?.setNetworkMode?.(mode);
+      await this.options.onNetworkModeChange?.(mode);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.update({
+        loading: false,
+        error: error.message,
+        errorCode: (error as Error & { code?: string }).code ?? "CL-P001"
+      });
+      this.options.onError?.(error);
+      return;
+    }
+    await this.refresh();
   }
 
   getNetworkMode(): NetworkMode {
@@ -849,7 +1211,7 @@ export class PairingCard {
 
   update(state: PairingCardState): this {
     if (state.loading) {
-      this.qrWrapEl.innerHTML = '<span class="cl-qr-placeholder">Generating&hellip;</span>';
+      this.renderLoading();
       this.refreshBtn.disabled = true;
     } else {
       this.refreshBtn.disabled = false;
@@ -859,13 +1221,16 @@ export class PairingCard {
       this.syncNetworkMode(normalizeNetworkMode(state.networkMode));
     }
 
+    if (state.status !== undefined || state.connected !== undefined) {
+      this.renderStatus(state.status ?? null, state.connected === true);
+    }
+
     if (state.endpoints !== undefined || state.remoteNote !== undefined) {
       this.renderRoutes(state.endpoints ?? null, state.remoteNote ?? null);
     }
 
     if (state.error) {
-      this.qrWrapEl.innerHTML = `<span class="cl-qr-placeholder cl-error">${state.error}</span>`;
-      this.codePillsEl.replaceChildren();
+      this.renderError(state.errorCode || "CL-P001", state.error);
       this.hintEl.textContent = "";
       return this;
     }
@@ -909,32 +1274,103 @@ export class PairingCard {
     if (radio) radio.checked = true;
   }
 
-  private renderLogo(logo?: string) {
+  /**
+   * Draws the Crosslink mark. It takes no argument on purpose: the mark is the
+   * one element of this card an application cannot swap out, so there is no
+   * code path here that renders something else in its place.
+   */
+  private renderBrandMark(): void {
     this.logoEl.replaceChildren();
-    if (!logo) {
-      this.logoEl.innerHTML = DEFAULT_CROSSLINK_SVG;
-      const svg = this.logoEl.querySelector("svg");
-      if (svg) svg.classList.add("cl-pair-logo");
-    } else if (logo.trim().startsWith("<svg")) {
-      this.logoEl.innerHTML = logo;
-      const svg = this.logoEl.querySelector("svg");
-      if (svg) svg.classList.add("cl-pair-logo");
-    } else {
-      const img = document.createElement("img");
-      img.src = logo;
-      img.alt = "Crosslink";
-      img.className = "cl-pair-logo";
-      this.logoEl.appendChild(img);
+    this.logoEl.innerHTML = crosslinkLogoSvg({ className: "cl-pair-logo", width: "140px" });
+  }
+
+  /** The application's own icon and name, beside the framework mark. */
+  private renderAppRow(): void {
+    this.appRowEl.replaceChildren();
+    const icon = this.brand.appIcon;
+    if (icon) {
+      if (icon.trim().startsWith("<svg")) {
+        const holder = document.createElement("span");
+        holder.className = "cl-pair-app-icon";
+        holder.innerHTML = icon;
+        this.appRowEl.appendChild(holder);
+      } else {
+        const img = document.createElement("img");
+        img.className = "cl-pair-app-icon";
+        img.src = icon;
+        img.alt = "";
+        this.appRowEl.appendChild(img);
+      }
     }
+    const name = document.createElement("span");
+    name.className = "cl-pair-app-name";
+    name.textContent = this.brand.appName;
+    this.appRowEl.appendChild(name);
+    this.appRowEl.hidden = !icon && this.brand.appName === "This app";
+  }
+
+  /**
+   * The Crosslink attribution.
+   *
+   * Built and appended by the constructor with no option guarding it: an
+   * application configures colours, and the line stays.
+   */
+  private createAttribution(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "cl-pair-attribution";
+    const prefix = document.createElement("span");
+    prefix.textContent = `${CROSSLINK_ATTRIBUTION_TEXT} `;
+    const link = document.createElement("a");
+    link.href = CROSSLINK_REPOSITORY;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = CROSSLINK_ATTRIBUTION_LINK_TEXT;
+    row.append(prefix, link);
+    return row;
+  }
+
+  private renderStatus(status: string | null, connected: boolean): void {
+    this.statusEl.textContent = status ?? "";
+    this.statusEl.hidden = !status;
+    this.statusEl.classList.toggle("cl-pair-status-on", connected);
+  }
+
+  /**
+   * Applies the application palette to the card's CSS variables.
+   *
+   * The mark inherits `--cl-logo`, which `resolveCrosslinkTheme` has already
+   * lifted to clear the WCAG contrast floor against the card background — so an
+   * accent that would have rendered the logo unreadable is corrected here
+   * rather than accepted as configured.
+   */
+  private applyBrand(): void {
+    const style = this.element.style;
+    style.setProperty("--cl-bg", this.brand.backgroundColor);
+    style.setProperty("--cl-fg", this.brand.textColor);
+    style.setProperty("--cl-muted", this.brand.mutedColor);
+    style.setProperty("--cl-divider", this.brand.dividerColor);
+    style.setProperty("--cl-accent", this.brand.accentColor);
+    style.setProperty("--cl-logo", this.brand.logoColor);
+    style.setProperty("--cl-attribution", this.brand.attributionColor);
+  }
+
+  /** Re-themes a mounted card; the mark and attribution are unaffected. */
+  setBrand(brand: CrosslinkTheme): this {
+    this.brand = resolveCrosslinkTheme({ ...this.options.brand, ...brand });
+    this.applyBrand();
+    this.renderAppRow();
+    return this;
+  }
+
+  /** The palette actually in use, after contrast correction. */
+  getBrand(): ResolvedCrosslinkTheme {
+    return this.brand;
   }
 
   private renderQr(qr?: string | null) {
     this.qrWrapEl.replaceChildren();
     if (!qr) {
-      const placeholder = document.createElement("span");
-      placeholder.className = "cl-qr-placeholder";
-      placeholder.textContent = "Generating…";
-      this.qrWrapEl.appendChild(placeholder);
+      this.renderQrSkeleton();
       return;
     }
 
@@ -951,6 +1387,7 @@ export class PairingCard {
   private renderCode(code?: string | null) {
     this.codePillsEl.replaceChildren();
     if (!code) {
+      this.renderCodeSkeleton();
       return;
     }
     const cleanDigits = String(code).replace(/\D/g, "");
@@ -960,6 +1397,84 @@ export class PairingCard {
       span.textContent = ch;
       this.codePillsEl.appendChild(span);
     }
+  }
+
+  private renderLoading(): void {
+    this.renderQrSkeleton();
+    this.renderCodeSkeleton();
+    this.hintEl.textContent = "Generating a secure pairing code…";
+  }
+
+  private renderQrSkeleton(): void {
+    this.qrWrapEl.replaceChildren();
+    const skeleton = document.createElement("span");
+    skeleton.className = "cl-skeleton cl-qr-skeleton";
+    skeleton.setAttribute("aria-label", "Generating QR code");
+    this.qrWrapEl.appendChild(skeleton);
+  }
+
+  private renderCodeSkeleton(): void {
+    this.codePillsEl.replaceChildren();
+    for (let index = 0; index < 9; index++) {
+      const skeleton = document.createElement("span");
+      skeleton.className = "cl-pill cl-pill-skeleton cl-skeleton";
+      skeleton.setAttribute("aria-hidden", "true");
+      this.codePillsEl.appendChild(skeleton);
+    }
+  }
+
+  private renderError(code: string, message: string): void {
+    this.qrWrapEl.replaceChildren();
+    this.codePillsEl.replaceChildren();
+
+    const shortCode = String(code).toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 12) || "CL-P001";
+    const wrap = document.createElement("div");
+    wrap.className = "cl-qr-placeholder cl-error";
+    const codeEl = document.createElement("div");
+    codeEl.className = "cl-error-code";
+    codeEl.textContent = shortCode;
+    const details = document.createElement("button");
+    details.type = "button";
+    details.className = "cl-error-details-btn";
+    details.textContent = "View details";
+    details.addEventListener("click", () => this.openErrorModal(shortCode, message));
+    wrap.append(codeEl, details);
+    this.qrWrapEl.appendChild(wrap);
+  }
+
+  private openErrorModal(code: string, message: string): void {
+    const backdrop = document.createElement("div");
+    backdrop.className = "cl-connected-modal-backdrop";
+    const modal = document.createElement("div");
+    modal.className = "cl-connected-modal cl-error-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+
+    const header = document.createElement("div");
+    header.className = "cl-modal-header";
+    const title = document.createElement("h3");
+    title.textContent = "Pairing error";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close error details");
+    close.innerHTML = "&times;";
+    close.addEventListener("click", () => backdrop.remove());
+    header.append(title, close);
+
+    const body = document.createElement("div");
+    body.className = "cl-modal-body";
+    const codeEl = document.createElement("code");
+    codeEl.textContent = code;
+    const messageEl = document.createElement("p");
+    messageEl.textContent = message;
+    body.append(codeEl, messageEl);
+    modal.append(header, body);
+    backdrop.appendChild(modal);
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) backdrop.remove();
+    });
+    document.body.appendChild(backdrop);
+    close.focus();
   }
 
   private renderExpiry(expiresAt?: number | string | null) {
@@ -1113,21 +1628,31 @@ export class PairingCard {
 
         const meta = document.createElement("div");
         meta.className = "cl-device-meta";
-        let metaText = "";
-        if (dev.deviceType) metaText += `<span style="text-transform:capitalize;">${dev.deviceType}</span>`;
-        if (dev.location) metaText += `${metaText ? " &bull; " : ""}${dev.location}`;
-        meta.innerHTML = metaText;
+        meta.textContent = [dev.deviceType, dev.location].filter(Boolean).join(" \u2022 ");
 
+        // Built as nodes rather than interpolated markup: every value below is
+        // a device-supplied name or address, and one of them containing a tag
+        // would otherwise execute in the desktop control page.
         const detail = document.createElement("div");
         detail.className = "cl-device-detail";
-        detail.innerHTML = `
-          <span><strong>Device ID:</strong> ${dev.deviceId}</span><br>
-          <span><strong>IP:</strong> ${dev.ipAddress || "Not available"}</span><br>
-          <span><strong>First paired:</strong> ${firstPaired}</span><br>
-          <span><strong>Last connected:</strong> ${lastConnected}</span><br>
-          <span><strong>Status:</strong> <span style="color:${statusColor};font-weight:600;">${statusText}</span></span><br>
-          <span><strong>Trusted:</strong> ${trustedText}</span>
-        `;
+        const rows: Array<[string, string, string?]> = [
+          ["Device ID", String(dev.deviceId ?? "")],
+          ["IP", dev.ipAddress || "Not available"],
+          ["First paired", firstPaired],
+          ["Last connected", lastConnected],
+          ["Status", statusText, statusColor],
+          ["Trusted", trustedText]
+        ];
+        for (const [label, value, color] of rows) {
+          const line = document.createElement("div");
+          const strong = document.createElement("strong");
+          strong.textContent = `${label}: `;
+          const val = document.createElement("span");
+          val.textContent = value;
+          if (color) val.style.cssText = `color:${color};font-weight:600;`;
+          line.append(strong, val);
+          detail.appendChild(line);
+        }
 
         info.appendChild(name);
         info.appendChild(meta);
@@ -1179,7 +1704,12 @@ export class PairingCard {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    this.refreshQueued = false;
     clearInterval(this.expiryTimer);
+    this.clearRefreshTimer();
+    this.unsubscribeSource?.();
+    this.unsubscribeSource = null;
     this.element.remove();
   }
 }

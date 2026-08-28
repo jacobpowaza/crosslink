@@ -4,14 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "bundle": "esbuild ../../packages/sdk-browser/src/index.ts --bundle --minify --format=iife --global-name=CrosslinkSDK --outfile=public/bundle.js",
-    "serve": "npm run bundle && node src/serve.mjs",
-    "dev": "npm run bundle && node src/serve.mjs"
+    "build": "node src/build.mjs",
+    "serve": "npm run build && node src/serve.mjs",
+    "dev": "npm run build && node src/serve.mjs"
   },
   "dependencies": {
-    "qrcode": "^1.5.4"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.2"
+    "@crosslink/sdk-node": "*"
   }
 }

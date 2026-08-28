@@ -5,25 +5,106 @@ description: Use and validate the Swift, Kotlin, and Rust protocol baselines.
 
 The repository includes native protocol baselines for teams building a full Crosslink
 client outside JavaScript. They implement canonical JSON, CLX1 length-prefixed framing,
-incremental decoding, protocol version checks, and shared positive/negative fixtures.
+incremental decoding, protocol version checks, and shared positive/negative fixtures —
+verified against the same corpus described in [Protocol conformance](/reference/conformance).
 
-| SDK | Location | Test command |
-| --- | --- | --- |
-| Swift Package | `sdks/swift` | `swift test --package-path sdks/swift` |
-| Kotlin/JVM | `sdks/kotlin` | `gradle -p sdks/kotlin test` |
-| Rust crate | `sdks/rust` | `cargo test --manifest-path sdks/rust/Cargo.toml` |
+| SDK | Location | Package | Test command |
+| --- | --- | --- | --- |
+| Swift Package | `sdks/swift` | `Crosslink` (SwiftPM) | `swift test --package-path sdks/swift` |
+| Kotlin/JVM | `sdks/kotlin` | `dev.crosslink.sdk` (Gradle) | `gradle -p sdks/kotlin test` |
+| Rust crate | `sdks/rust` | `crosslink-sdk` (Cargo) | `cargo test --locked --manifest-path sdks/rust/Cargo.toml` |
 
-These packages are protocol foundations, not yet feature-parity clients. They do not
-currently include transport selection, pairing UI, persistent identity, reconnect
-policy, or platform-native keychain integration.
+All three run in CI on every push, in a dedicated `native-protocol` job separate
+from the TypeScript `test` job (see `.github/workflows/ci.yml`).
+
+## What each baseline implements
+
+Each SDK exposes the same small surface, matching the TypeScript
+`ProtocolAdapter` used by conformance:
+
+- **Canonical JSON** — deterministic serialization with sorted object keys and
+  no insignificant whitespace, so two implementations produce byte-identical
+  output for the same logical value.
+- **CLX1 framing** — a 4-byte big-endian length prefix followed by the
+  canonical JSON payload (`sdks/rust/src/lib.rs::encode_frame`,
+  `CrosslinkProtocol.encodeFrame` in Kotlin/Swift).
+- **Incremental frame decoding** — a decoder that can be fed partial byte
+  chunks (as they arrive off a socket) and yields complete messages once a
+  full frame is buffered, enforcing the max-frame-size limit before
+  allocating.
+- **Protocol version checks** — rejecting a frame whose `v` field isn't the
+  supported CLX1 version.
+- **Shared fixtures** — the same `messages-v1.json` and `invalid-v1.json`
+  corpus every language SDK is checked against.
+
+```rust
+// sdks/rust/src/lib.rs
+pub const PROTOCOL_VERSION: &str = "1.0";
+pub const DEFAULT_MAX_FRAME_BYTES: usize = 1_048_576;
+
+pub fn canonical_json(value: &Value) -> Result<String, ProtocolError> { /* ... */ }
+pub fn encode_frame(value: &Value, max_bytes: usize) -> Result<Vec<u8>, ProtocolError> { /* ... */ }
+```
+
+```kotlin
+// sdks/kotlin/src/main/kotlin/dev/crosslink/sdk/Protocol.kt
+object CrosslinkProtocol {
+    const val VERSION = "1.0"
+    const val DEFAULT_MAX_FRAME_BYTES = 1_048_576
+    fun canonicalJson(value: CrosslinkValue): String { /* ... */ }
+    fun encodeFrame(value: CrosslinkValue.ObjectValue, maxBytes: Int = DEFAULT_MAX_FRAME_BYTES): ByteArray { /* ... */ }
+}
+```
+
+```swift
+// sdks/swift/Sources/Crosslink/Protocol.swift
+public enum CrosslinkProtocol {
+    public static let version = "1.0"
+    public static let defaultMaxFrameBytes = 1_048_576
+    public static func canonicalJSON(_ value: Any) throws -> String { /* ... */ }
+    public static func encodeMessage(_ object: [String: Any]) throws -> Data { /* ... */ }
+}
+```
+
+Each language represents JSON values idiomatically rather than sharing a type
+across the FFI boundary — Kotlin uses a sealed `CrosslinkValue` hierarchy,
+Swift walks `Any`/`NSNumber`/`NSNull`, Rust uses `serde_json::Value`. Only the
+serialized bytes need to match, not the in-memory representation.
+
+## What they deliberately do not implement yet
+
+These packages are protocol foundations, not feature-parity clients. They do
+not currently include:
+
+- **Transport selection** — no WebSocket/WebRTC client, no LAN vs. relay
+  candidate racing (see [Networking](/connections/networking))
+- **The CLX1 handshake** — no X25519/Ed25519 key exchange, no hybrid PQ
+  support (see [Encryption](/security/encryption) and [Hybrid post-quantum
+  exchange](/security/hybrid-pq))
+- **Pairing UI** — no QR/code entry flow, no SAS verification
+- **Persistent identity** — no keychain/keystore-backed device identity across
+  restarts
+- **Reconnect policy** — no backoff, no session resumption
+
+A native SDK that only implements this layer can serialize and parse frames
+correctly, but cannot yet establish a session with a Crosslink host.
 
 ## Adding a language
 
-1. Implement canonical JSON and the four-byte big-endian frame prefix.
-2. Enforce frame-size and protocol-version limits before allocation.
-3. Port every fixture from `packages/conformance/fixtures` without changing it.
-4. Assert stable error codes for malformed JSON, oversized frames, trailing data,
-   and unsupported versions.
-5. Add the SDK test command to CI before implementing transports or crypto.
+1. Implement canonical JSON and the 4-byte big-endian frame length prefix.
+2. Enforce frame-size and protocol-version limits **before** allocating memory
+   for the payload — the negative fixtures include an oversized-frame case
+   specifically to catch implementations that decode first and check second.
+3. Port every fixture from `packages/protocol/fixtures/messages-v1.json` and
+   `packages/conformance/fixtures/invalid-v1.json` without changing them —
+   fixtures are generated from (and only ever edited alongside) the
+   TypeScript reference in `packages/protocol`.
+4. Assert the exact stable error code (`parse_error`, `version_unsupported`,
+   `invalid_message`, ...) for every negative fixture, not just "an error was
+   thrown."
+5. Add the SDK's test command to `.github/workflows/ci.yml`'s
+   `native-protocol` job before implementing transports or crypto, so
+   conformance regressions are caught from the first commit.
 
-See [Protocol conformance](/reference/conformance) for the adapter contract.
+See [Protocol conformance](/reference/conformance) for the full adapter
+contract and how the report is scored.

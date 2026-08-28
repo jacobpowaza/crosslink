@@ -1,125 +1,17 @@
+// @vitest-environment jsdom
+//
+// A real DOM rather than a hand-written stub: these components render SVG and
+// set innerHTML, and a stub that stores innerHTML as a string cannot answer the
+// question these tests exist to ask — whether the Crosslink mark is actually in
+// the tree.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PairingCard, createPairingCard, normalizeNetworkMode } from "./pairing-card.js";
-
-// Mock minimal document & HTMLElement for node test environment
-class MockClassList {
-  private classes = new Set<string>();
-  add(c: string) { this.classes.add(c); }
-  remove(c: string) { this.classes.delete(c); }
-  toggle(c: string, force?: boolean) {
-    if (force === true) this.classes.add(c);
-    else if (force === false) this.classes.delete(c);
-    else if (this.classes.has(c)) this.classes.delete(c);
-    else this.classes.add(c);
-  }
-  contains(c: string) { return this.classes.has(c); }
-}
-
-class MockElement {
-  tagName: string;
-  className = "";
-  innerHTML = "";
-  textContent = "";
-  children: MockElement[] = [];
-  classList = new MockClassList();
-  style: { setProperty(k: string, v: string): void; getPropertyValue(k: string): string; [k: string]: any } = {
-    setProperty: (k: string, v: string) => { (this.style as any)[k] = v; },
-    getPropertyValue: (k: string) => (this.style as any)[k] ?? "",
-  };
-  disabled = false;
-  hidden = false;
-  title = "";
-  private attributes: Record<string, string> = {};
-  private listeners: Record<string, Function[]> = {};
-
-  constructor(tagName: string) {
-    this.tagName = tagName.toUpperCase();
-  }
-
-  setAttribute(name: string, value: string) {
-    this.attributes[name] = value;
-  }
-
-  getAttribute(name: string): string | null {
-    return this.attributes[name] ?? null;
-  }
-
-  appendChild(el: MockElement) {
-    this.children.push(el);
-    return el;
-  }
-
-  replaceChildren(...els: MockElement[]) {
-    this.children = [...els];
-    this.innerHTML = "";
-  }
-
-  addEventListener(event: string, fn: Function) {
-    this.listeners[event] = this.listeners[event] || [];
-    this.listeners[event].push(fn);
-  }
-
-  click() {
-    for (const fn of this.listeners["click"] || []) fn();
-  }
-
-  querySelector(sel: string): MockElement | null {
-    const match = (el: MockElement): boolean => {
-      if (sel.startsWith(".")) return el.className.split(/\s+/).includes(sel.slice(1));
-      if (sel.startsWith("#")) return el.getAttribute("id") === sel.slice(1);
-      if (sel.includes("[")) {
-        const m = sel.match(/^(\w*)\[([^=]+)="?([^"\]]+)"?\]$/);
-        if (m) {
-          const [, tag, attr, val] = m;
-          if (tag && el.tagName.toLowerCase() !== tag.toLowerCase()) return false;
-          return el.getAttribute(attr) === val;
-        }
-      }
-      return el.tagName.toLowerCase() === sel.toLowerCase();
-    };
-
-    const find = (el: MockElement): MockElement | null => {
-      if (match(el)) return el;
-      for (const c of el.children) {
-        const res = find(c);
-        if (res) return res;
-      }
-      return null;
-    };
-    return find(this);
-  }
-
-  querySelectorAll(sel: string): MockElement[] {
-    const results: MockElement[] = [];
-    const match = (el: MockElement): boolean => {
-      if (sel.includes(".cl-pill")) return el.className.includes("cl-pill");
-      if (sel.includes('input[name="cl-net-mode"]')) {
-        return el.tagName.toLowerCase() === "input" && el.getAttribute("name") === "cl-net-mode";
-      }
-      return false;
-    };
-    const find = (el: MockElement) => {
-      if (match(el)) results.push(el);
-      for (const c of el.children) find(c);
-    };
-    find(this);
-    return results;
-  }
-
-  remove() {
-    this.children = [];
-  }
-}
+import { createPoweredByCrosslink } from "./powered-by-crosslink.js";
 
 describe("PairingCard UI Component", () => {
   beforeEach(() => {
-    (globalThis as any).document = {
-      createElement: (tag: string) => new MockElement(tag),
-      querySelector: () => null,
-      head: { appendChild: vi.fn() },
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    };
+    document.body.replaceChildren();
+    document.head.replaceChildren();
   });
 
   it("creates a pairing card and renders DOM structure", () => {
@@ -150,7 +42,7 @@ describe("PairingCard UI Component", () => {
     const card = new PairingCard({ injectStyles: false });
 
     card.update({ loading: true });
-    expect(card.element.querySelector(".cl-qr-wrap")?.innerHTML).toContain("Generating");
+    expect(card.element.querySelector(".cl-qr-skeleton")).toBeTruthy();
 
     card.update({
       qr: "<svg id='fresh-qr'></svg>",
@@ -169,12 +61,48 @@ describe("PairingCard UI Component", () => {
 
   it("handles error states gracefully", () => {
     const card = new PairingCard({ injectStyles: false });
-    card.update({ error: "Failed to connect to signaling server" });
+    card.update({ error: "Failed to connect to signaling server", errorCode: "CL-P503" });
 
-    expect(card.element.querySelector(".cl-qr-wrap")?.innerHTML).toContain("Failed to connect");
+    expect(card.element.querySelector(".cl-error-code")?.textContent).toBe("CL-P503");
+    const details = card.element.querySelector(".cl-error-details-btn") as any;
+    expect(details?.textContent).toBe("View details");
     expect(card.element.querySelectorAll(".cl-pill").length).toBe(0);
+    details.click();
+    const modal = (document.body as any).querySelector(".cl-error-modal");
+    expect(modal).toBeTruthy();
+    expect(modal.querySelector("p")?.textContent).toBe("Failed to connect to signaling server");
 
     card.destroy();
+  });
+
+  it("renders skeletons whenever a pairing code is absent or loading", () => {
+    const card = new PairingCard({ injectStyles: false });
+    expect(card.element.querySelectorAll(".cl-pill").length).toBe(9);
+    expect(card.element.querySelector(".cl-qr-skeleton")).toBeTruthy();
+
+    card.update({ loading: true });
+    expect(card.element.querySelectorAll(".cl-pill").length).toBe(9);
+    expect(card.element.querySelector(".cl-qr-skeleton")).toBeTruthy();
+    card.destroy();
+  });
+
+  it("creates a reusable, customizable Crosslink attribution", () => {
+    const badge = createPoweredByCrosslink({
+      color: "#abcdef",
+      size: 13,
+      placement: "top-right",
+      text: "Built with",
+    });
+    expect(badge.element.className).toContain("cl-powered-by-crosslink");
+    // jsdom normalises hex colours to rgb() when reading back cssText.
+    expect(badge.element.style.color).toBe("rgb(171, 205, 239)");
+    expect(badge.element.style.cssText).toContain("13px");
+    const link = badge.element.querySelector("a") as any;
+    expect(link.href).toBe("https://github.com/jacobpowaza/crosslink");
+    // The link *is* the wordmark, so the accessible name comes from the SVG.
+    expect(link.getAttribute("aria-label")).toBe("Crosslink");
+    expect(link.querySelector("svg")).toBeTruthy();
+    badge.destroy();
   });
 
   it("applies custom theme variables", () => {
@@ -216,6 +144,7 @@ describe("PairingCard UI Component", () => {
 
     const dropdown = card.element.querySelector(".cl-settings-dropdown") as any;
     expect(dropdown.hidden).toBe(true);
+    expect(dropdown.innerHTML).toContain("https://crosslink.mintlify.site/guides/connection-modes");
 
     cog.click();
     expect(dropdown.hidden).toBe(false);

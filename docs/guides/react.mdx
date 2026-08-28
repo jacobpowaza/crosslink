@@ -148,59 +148,62 @@ isConnected("connecting"); // false
 
 ## Pairing
 
-Pairing itself isn't wrapped in a hook -- call the client directly, then let the provider/hooks reflect the resulting state:
+You do not build a pairing screen. `@crosslink/react` mounts the same pairing
+card every Crosslink application shows:
 
 ```jsx
-function PairingScreen({ client }) {
-  const [uri, setUri] = useState("");
-  const [error, setError] = useState(null);
+import { CrosslinkPairingCard } from "@crosslink/react";
 
-  const handlePair = async () => {
-    try {
-      await client.pairFromQr(uri, ["app.control"]);
-      await client.connect(["app.control"]);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
+export function Settings() {
   return (
-    <div>
-      <input
-        value={uri}
-        onChange={(e) => setUri(e.target.value)}
-        placeholder="Paste crosslink://pair?... URI"
-      />
-      <button onClick={handlePair}>Pair</button>
-      {error && <p className="error">{error}</p>}
-    </div>
+    <CrosslinkPairingCard
+      source
+      appName="Example Notes"
+      appIcon="/icon-192.png"
+      brand={{ accentColor: "#f97316", appearance: "dark" }}
+      onDeviceConnected={(deviceId) => console.log("paired", deviceId)}
+    />
   );
 }
 ```
 
-## QR scanner component
+`source` points it at the Crosslink system endpoints your host exposes. The card
+mints the pairing session, renders the QR and the nine-digit code, refreshes both
+before they expire, mints a new one when a device redeems the old one, and lists
+and revokes paired devices — no state, effects or fetches of your own.
+
+The component is a thin mount around `createPairingCard`; it is the same
+implementation a Vue or plain-JS page gets, not a React reimplementation. See
+[Pairing Card](/client/pairing-card) for the full option list.
+
+### On the phone
+
+A React mobile app does not run a pairing flow either. Crosslink's mobile
+bootstrap does that and hands you a connected channel:
 
 ```jsx
-import { useRef, useEffect } from "react";
+import { useEffect, useState } from "react";
 
-export function QRScanner({ onScan }) {
-  const videoRef = useRef(null);
+export function App() {
+  const [rpc, setRpc] = useState(null);
 
   useEffect(() => {
-    const start = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }
-      });
-      videoRef.current.srcObject = stream;
-      // Use a QR library to read frames
-      // e.g., jsQR, html5-qrcode, or zxing
+    // `crosslink` is published by the boot script Crosslink injects.
+    const off = window.crosslink.onConnected(setRpc);
+    const offDown = window.crosslink.onDisconnected(() => setRpc(null));
+    return () => {
+      off();
+      offDown();
     };
-    start();
   }, []);
 
-  return <video ref={videoRef} autoPlay playsInline />;
+  if (!rpc) return null; // Crosslink is showing its own connection screen
+  return <Notes rpc={rpc} />;
 }
 ```
+
+Returning `null` is correct: while there is no channel, Crosslink is rendering
+its pairing, install, offline or revoked screen over the page.
 
 ## Error handling
 
@@ -208,9 +211,11 @@ export function QRScanner({ onScan }) {
 function CrosslinkApp() {
   const [error, setError] = useState(null);
 
-  const pair = async (client, uri) => {
+  // The pairing card renders its own errors; this is for RPC calls your app
+  // makes after the connection exists.
+  const call = async (rpc, method) => {
     try {
-      await client.pairFromQr(uri, ["app.control"]);
+      await rpc.call(method);
     } catch (err) {
       if (err.message.includes("fingerprint")) {
         setError("Security warning: host fingerprint mismatch");

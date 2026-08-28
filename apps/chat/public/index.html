@@ -230,38 +230,30 @@
   </main>
 
   <footer>
-    End-to-end encrypted with <a href="https://github.com/crosslink" target="_blank">crosslink</a>
+    End-to-end encrypted with <a href="https://github.com/jacobpowaza/crosslink" target="_blank" rel="noopener noreferrer">crosslink</a>
   </footer>
 
-  <script src="./bundle.js?v=2.0.0"></script>
+  <!-- Served by Crosslink; the demo has no bundler of its own. -->
+  <script src="/__crosslink/widget.js"></script>
   <script>
     const $ = id => document.getElementById(id);
-    let mobileConnected = false;
-    const savedMode = localStorage.getItem("crosslink.networkMode");
-    let currentMode = ["auto", "local-only", "lan-and-relay", "remote"].includes(savedMode)
-      ? savedMode
-      : "auto";
 
-    // ── pairing card ─────────────────────────────────────
-    const pairingCard = CrosslinkSDK.createPairingCard({
+    // ── Crosslink pairing card ──────────────────────────
+    // `source: true` points the card at the Crosslink system endpoints the
+    // host exposes, so the card mints the pairing session, renders the QR and
+    // the 9-digit code, replaces the code before it expires, mints a new one
+    // when a device redeems it, applies connection-mode changes and lists and
+    // revokes paired devices. None of that lives in this demo.
+    CrosslinkSDK.createPairingCard({
       target: "#pairCardContainer",
+      source: true,
       appName: "Crosslink Chat",
-      blurb: "<strong>Connect another device</strong> with Crosslink. Trusted devices can use this app across the routes the host makes available, with end-to-end encryption built into the framework.",
-      networkMode: currentMode,
-      onRefresh: () => generatePair(),
-      onNetworkModeChange: async (mode) => {
-        currentMode = mode;
-        const res = await fetch("/api/network-mode", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ mode })
-        });
-        if (!res.ok) throw new Error(await res.text());
-        await generatePair();
-      }
+      appIcon: "/icon-192.png",
+      brand: { accentColor: "#38bdf8", backgroundColor: "#000000" },
+      blurb: "<strong>Connect another device</strong> with Crosslink. Trusted devices can use this app across the routes the host makes available, with end-to-end encryption built into the framework."
     });
 
-    // ── SSE ─────────────────────────────────────────────
+    // ── this demo's own chat state ──────────────────────
     const sse = new EventSource("/api/events");
     sse.addEventListener("chat.update", e => {
       const { messages } = JSON.parse(e.data);
@@ -269,7 +261,6 @@
     });
     sse.addEventListener("status", e => {
       const { mobile } = JSON.parse(e.data);
-      mobileConnected = mobile;
       $("statusDot").classList.toggle("on", mobile);
       $("statusText").textContent = mobile ? "mobile connected" : "waiting for mobile";
       $("chatStatus").textContent = mobile ? "connected" : "no device";
@@ -278,49 +269,6 @@
       $("sendBtn").disabled = !mobile;
       if (mobile) $("emptyChat").classList.add("hidden");
     });
-    sse.addEventListener("pair.refresh", () => {
-      generatePair();
-    });
-
-    // ── pairing ─────────────────────────────────────────
-    async function generatePair() {
-      pairingCard.update({ loading: true });
-      try {
-        const res = await fetch(`/api/pair?mode=${encodeURIComponent(currentMode)}`);
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        currentMode = data.mode || currentMode;
-
-        pairingCard.update({
-          qr: data.mobileQr,
-          code: data.code,
-          expiresAt: data.expiresAt ?? (Date.now() + 120_000),
-          networkMode: currentMode,
-          endpoints: data.endpoints ?? null,
-          remoteNote: data.remoteNote ?? null,
-          loading: false
-        });
-
-        // Demo codes allow enough time to scan and complete the phone flow.
-        clearTimeout(generatePair._timer);
-        generatePair._timer = setTimeout(() => generatePair(), 285_000);
-      } catch (err) {
-        let msg = "Failed to generate a pairing QR.";
-        try {
-          const raw = (err && err.message) ? err.message : String(err);
-          const parsed = JSON.parse(raw);
-          if (parsed?.error) msg = `Failed: ${parsed.error}`;
-          else if (raw) msg = `Failed: ${raw}`;
-        } catch {
-          if (err && err.message) msg = `Failed: ${err.message}`;
-        }
-        pairingCard.update({
-          error: msg,
-          loading: false
-        });
-      }
-    }
-    generatePair();
 
     // ── messages ────────────────────────────────────────
     function renderMessages(msgs) {

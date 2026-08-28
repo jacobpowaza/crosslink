@@ -1,6 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, net, Notification, protocol, session } from "electron";
+import { readFile, writeFile } from "node:fs/promises";
 import {
   createCrosslinkServer,
   type CrosslinkServer,
@@ -20,7 +21,51 @@ const messages: ChatMessage[] = [];
 let mainWindow: BrowserWindow | null = null;
 let host: CrosslinkServer;
 let currentPairing: PairingCodeInfo | null = null;
+let backgroundEnabled = false;
+let isQuitting = false;
+let startHidden = false;
 const RENDERER_URL = "crosslink-app://bundle/index.html";
+
+interface DesktopPreferences { backgroundEnabled: boolean; }
+
+function preferencesPath(): string {
+  return path.join(app.getPath("userData"), "desktop-preferences.json");
+}
+
+async function loadPreferences(): Promise<void> {
+  try {
+    const saved = JSON.parse(await readFile(preferencesPath(), "utf8")) as Partial<DesktopPreferences>;
+    backgroundEnabled = saved.backgroundEnabled === true;
+  } catch {
+    backgroundEnabled = false;
+  }
+}
+
+function backgroundState() {
+  const supported = process.platform === "darwin" || process.platform === "win32";
+  const login = supported ? app.getLoginItemSettings(
+    process.platform === "win32" ? { path: process.execPath, args: ["--hidden"] } : undefined
+  ) : null;
+  return {
+    supported,
+    enabled: backgroundEnabled,
+    openAtLogin: login?.openAtLogin ?? false,
+    status: login?.status ?? (supported ? "not-registered" : "unsupported"),
+  };
+}
+
+async function setBackgroundEnabled(enabled: boolean): Promise<ReturnType<typeof backgroundState>> {
+  if (process.platform !== "darwin" && process.platform !== "win32") {
+    throw new Error("Start-at-login is currently available on macOS and Windows");
+  }
+  const settings = process.platform === "win32"
+    ? { openAtLogin: enabled, enabled, path: process.execPath, args: ["--hidden"] }
+    : { openAtLogin: enabled };
+  app.setLoginItemSettings(settings);
+  backgroundEnabled = enabled;
+  await writeFile(preferencesPath(), JSON.stringify({ backgroundEnabled }, null, 2), "utf8");
+  return backgroundState();
+}
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "crosslink-app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -142,6 +187,7 @@ function publicState() {
     devices: host.listDevices().filter((device) => device.revokedAt === undefined),
     messages: [...messages],
     secretBackend: (host.status().secrets as { backend?: string } | null)?.backend ?? "unknown",
+    background: backgroundState(),
   };
 }
 
@@ -180,6 +226,11 @@ function installIpc(): void {
     }
     return host.revokeDevice(deviceId);
   });
+  ipcMain.handle("crosslink:set-background", async (event, enabled: unknown) => {
+    trust(event);
+    if (typeof enabled !== "boolean") throw new Error("background setting must be boolean");
+    return setBackgroundEnabled(enabled);
+  });
 }
 
 async function createWindow(): Promise<void> {
@@ -201,7 +252,13 @@ async function createWindow(): Promise<void> {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   await mainWindow.loadURL(RENDERER_URL);
-  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.once("ready-to-show", () => { if (!startHidden) mainWindow?.show(); });
+  mainWindow.on("close", (event) => {
+    if (backgroundEnabled && !isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
   mainWindow.on("closed", () => { mainWindow = null; });
 }
 
@@ -210,7 +267,22 @@ app.on("web-contents-created", (_event, contents) => {
   contents.session.setPermissionCheckHandler(() => false);
 });
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
+  await loadPreferences();
+  startHidden = backgroundEnabled && (
+    process.argv.includes("--hidden") ||
+    (process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin)
+  );
   protocol.handle("crosslink-app", (request) => {
     const requested = new URL(request.url);
     const asset = requested.pathname.slice(1) || "index.html";
@@ -235,5 +307,12 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => { if (host) void host.stop(); });
+app.on("activate", () => {
+  if (mainWindow) mainWindow.show();
+  else void createWindow();
+});
+app.on("window-all-closed", () => { if (!backgroundEnabled) app.quit(); });
+app.on("before-quit", () => {
+  isQuitting = true;
+  if (host) void host.stop();
+});

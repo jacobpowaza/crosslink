@@ -1,174 +1,59 @@
 ---
 title: Custom UI
-description: Building your own client interface
+description: What you build, and what Crosslink already built
 ---
 
-While Crosslink provides a demo PWA, you can build any client interface you want.
+<Warning>
+This page used to show how to build your own pairing screen, SAS confirmation
+and connection UI. That was wrong: Crosslink ships all of it, and applications
+that reimplemented it ended up with worse, inconsistent versions of screens the
+framework already maintains.
 
-## Basic client setup
+Build your application. Crosslink builds the bridge.
+</Warning>
+
+## The split
+
+**Crosslink owns** — you mount these, you do not write them:
+
+- the desktop pairing card, QR and nine-digit code — [Pairing Card](/client/pairing-card)
+- mobile first-pair, code entry and SAS confirmation
+- Add to Home Screen, and Continue in Browser
+- the trusted-device handoff into your app
+- offline, reconnecting and revoked screens — [Offline and Reconnect](/connections/offline-behavior)
+- the cached app shell and service worker — [Mobile Bootstrap](/client/mobile-bootstrap)
+- the Crosslink mark and attribution — [Branding](/client/branding)
+
+**You own:**
+
+- your desktop application UI
+- your mobile application UI, from `crosslink.onConnected(rpc)` onward
+- your RPC methods and business logic
+- your application's name, icon and colours — [Branding](/client/branding)
+
+## Theming
+
+Colours, icon, name and light/dark. That is the supported customisation surface,
+and it is documented in [Branding and Theming](/client/branding).
+
+## Building a client without Crosslink's UI
+
+`CrosslinkClient` is public and you can drive pairing yourself. This is a
+genuinely unusual path — a native shell, an automated test harness, a headless
+integration — not a starting point for an application.
 
 ```ts
 import { CrosslinkClient } from "@crosslink/sdk-browser";
 
-const client = await CrosslinkClient.create({
-  deviceName: "My Device",
-  onStateChange: handleStateChange,
-  onConfirmPairing: handlePairingConfirm
-});
+const client = await CrosslinkClient.create({ deviceName: "My Device" });
+await client.pairFromQr(uri, ["notes.read"]);
+const rpc = await client.connect();
 ```
 
-## Pairing UI
+Taking this path means you are also responsible for everything the bootstrap was
+doing: pairing states and their errors, SAS confirmation, the install handoff
+that stops an installed app re-pairing, reconnection with backoff, revocation
+handling, and the offline shell. Those are not small, and they are the reason
+`CrosslinkMobileBootstrap` exists.
 
-Build a pairing screen that handles the QR scan:
-
-```tsx
-function PairingScreen() {
-  const [uri, setUri] = useState("");
-  const [error, setError] = useState(null);
-
-  const handlePair = async () => {
-    try {
-      const record = await client.pairFromQr(uri, requestedCaps);
-      navigateTo("/connected");
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  return (
-    <div>
-      <h2>Pair with Host</h2>
-      <input
-        value={uri}
-        onChange={(e) => setUri(e.target.value)}
-        placeholder="Paste crosslink://pair?... URI"
-      />
-      <button onClick={handlePair}>Pair</button>
-      {error && <p className="error">{error}</p>}
-    </div>
-  );
-}
-```
-
-## SAS confirmation
-
-Build a screen that shows SAS digits for verification:
-
-```tsx
-function SasConfirmScreen({ sas, hostName, grantedCaps, onConfirm }) {
-  return (
-    <div>
-      <h2>Confirm Pairing</h2>
-      <p>Pairing with: <strong>{hostName}</strong></p>
-      <div className="sas-digits">
-        {sas.split(" ").map((group, i) => (
-          <span key={i} className="sas-group">{group}</span>
-        ))}
-      </div>
-      <p>Verify these digits match on the host device.</p>
-      <p>Capabilities: {grantedCaps.join(", ")}</p>
-      <button onClick={() => onConfirm(true)}>Confirm</button>
-      <button onClick={() => onConfirm(false)}>Reject</button>
-    </div>
-  );
-}
-```
-
-## Connection state UI
-
-```tsx
-function ConnectionStatus({ state }) {
-  const states = {
-    offline: { color: "gray", label: "Disconnected" },
-    discovering: { color: "yellow", label: "Looking for host..." },
-    pairing: { color: "yellow", label: "Pairing..." },
-    connecting: { color: "yellow", label: "Connecting..." },
-    direct: { color: "green", label: "Connected (Direct)" },
-    "turn-relayed": { color: "blue", label: "Connected (TURN relay)" },
-    "crosslink-relayed": { color: "blue", label: "Connected (Relay)" },
-    reconnecting: { color: "yellow", label: "Reconnecting..." },
-    unauthorized: { color: "red", label: "Not authorized" },
-    revoked: { color: "red", label: "Access revoked" },
-    "protocol-incompatible": { color: "red", label: "Incompatible version" },
-  };
-
-  const { color, label } = states[state] || states.offline;
-
-  return (
-    <div className={`status status-${color}`}>
-      <span className="dot" />
-      {label}
-    </div>
-  );
-}
-```
-
-## RPC calls
-
-```tsx
-function DataViewer() {
-  const [data, setData] = useState(null);
-
-  const fetchData = async () => {
-    const rpc = client.rpc();
-    const result = await rpc.call("data.get");
-    setData(result);
-  };
-
-  return (
-    <div>
-      <button onClick={fetchData}>Refresh</button>
-      <pre>{JSON.stringify(data, null, 2)}</pre>
-    </div>
-  );
-}
-```
-
-## Event subscriptions
-
-```tsx
-function EventLog() {
-  const [events, setEvents] = useState([]);
-
-  useEffect(() => {
-    const rpc = client.rpc();
-    const unsub = rpc.subscribe("data.changed", (payload) => {
-      setEvents(prev => [...prev, { time: Date.now(), payload }]);
-    });
-    return unsub;
-  }, []);
-
-  return (
-    <ul>
-      {events.map((e, i) => (
-        <li key={i}>{JSON.stringify(e.payload)}</li>
-      ))}
-    </ul>
-  );
-}
-```
-
-## Error handling
-
-```ts
-try {
-  const result = await rpc.call("data.get");
-} catch (err) {
-  if (err.code === "capability_denied") {
-    showUpgradePrompt();
-  } else if (err.code === "device_revoked") {
-    showRevokeMessage();
-  } else if (err.code === "grant_expired") {
-    showRenewalPrompt();
-  }
-}
-```
-
-## Styling
-
-Crosslink doesn't enforce any styling. Use whatever framework you prefer:
-
-- **React** -- See the [React guide](/guides/react)
-- **Vue** -- Same SDK, different component syntax
-- **Svelte** -- Same SDK, reactive stores
-- **Vanilla JS** -- Direct DOM manipulation
+If you only want it to look different, set `accentColor` instead.

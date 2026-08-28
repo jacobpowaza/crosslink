@@ -210,12 +210,21 @@ server.connectionEndpoints();
 `kind` is one of `"lan" | "wan" | "sig" | "relay" | "tunnel"`. Passing `mode`
 filters to what that network mode allows, without changing the host's own mode.
 
+#### `await server.setNetworkMode(mode)`
+
+Changes the running host's actual transport policy. Switching to `"local-only"`
+releases router mappings, disconnects signaling and relay services, and
+reconnects active devices through a permitted local route. Switching back to a
+remote-capable mode starts its configured transports again.
+
+Use this method for settings UI; changing `server.config.networkMode` directly
+does not apply live transport lifecycle changes.
+
 #### `server.enableRemoteAccess()`
 
-Opens remote access now, if it is not already open. Needed only when
-`networkMode` becomes `"remote"` after `start()` — a settings toggle rather than
-a constant. `getPairingCode(undefined, "remote")` calls it for you; call it
-directly when the UI wants the diagnostics before it renders a QR.
+Opens remote access now, if it is not already open. `setNetworkMode("remote")`
+calls it for you; call it directly when a diagnostics UI needs to probe the
+router without changing the host's selected mode.
 
 Requires the LAN listener to be bound to all interfaces (`lan: { bind: "all" }`).
 
@@ -312,6 +321,13 @@ const client = new CrosslinkClient(options);
 
 #### `client.pairFromQr(text, requestedCaps?, codeOverride?)`
 
+<Note>
+Applications rarely call this. `CrosslinkMobileBootstrap` (and therefore
+`mobile.entry`) runs pairing, including SAS confirmation, the install handoff
+and the error states. Call it directly only when you are driving a client with
+no Crosslink UI — see [Custom UI](/client/custom-ui).
+</Note>
+
 Pair with a host via a scanned QR/URI (or a hosted bootstrap link).
 
 ```js
@@ -389,3 +405,95 @@ const unsubscribe = rpc.subscribe("app.tick", (payload) => {
 Cancel an in-flight request by id.
 
 `RpcClient` has no built-in "connected" / "disconnected" / "error" events, and no `hasCapability` method — capability enforcement happens on the host, and a denied call rejects with a `capability_denied` error (see [Error Codes](/reference/errors)).
+
+---
+
+## Crosslink-owned UI
+
+These are the APIs behind the pairing, bootstrap, install, offline and revoked
+experiences. You mount them; Crosslink implements them.
+
+### `createPairingCard(options)`
+
+`@crosslink/sdk-browser` — the canonical desktop pairing UI.
+
+```js
+createPairingCard({ target: "#crosslink", source: true });
+```
+
+| Option | Type | Description |
+| --- | --- | --- |
+| `target` | `HTMLElement \| string` | Where to mount |
+| `source` | `true \| string \| PairingSource` | Drives the card against a live host. `true` uses `/__crosslink`; a string is a different base path; an object is a custom transport. Omit for a controlled card |
+| `appName` | `string` | Shown beside the Crosslink mark |
+| `appIcon` | `string` | Your icon. Never replaces the mark |
+| `brand` | `CrosslinkTheme` | `accentColor`, `backgroundColor`, `textColor`, `appearance` |
+| `blurb` | `string` | One sentence about what pairing does |
+| `refreshLeadSeconds` | `number` | Headroom before expiry at which a new code is minted (default 15) |
+| `onSession` | `(session) => void` | After a session is minted |
+| `onDeviceConnected` | `(deviceId?) => void` | When a paired device connects |
+| `onError` | `(error) => void` | After the card renders a failure |
+
+Methods: `refresh()`, `setNetworkMode(mode)`, `getNetworkMode()`, `update(state)`,
+`setBrand(theme)`, `getBrand()`, `attachSource(source)`, `destroy()`.
+
+`@crosslink/react` exports `CrosslinkPairingCard`, a thin mount around the same
+implementation.
+
+### `CrosslinkMobileBootstrap`
+
+`@crosslink/sdk-browser` — the mobile lifecycle: first pair, code entry, SAS
+confirmation, Add to Home Screen, Continue in Browser, install handoff, offline,
+reconnecting, revoked, and the handoff into your app.
+
+Constructed for you when the host has `mobile.entry`. Construct it directly only
+when serving the page from outside a Crosslink host.
+
+Methods: `start()`, `getState()`, `getClient()`, `getEnvironment()`, `destroy()`.
+
+### `describeBootstrapEnvironment()`
+
+`@crosslink/sdk-browser` — what the current origin permits: `secureContext`,
+`serviceWorkerAvailable`, `webCryptoAvailable`, `installable`,
+`insecureTransportBlocked`, and a `limitations[]` of plain sentences.
+
+### `filterEndpointsForOrigin(endpoints, pageOrigin)`
+
+`@crosslink/core` — splits advertised endpoints into `usable` and `blocked` for a
+given page origin. An `https` page cannot open `ws://`; this is what reports that
+as a blocked route with a reason rather than a connection timeout.
+
+---
+
+## Host: serving the mobile experience
+
+### `host.createBootstrapHandler()`
+
+An HTTP handler serving your `mobile.entry` plus the manifest, service worker,
+icons, browser SDK and install handoff. Mounted automatically on the transport
+port when `mobile.entry` is set; call it to mount on a server you already run.
+
+### `host.createControlHandler(options?)`
+
+The loopback-only system endpoints the pairing card consumes: `/pairing`,
+`/network-mode`, `/devices`, `/revoke`, `/events`, `/widget.js`. Refuses
+non-loopback peers itself. `options.fallback` handles everything outside the
+Crosslink base path, so your own routes sit behind it.
+
+### `host.describeMobileDelivery()`
+
+What your configuration actually delivers, as booleans plus a `message`:
+`secureContext`, `offlineShell`, `installable`, `encryptedDeviceIdentity`,
+`secureTransport`, `durableOrigin`. See [Durable Origins](/client/durable-origin).
+
+### `host.writeStaticBootstrap(outDir, overrides?)`
+
+Writes Crosslink's bootstrap as a static site — `index.html`, `sw.js`,
+`manifest.webmanifest`, the browser SDK, icons, `.nojekyll` — with relative links
+so a GitHub Pages project site works unchanged. Publish it and set
+`pairing.bootstrapUrl` to make installs durable.
+
+### `host.bootstrapOrigin()`
+
+The origin a phone should load the bootstrap from: the configured
+`pairing.bootstrapUrl` when set, otherwise the best route this host advertises.

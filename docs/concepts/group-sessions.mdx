@@ -6,7 +6,7 @@ description: Capability-gated multi-device sessions in a host-mediated star topo
 Group sessions are a star centered on the trusted host. Devices never receive another
 device's address, transport, long-term public key, grant list, or raw device ID. The
 host assigns opaque participant IDs and remains the enforcement point for every
-introduction and message.
+introduction and message (`GroupSessionManager` in `packages/core/src/groups.ts`).
 
 ```text
 phone A ── encrypted session ──┐
@@ -27,6 +27,15 @@ const host = createCrosslinkServer({
 });
 ```
 
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `maxGroups` | 1000 | Total groups the host will hold at once, across all owners |
+| `maxMembersPerGroup` | 16 | Members allowed in a single group |
+| `maxPayloadBytes` | 64 KiB | Serialized JSON size limit per `send` call |
+| `inviteTtlMs` | 5 minutes | How long an unredeemed invite token stays valid |
+
+## Capabilities
+
 | Capability | Authority |
 | --- | --- |
 | `crosslink.group.create` | Create a bounded group |
@@ -36,10 +45,72 @@ const host = createCrosslinkServer({
 | `crosslink.group.receive` | Receive host-routed messages |
 
 Joining alone does not allow messaging: the host must introduce the relevant
-participants, and both send and receive capabilities are checked at delivery.
-Revocation removes the device from every group immediately.
+participants, and both `send` and `receive` capabilities are checked at
+delivery time — introducing two devices does not implicitly grant either of
+them permission to exchange messages.
+
+## Lifecycle
+
+1. **Create** — `create(ownerDeviceId)` requires `crosslink.group.create`,
+   checks the host's `maxGroups` ceiling, and returns a `groupId` plus the
+   owner's own opaque `participantId`. The creating device becomes the
+   group's sole owner.
+2. **Invite** — `invite(groupId, createdBy, targetDeviceId?)` requires
+   `crosslink.group.introduce` and can only be called by the group's owner.
+   It mints a random 24-byte token that expires after `inviteTtlMs`, optionally
+   bound to one specific `targetDeviceId` so it can't be redeemed by any other
+   device.
+3. **Join** — `join(token, deviceId)` requires `crosslink.group.join`. The
+   token is deleted from the invite table as soon as it's looked up — a
+   second redemption attempt with the same token always fails, even before
+   the TTL expires. An already-a-member device redeeming its own invite again
+   gets back its existing `participantId` rather than erroring. Joining fails
+   with `RATE_LIMITED` once `maxMembersPerGroup` is reached.
+4. **Introduce** — `introduce(groupId, requester, targetParticipantId)`
+   requires `crosslink.group.introduce` from the requester **and**
+   `crosslink.group.receive` from the target. It resolves the opaque
+   `targetParticipantId` to a real member, delivers an `"introduction"` event
+   to both sides carrying only the *other* side's opaque participant ID, and
+   is idempotent — introducing the same pair twice reuses the existing
+   introduction record instead of creating a duplicate.
+5. **Send** — `send(groupId, introductionId, fromDeviceId, payload)` requires
+   `crosslink.group.send` from the sender and re-checks
+   `crosslink.group.receive` on the recipient at delivery time — a
+   capability revoked after the introduction was made still blocks the
+   message. The introduction must already exist and must name the sender as
+   one of its two parties, or the call fails with `CAPABILITY_DENIED`
+   ("peer has not been introduced"). Payloads are size-checked against
+   `maxPayloadBytes` after JSON-encoding.
+6. **Leave** — `leave(groupId, deviceId)` removes the device and every
+   introduction it was party to. If the leaving device was the owner, or the
+   group is now empty, the whole group is deleted — there is no owner
+   handoff. `leaveAll(deviceId)` is called automatically on revocation, so a
+   revoked device is removed from every group it belonged to in one pass.
+
+```text
+create ──▶ invite ──▶ join ──▶ introduce ──▶ send / receive
+  owner      owner      any       owner          both sides,
+  only       only     capability   only        capability re-checked
+```
+
+## What the host never learns it needs to hide, and what it does see
 
 <Note>
 Application data remains end-to-end encrypted on each device-to-host session, but
 the trusted host necessarily sees group payloads to route them.
 </Note>
+
+Concretely: each member's messages travel over that member's own existing
+encrypted host session (the same CLX1 session used for direct RPC — see
+[Sessions](/concepts/sessions)), so the host decrypts each leg individually to
+read the `payload`, re-serializes it, and re-encrypts on the recipient's leg.
+Members never open a direct connection or session with each other. What stays
+hidden from every *other* member is the fixed, structural information: real
+device IDs, network addresses/transport details, long-term public keys, and
+each other's capability grants — a member only ever sees the opaque
+`participantId` values the host hands out, which carry no identifying
+information and are freshly generated per group membership.
+
+This is the same host-mediated trust boundary described in
+[Security overview](/security/overview): a group session extends it to
+multi-party routing rather than introducing a new one.

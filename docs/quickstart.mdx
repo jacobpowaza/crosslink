@@ -1,182 +1,195 @@
 ---
 title: Quickstart
-description: Get a working connection in under 5 minutes
+description: A desktop app with a secure mobile companion, in about five minutes
 ---
 
-This guide gets you from zero to a working encrypted connection between a host app and a browser client.
+You will build a desktop host, a mobile page, and nothing else. Crosslink
+provides the pairing screen, the QR, the mobile onboarding, the installable PWA,
+the offline screen and the reconnection.
 
 ## Prerequisites
 
 - Node.js >= 20 (22 recommended)
 - npm
 
-## Step 1: Install the packages
+## 1. Install
 
 ```bash
 mkdir my-crosslink-app && cd my-crosslink-app
 npm init -y
-npm install @crosslink/sdk-node @crosslink/sdk-browser
+npm install @crosslink/sdk-node
 ```
 
-## Step 2: (Optional) start the signaling and relay services
+The browser SDK is served to your pages by the host, so there is no bundler and
+no second install.
 
-With no services configured at all, a phone on the same network pairs and connects **directly** to the host over the address embedded in the QR code -- no signaling service, no relay, no tunnel, no account. Signaling and relay are an optional addition for pairing and connecting across different networks.
+## 2. Write the host
 
-```bash
-# In a separate terminal, from the crosslink repo root -- only needed for
-# cross-network pairing/connectivity
-npm run stack
-```
-
-This starts:
-- **Signaling** on `ws://127.0.0.1:8081` -- helps devices find each other across networks
-- **Relay** on `http://127.0.0.1:8082` -- forwards encrypted traffic when a direct connection isn't possible
-
-<Note>
-Skip this step entirely for same-network (LAN) pairing.
-</Note>
-
-## Step 3: Create a host
-
-Create `host.mjs`:
+`host.mjs`:
 
 ```js
 import { createCrosslinkServer } from "@crosslink/sdk-node";
 
-const server = createCrosslinkServer({
-  application: { id: "com.example.myapp", name: "My App", version: "1.0.0" },
+const notes = [{ id: "1", title: "Hello from your computer" }];
+
+const host = createCrosslinkServer({
+  application: {
+    id: "com.example.notes",
+    name: "Example Notes",
+    shortName: "Notes",
+    accentColor: "#f97316",
+    backgroundColor: "#101014",
+    appearance: "dark"
+  },
+  // Your mobile UI. Crosslink serves it, plus the manifest, service worker,
+  // icons, browser SDK and all of its own onboarding screens.
+  mobile: { entry: "./mobile/index.html" },
   capabilities: [
-    { id: "app.control", title: "Control the app", risk: "medium" },
-    { id: "app.destroy", title: "Delete everything", risk: "high" }
+    { id: "notes.read", title: "Read your notes", risk: "low" },
+    { id: "notes.write", title: "Create notes", risk: "medium" }
   ],
-  signalingUrl: process.env.CROSSLINK_SIGNALING_URL ?? "http://127.0.0.1:8081",
-  relayUrl: process.env.CROSSLINK_RELAY_URL ?? "http://127.0.0.1:8082",
-  lan: { bind: "loopback" },
-  pairing: {
-    approve: async (req) => {
-      console.log(`Pairing request from "${req.deviceName}" -- SAS ${req.sas}`);
-      console.log(`Requested caps: ${req.requestedCaps.join(", ")}`);
-      return true; // auto-approve for demo; use a real prompt in production
-    }
+  lan: { enabled: true, bind: "all" }
+});
+
+host.expose("notes.list", () => notes, { capability: "notes.read" });
+host.expose(
+  "notes.create",
+  ({ title }) => {
+    const note = { id: String(notes.length + 1), title };
+    notes.push(note);
+    return note;
+  },
+  { capability: "notes.write" }
+);
+
+await host.start();
+console.log(host.describeMobileDelivery().message);
+```
+
+## 3. Write the desktop page
+
+`public/index.html`:
+
+```html
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Example Notes</title></head>
+<body>
+  <h1>Example Notes</h1>
+  <div id="crosslink"></div>
+
+  <script src="/__crosslink/widget.js"></script>
+  <script>
+    // The pairing card mints the session, renders the QR and the nine-digit
+    // code, refreshes both before they expire, and lists paired devices.
+    CrosslinkSDK.createPairingCard({
+      target: "#crosslink",
+      source: true,
+      appName: "Example Notes",
+      brand: { accentColor: "#f97316" }
+    });
+  </script>
+</body>
+</html>
+```
+
+Serve it from a loopback-bound server with Crosslink's control surface mounted:
+
+```js
+import http from "node:http";
+import { readFile } from "node:fs/promises";
+
+const crosslink = host.createControlHandler({
+  fallback: async (req, res) => {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(await readFile("./public/index.html"));
   }
 });
 
-server.expose("app.status", () => ({ ok: true }), { capability: "app.control" });
-server.declareEvent("app.tick");
-
-await server.start();
-const info = await server.getPairingCode();
-console.log("Code:", info.code);
-console.log("URI:", info.uri);
-
-// Emit an event every 5 seconds
-setInterval(() => server.emit("app.tick", { t: Date.now() }), 5000);
+http.createServer((req, res) => void crosslink(req, res)).listen(8100, "127.0.0.1");
 ```
 
-Run it:
+The control surface only answers requests from this machine — it mints pairing
+codes and revokes devices, so it refuses anything else.
+
+## 4. Write the mobile page
+
+`mobile/index.html`:
+
+```html
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Notes</title></head>
+<body>
+  <ul id="notes" hidden></ul>
+
+  <script>
+    crosslink.onConnected(async (rpc) => {
+      const list = document.getElementById("notes");
+      list.hidden = false;
+      list.replaceChildren(
+        ...(await rpc.call("notes.list")).map((n) => {
+          const li = document.createElement("li");
+          li.textContent = n.title;
+          return li;
+        })
+      );
+    });
+
+    crosslink.onDisconnected(() => {
+      document.getElementById("notes").hidden = true;
+    });
+  </script>
+</body>
+</html>
+```
+
+There is no manifest link, no service-worker registration, no SDK script tag and
+no pairing screen here. Crosslink injects what the page needs and has already
+run pairing, install and reconnection by the time `onConnected` fires.
+
+## 5. Run it
 
 ```bash
-CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
-CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
 node host.mjs
 ```
 
-The host prints a pairing code and URI. Identity persists in `.crosslink-data/com.example.myapp/` -- restart freely.
+Open `http://127.0.0.1:8100`, scan the QR with a phone on the same Wi-Fi, and
+Crosslink takes it from there: pairing, an optional Add to Home Screen step, then
+your notes list.
 
-## Step 4: Connect a client
+## What you did not write
 
-Create `client.mjs`:
+- a pairing screen, QR generation, or a nine-digit code UI
+- a pairing-session fetch, refresh timer or expiry handler
+- a manifest, a service worker, or icon generation
+- Add to Home Screen or Continue in Browser
+- an offline screen, a reconnect loop, or revocation handling
+- a bundler configuration
 
-```js
-import { createCrosslinkClient } from "@crosslink/sdk-browser";
+## Before you ship
 
-const client = createCrosslinkClient({
-  deviceName: "My Phone",
-  onStateChange: (state) => console.log("State:", state),
-  onConfirmPairing: async ({ sas, grantedCaps }) => {
-    console.log(`SAS: ${sas}`);
-    console.log(`Capabilities: ${grantedCaps.join(", ")}`);
-    return true; // auto-approve for demo
-  }
-});
+Read [Durable Origins](/client/durable-origin). Add to Home Screen and the
+cached offline screen depend on the origin the phone loaded, and a plain-HTTP
+LAN address gives you neither. Your host says which case you are in:
 
-// Pair using the URI from the host
-const uri = process.argv[2]; // pass the crosslink://pair?... URI
-await client.pairFromQr(uri, ["app.control"]);
-
-// Connect -- this auto-reconnects forever
-const rpc = await client.connect();
-
-// Call an RPC method
-const status = await rpc.call("app.status");
-console.log("Status:", status);
-
-// Subscribe to events
-rpc.subscribe("app.tick", (payload) => {
-  console.log("Tick:", payload);
-});
+```ts
+host.describeMobileDelivery().message;
 ```
-
-Run it (pass the URI from the host):
-
-```bash
-node client.mjs "crosslink://pair?v=2&e=lan~ws%3A%2F%2F192.168.1.20%3A54213&c=123456789&a=com.example.myapp&n=My%20App&f=..."
-```
-
-## Step 5: Verify
-
-You should see:
-
-1. The host prints the pairing code and SAS digits
-2. The client connects, confirms SAS, and pairs
-3. The client receives `app.status` responses
-4. The client receives `app.tick` events every 5 seconds
-
-That's it -- you have an end-to-end encrypted connection.
-
-## What just happened?
-
-```text
-1. Host generated a pairing code (single-use, 2-minute TTL)
-2. Client resolved the code via the signaling service
-3. Both devices exchanged signed key material (CLX1 handshake)
-4. User confirmed matching SAS digits (MITM defense)
-5. Encrypted session established (XChaCha20-Poly1305)
-6. RPC methods became available over the encrypted channel
-```
-
-## Pairing code format
-
-The pairing URI has this structure:
-
-```
-crosslink://pair?v=2&e=<endpoints>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>
-```
-
-| Parameter | Description |
-| --- | --- |
-| `v` | Protocol version (always `2`) |
-| `e` | Comma-separated list of routes the host advertises, as `kind~url` pairs (`lan`, `wan`, `sig`, `relay`, `tunnel`), tried by the client in that order |
-| `c` | 9-digit pairing code |
-| `a` | Application ID |
-| `n` | Application name (URL-encoded) |
-| `f` | First 16 hex chars of host fingerprint (MITM pin) |
-
-A private (`lan`) address is only ever tagged `lan` in the QR -- it is never advertised as a public route.
 
 ## Next steps
 
 <CardGroup>
-  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
-    Understand how the pieces fit together
+  <Card title="Pairing Card" icon="qrcode" href="/client/pairing-card">
+    The desktop pairing UI and its options
   </Card>
-  <Card title="Permissions" icon="lock" href="/concepts/permissions">
-    Learn about capability-based access control
+  <Card title="Mobile Bootstrap" icon="mobile" href="/client/mobile-bootstrap">
+    What happens between the scan and your app
   </Card>
-  <Card title="React Integration" icon="react" href="/guides/react">
-    Use Crosslink in a React app
+  <Card title="Durable Origins" icon="lock" href="/client/durable-origin">
+    Making an installed app survive the desktop going offline
   </Card>
-  <Card title="Self-Hosting" icon="server" href="/guides/self-hosting">
-    Deploy your own signaling and relay
+  <Card title="Capabilities and RPC" icon="key" href="/build/capabilities-and-rpc">
+    Capability-gated methods and events
   </Card>
 </CardGroup>

@@ -29,6 +29,38 @@ Every app reinvents device pairing: ad-hoc tokens, hand-copied keys, homegrown c
 | **Reconnect** | Exponential backoff, offline call queueing, subscription restore |
 | **Secrets** | Host seed in the OS keychain; browser seed under a non-extractable WebCrypto key |
 | **Observability** | Structured, redacting `Logger` threaded through every layer |
+| **Pairing UI** | A drop-in pairing card: QR, code, expiry, device list, revocation |
+| **Mobile onboarding** | First-pair, SAS, Add to Home Screen, Continue in Browser |
+| **PWA infrastructure** | Generated manifest, service worker, icons, and the browser SDK, served for you |
+| **Offline experience** | A cached Crosslink shell that opens and reconnects when your desktop is off |
+
+## What you build, and what Crosslink builds
+
+Crosslink is batteries-included on purpose. You do not write a pairing screen, a
+QR, an install flow, a service worker or a reconnect page — those are the
+framework's, and they look and behave the same in every Crosslink application.
+
+| Crosslink owns | You own |
+| --- | --- |
+| Pairing card, QR, 9-digit code | Your desktop application UI |
+| Mobile pairing, code entry, SAS | Your mobile application UI |
+| Add to Home Screen, Continue in Browser | Your RPC methods and business logic |
+| Manifest, service worker, icons, SDK delivery | Your app name, icon and colours |
+| Offline, reconnecting and revoked screens | |
+| The Crosslink mark and attribution | |
+
+A complete mobile integration is one config field and one callback:
+
+```js
+createCrosslinkServer({
+  application: { id: "com.example.notes", name: "Notes", accentColor: "#f97316" },
+  mobile: { entry: "./mobile/index.html" }
+});
+```
+
+```js
+crosslink.onConnected((rpc) => renderNotes(rpc));
+```
 
 ## When should I use Crosslink?
 

@@ -76,12 +76,30 @@ describe("remote access enabled after startup", () => {
     // The user flips "reachable from anywhere" in a settings panel: config
     // changes on a host that is already running.
     server.config.remote = { portForwarded: true, publicHost: "home.example.net", externalPort: 8787 };
-    server.config.networkMode = "remote";
+    await server.setNetworkMode("remote");
 
     const info = await server.getPairingCode(undefined, "remote");
     const wan = info.endpoints?.find((e) => e.kind === "wan");
     expect(wan?.url).toBe("ws://home.example.net:8787");
     expect(server.getRemoteDiagnostics()?.confidence).toBe("manual");
+  });
+
+  it("releases remote reachability when the user switches to local-only", async () => {
+    const server = await startServer({
+      networkMode: "auto",
+      lan: { enabled: true, bind: "all" },
+      remote: { portForwarded: true, publicHost: "home.example.net", externalPort: 8787 }
+    });
+
+    await server.setNetworkMode("remote");
+    expect(server.connectionEndpoints().some((endpoint) => endpoint.kind === "wan")).toBe(true);
+
+    await server.setNetworkMode("local-only");
+    expect(server.config.networkMode).toBe("local-only");
+    expect(server.connectionEndpoints()).toEqual([
+      expect.objectContaining({ kind: "lan" })
+    ]);
+    expect(server.getRemoteDiagnostics()).toBeNull();
   });
 });
 

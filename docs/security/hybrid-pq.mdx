@@ -3,31 +3,108 @@ title: Hybrid post-quantum exchange
 description: Combine X25519 authentication with ephemeral ML-KEM-768 secrets.
 ---
 
-Crosslink can mix an ephemeral ML-KEM-768 shared secret into the existing CLX1 X25519
-key schedule. Both algorithms must succeed: the classical authenticated exchange
-preserves current security while the KEM adds protection against store-now-decrypt-
-later attacks if ML-KEM remains secure.
+Crosslink can mix an ephemeral **ML-KEM-768** shared secret into the existing
+CLX1 X25519 key schedule (`packages/core/src/handshake.ts`, using
+`@noble/post-quantum/ml-kem.js`). Both algorithms must succeed: the classical
+authenticated exchange preserves current security guarantees, and the KEM adds
+protection against store-now-decrypt-later attacks if ML-KEM remains secure
+when a future quantum computer arrives.
 
 ```ts
 security: { hybridPq: "preferred" }
 ```
 
-| Mode | Behavior |
-| --- | --- |
-| `disabled` | Classical CLX1 only; current compatibility default |
-| `preferred` | Use hybrid when both peers advertise it; otherwise classical |
-| `required` | Reject a peer that omits or corrupts the PQ exchange |
+| Mode | Client behavior | Host behavior |
+| --- | --- | --- |
+| `disabled` (default) | Never sends a `pq` offer | Rejects any init that includes one |
+| `preferred` | Sends a `pq` offer; accepts an accept frame with or without one | Answers a `pq` offer if present; accepts an init without one |
+| `required` | Throws `version_unsupported` if the accept omits `pq` | Throws `version_unsupported` if the init omits `pq` |
 
-The client KEM public key, host ciphertext, and negotiated mode are included in the
-signed handshake transcript. An intermediary cannot strip or replace the PQ offer
-without invalidating authentication. KEM secrets are mixed with the ephemeral and
-static X25519 secrets before HKDF and wiped after derivation.
+## How the exchange is layered onto CLX1
+
+During `clientBeginSession`, when `hybridPq` isn't `disabled`, the client
+generates an ML-KEM-768 keypair and includes the encapsulation key in the
+`sinit` frame:
+
+```ts
+const pqKeys = pqMode === "disabled" ? undefined : ml_kem768.keygen();
+const pq = pqKeys ? { suite: "ML-KEM-768", ek: bytesToBase64(pqKeys.publicKey) } : undefined;
+```
+
+The host encapsulates against that key in `hostCompleteSession` and returns
+the ciphertext in the `sack` accept frame. Both sides then derive the same
+`pqShared` secret — the client via `ml_kem768.decapsulate`, the host as the
+direct output of `ml_kem768.encapsulate` — and mix it into the key schedule:
+
+```ts
+const ikm = pqShared ? concat(concat(sharedE, sharedS), pqShared) : concat(sharedE, sharedS);
+const okm = deriveOkm(ikm, concat(nonceClient, nonceHost), pqShared ? PQ_KEY_INFO : KEY_INFO, 64);
+```
+
+`sharedE` (ephemeral X25519 ECDH) and `sharedS` (static X25519 ECDH) are exactly
+what a classical CLX1 handshake already derives — see
+[Encryption](/security/encryption). When PQ is active, `pqShared` is
+concatenated on the end and the HKDF info string changes from
+`crosslink-session-keys-v1` to `crosslink-session-keys-v1+ml-kem-768`, so a
+hybrid-derived key can never collide with a classical one even if `pqShared`
+happened to be all zero bytes.
+
+The client's KEM public key, the host's ciphertext, and the negotiated suite
+name are all included in the signed handshake transcript (`transcript()` in
+`handshake.ts`) before either side has a shared secret. An on-path
+intermediary cannot strip, substitute, or downgrade the PQ offer without
+invalidating the Ed25519 signature over that transcript — the same
+tamper-evidence property the classical exchange already has, extended to
+cover the new fields.
+
+## Validation and failure modes
+
+Both sides validate KEM material lengths and the suite name before use, and
+reject a mismatched negotiation rather than silently falling back:
+
+```ts
+// host: required mode rejects a client that didn't offer PQ
+if (pqMode === "required" && !init.pq) {
+  throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "hybrid PQ exchange is required");
+}
+// host: an offer under a disabled policy is rejected outright, not ignored
+if (init.pq && pqMode === "disabled") {
+  throw new CrosslinkError(ErrorCodes.VERSION_UNSUPPORTED, "hybrid PQ exchange is disabled");
+}
+// client: the accept must match what was offered, not add or drop PQ silently
+if (Boolean(state.pqSecretKey) !== Boolean(accept.pq)) {
+  throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "hybrid PQ negotiation does not match the offer");
+}
+```
+
+An encapsulation key or ciphertext of the wrong byte length is rejected before
+it reaches `ml_kem768.encapsulate`/`decapsulate`, with
+`ErrorCodes.INVALID_MESSAGE`. The client's KEM secret key and the derived
+`pqShared` bytes are zeroed (`.fill(0)`) as soon as the traffic keys are
+derived, whether or not the derivation succeeds.
 
 <Warning>
-`preferred` permits an authenticated legacy peer to negotiate classical mode. Use
-`required` only after every deployed peer supports the hybrid extension; it
-intentionally fails closed during a downgrade or rollout mismatch.
+`preferred` permits an authenticated legacy peer to negotiate classical mode —
+that's what makes it safe to roll out gradually. Use `required` only once
+every deployed peer supports the hybrid extension; it intentionally fails
+closed during a downgrade attempt or a rollout mismatch, so turning it on
+before every client and host are updated will lock out the ones that aren't.
 </Warning>
 
-This is hybrid key establishment, not post-quantum identity authentication. Long-term
-identities and transcript signatures remain Ed25519.
+## Choosing a mode
+
+- **`disabled`** — current default. No behavior change, smallest handshake.
+- **`preferred`** — turn this on first. It adds PQ protection wherever both
+  peers support it, and degrades gracefully everywhere else, so it's safe to
+  ship before every device is updated.
+- **`required`** — turn this on only after `preferred` has been deployed to
+  every host and client in your fleet for long enough that no legacy peer
+  remains. It closes the classical-fallback path entirely.
+
+This is hybrid **key establishment**, not post-quantum **identity
+authentication**. Long-term device identities and transcript signatures remain
+Ed25519 — a future quantum computer that breaks Ed25519 would still be able to
+forge a handshake signature even with `hybridPq: "required"` set. Hybrid PQ
+protects the confidentiality of the derived session keys against a
+harvest-now-decrypt-later adversary; it does not change the trust model
+described in [Threat model](/security/threat-model).

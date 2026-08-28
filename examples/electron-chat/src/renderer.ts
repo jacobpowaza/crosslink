@@ -5,12 +5,14 @@ interface State {
   devices: Device[];
   messages: Message[];
   secretBackend: string;
+  background: { supported: boolean; enabled: boolean; openAtLogin: boolean; status: string };
 }
 interface CrosslinkBridge {
   getState(): Promise<State>;
   getPairingCode(): Promise<{ code: string; expiresAt: number; qrSvg: string | null }>;
   sendMessage(text: string): Promise<Message>;
   revokeDevice(deviceId: string): Promise<boolean>;
+  setBackgroundEnabled(enabled: boolean): Promise<State["background"]>;
   onState(listener: (state: State) => void): () => void;
   onMessage(listener: (message: Message) => void): () => void;
 }
@@ -26,6 +28,10 @@ const pairButton = document.querySelector<HTMLButtonElement>("#pair-button")!;
 const qr = document.querySelector<HTMLImageElement>("#pair-qr")!;
 const pairCode = document.querySelector<HTMLElement>("#pair-code")!;
 let state: State;
+const settingsButton = document.querySelector<HTMLButtonElement>("#settings-button")!;
+const settingsMenu = document.querySelector<HTMLDivElement>("#settings-menu")!;
+const backgroundToggle = document.querySelector<HTMLInputElement>("#background-toggle")!;
+const backgroundStatus = document.querySelector<HTMLParagraphElement>("#background-status")!;
 
 function renderMessage(message: Message): void {
   if (document.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)) return;
@@ -47,6 +53,15 @@ function render(next: State): void {
   document.querySelector("#reach")!.textContent = next.connectivity.message;
   document.querySelector("#vault")!.textContent = `Secrets: ${next.secretBackend}`;
   document.querySelector("#device-count")!.textContent = `${next.devices.length} trusted`;
+  backgroundToggle.checked = next.background.enabled;
+  backgroundToggle.disabled = !next.background.supported;
+  backgroundStatus.textContent = !next.background.supported
+    ? "Start at login is currently available on macOS and Windows."
+    : next.background.status === "requires-approval"
+      ? "Allow Crosslink in your system's Login Items settings to finish enabling it."
+      : next.background.enabled
+        ? "Crosslink will start at login and stay active when this window closes."
+        : "Crosslink stops when the app closes.";
   const devices = document.querySelector<HTMLDivElement>("#devices")!;
   devices.replaceChildren();
   for (const device of next.devices) {
@@ -66,6 +81,30 @@ function render(next: State): void {
   }
   for (const message of next.messages) renderMessage(message);
 }
+
+settingsButton.addEventListener("click", () => {
+  const open = settingsMenu.hidden;
+  settingsMenu.hidden = !open;
+  settingsButton.setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("click", (event) => {
+  if (!settingsMenu.hidden && !settingsMenu.contains(event.target as Node) && event.target !== settingsButton) {
+    settingsMenu.hidden = true;
+    settingsButton.setAttribute("aria-expanded", "false");
+  }
+});
+backgroundToggle.addEventListener("change", async () => {
+  backgroundToggle.disabled = true;
+  try {
+    const background = await window.crosslink.setBackgroundEnabled(backgroundToggle.checked);
+    render({ ...state, background });
+  } catch (error) {
+    backgroundToggle.checked = state.background.enabled;
+    backgroundStatus.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    backgroundToggle.disabled = !state.background.supported;
+  }
+});
 
 pairButton.addEventListener("click", async () => {
   pairButton.disabled = true;

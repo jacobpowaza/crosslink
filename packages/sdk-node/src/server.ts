@@ -54,6 +54,20 @@ import { SignalingLink, sha256Hex, type SignalingPresence } from "./signaling-cl
 import { RelayChannel } from "./relay-host.js";
 import { assertBootstrapUrl, buildBootstrapUri } from "./bootstrap.js";
 import {
+  createBootstrapHandler,
+  type BootstrapHostView
+} from "./mobile/bootstrap-host.js";
+import {
+  writeStaticBootstrap,
+  type StaticBootstrapOptions,
+  type StaticBootstrapResult
+} from "./mobile/static-bootstrap.js";
+import {
+  createControlHandler,
+  type ControlEvent,
+  type ControlHandlerOptions
+} from "./mobile/control-host.js";
+import {
   exposeWebrtcOffer,
   type WebrtcHostOptions,
   type ExposeTarget,
@@ -80,6 +94,49 @@ export interface PwaConfig {
   startUrl?: string;
 }
 
+/**
+ * The application branding Crosslink-owned screens use.
+ *
+ * This is the whole of what an application says about how pairing, install,
+ * offline and revoked screens look. There is no template, renderer or markup
+ * option, because every Crosslink application is meant to present the same
+ * recognisable experience — an accent and an icon make it the application's,
+ * and the layout and the Crosslink mark stay put.
+ */
+export interface ApplicationBranding {
+  /** Short name for the home-screen tile. Defaults to `name`. */
+  shortName?: string;
+  /** URL or path of the application icon, served to the phone as-is. */
+  icon?: string;
+  /** Accent colour. Also tints the Crosslink mark, after a contrast check. */
+  accentColor?: string;
+  /** Background of Crosslink-owned screens. */
+  backgroundColor?: string;
+  /** Primary text colour. Derived from the background when omitted. */
+  textColor?: string;
+  /** Forces a palette rather than deriving one from the background. */
+  appearance?: "light" | "dark" | "auto";
+}
+
+/**
+ * The developer's own mobile application, and where Crosslink should serve it.
+ *
+ * Setting `entry` is what turns on the built-in bootstrap: Crosslink then owns
+ * the manifest, the service worker, the icons, the browser SDK bundle, the
+ * install handoff and the onboarding screens, and hands control to this page
+ * once the device is trusted.
+ */
+export interface MobileAppConfig {
+  /** Path to the developer's mobile HTML entry point. */
+  entry: string;
+  /** Extra directories served as static assets beside the entry. */
+  assets?: string | string[];
+  /** Capabilities the mobile client requests at pairing. Defaults to all. */
+  capabilities?: string[];
+  /** Set false to serve nothing automatically and keep a custom handler. */
+  enabled?: boolean;
+}
+
 export interface CrosslinkServerConfig {
   application: {
     id: string;
@@ -87,7 +144,12 @@ export interface CrosslinkServerConfig {
     version?: string;
     pwaConfig?: PwaConfig;
     offline?: OfflineConfig;
-  };
+  } & ApplicationBranding;
+  /**
+   * The developer's mobile application. When present, Crosslink serves the
+   * whole mobile bootstrap on the transport port; see {@link MobileAppConfig}.
+   */
+  mobile?: MobileAppConfig;
   capabilities?: CapabilityDef[];
   /** defaults to ./.crosslink-data/<appId> */
   storageDir?: string;
@@ -598,7 +660,11 @@ export class CrosslinkServer extends EventEmitter {
       const lanOptions = {
         bind: wantsRemote ? ("all" as const) : (this.config.lan?.bind ?? ("loopback" as const)),
         host: this.config.lan?.host,
-        httpHandler: this.config.lan?.httpHandler,
+        // The bootstrap surface rides on the transport port when the app has
+        // a mobile entry: one port means one router mapping, so the installable
+        // page is reachable from wherever the socket is. An explicit handler
+        // still wins — an application that wants to own this can.
+        httpHandler: this.config.lan?.httpHandler ?? this.mobileHttpHandler(),
         // Every address this host advertises counts as its own origin. The
         // bootstrap page may have been fetched over the public address while
         // the socket the phone then opens is the LAN one; that is cross-origin
@@ -918,11 +984,54 @@ export class CrosslinkServer extends EventEmitter {
   }
 
   /**
+   * Changes the live host's transport policy and applies it immediately.
+   *
+   * In particular, `local-only` is an enforcement boundary rather than a QR
+   * filter: public mappings and service connections are closed, and existing
+   * sessions reconnect through a permitted local transport.
+   */
+  async setNetworkMode(mode: PairingNetworkMode): Promise<void> {
+    const previousMode = this.config.networkMode ?? "auto";
+    this.config.networkMode = mode;
+    if (!this.started || previousMode === mode) return;
+
+    if (mode === "local-only") {
+      clearTimeout(this.relayRetry);
+      this.relayRetry = undefined;
+      this.signaling?.stop();
+      this.signaling = undefined;
+      this.relay?.close();
+      this.relay = undefined;
+      await this.remote?.close();
+      this.remote = undefined;
+      for (const session of this.sessions.keys()) session.close("network-mode-local-only");
+    } else {
+      if (mode === "lan-and-relay") {
+        await this.remote?.close();
+        this.remote = undefined;
+      } else if (mode === "remote" || (mode === "auto" && this.remoteRequested())) {
+        await this.enableRemoteAccess();
+      }
+      if (!this.relay && this._relayUrls.length > 0) {
+        try {
+          await this.connectRelay(this.regionalRelayOrder());
+        } catch (err) {
+          this.log.warn("server.relay-mode-change-failed", { error: err });
+          this.scheduleRelayReconnect(true);
+        }
+      }
+      if (!this.signaling && this._signalingUrl) this.startSignaling(this._signalingUrl);
+    }
+
+    this.emitConnectivity("network-mode-changed");
+  }
+
+  /**
    * Opens remote access now, if it is not already open.
    *
    * Startup does this automatically for `networkMode: "remote"`, but the mode
    * is also a runtime choice — a user toggling "reachable from anywhere" in a
-   * settings panel changes `config.networkMode` on a host that started in
+   * settings panel calls `setNetworkMode("remote")` on a host that started in
    * `auto`. Without this, that toggle could never produce a `wan` endpoint and
    * failed with the "remote access is not enabled" message, which described the
    * startup config rather than the request being made.
@@ -961,6 +1070,278 @@ export class CrosslinkServer extends EventEmitter {
    * whether the ISP is using carrier-grade NAT. Null when remote access was
    * never attempted.
    */
+  /* ------------------- built-in mobile bootstrap --------------------- */
+
+  /**
+   * Origin a phone should load the bootstrap from.
+   *
+   * Prefers a public route over the LAN one. The origin is what the browser
+   * stores as the installed app's identity, so choosing the LAN address when a
+   * public one exists would pin an installed home-screen app to one network —
+   * it would stop working the moment the phone left the house, and the only
+   * fix would be to install it again.
+   */
+  bootstrapOrigin(): string | null {
+    const configured = this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL;
+    if (configured) return assertBootstrapUrl(configured);
+    const endpoints = this.connectionEndpoints();
+    const preferred =
+      endpoints.find((e) => e.kind === "tunnel")?.url ??
+      endpoints.find((e) => e.kind === "wan")?.url ??
+      endpoints.find((e) => e.kind === "lan")?.url;
+    if (!preferred) return null;
+    const url = new URL(toHttpUrl(preferred));
+    url.pathname = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  }
+
+  /**
+   * What the mobile experience this host is configured for can actually deliver.
+   *
+   * Every line of this is a browser rule rather than a Crosslink choice, and
+   * each one has bitten somebody who found out on a phone instead of at
+   * startup:
+   *
+   *  - A service worker — and therefore the cached offline screen, and
+   *    therefore an installed launch that shows anything other than the
+   *    browser's own error page — needs a secure origin.
+   *  - `crypto.subtle` also needs one, so on an insecure origin the device's
+   *    Crosslink identity is stored without encryption at rest.
+   *  - From an https origin the browser refuses `ws://` as mixed content, so a
+   *    published bootstrap can only reach this host over `wss://` — a relay or
+   *    a tunnel. The LAN shortcut and the installable origin are mutually
+   *    exclusive unless the host itself is served over TLS.
+   *
+   * Reporting it as a structure rather than a boolean is deliberate: "not
+   * installable" and "installable but unreachable" are different problems with
+   * different fixes, and a host that logs `message` at startup tells the
+   * developer which one they have.
+   */
+  describeMobileDelivery(): {
+    origin: string | null;
+    secureContext: boolean;
+    /** A service worker can register, so the offline shell can be cached. */
+    offlineShell: boolean;
+    /** Add to Home Screen produces an app rather than a bookmark. */
+    installable: boolean;
+    /** Device identity can be wrapped in a non-extractable WebCrypto key. */
+    encryptedDeviceIdentity: boolean;
+    /** A `wss://` route exists, so a published https bootstrap can connect. */
+    secureTransport: boolean;
+    /** The origin survives a DHCP lease change and leaving the network. */
+    durableOrigin: boolean;
+    message: string;
+  } {
+    const origin = this.bootstrapOrigin();
+    if (!origin) {
+      return {
+        origin: null,
+        secureContext: false,
+        offlineShell: false,
+        installable: false,
+        encryptedDeviceIdentity: false,
+        secureTransport: false,
+        durableOrigin: false,
+        message:
+          "No route is advertised yet, so there is no address a phone can load the bootstrap from."
+      };
+    }
+
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+    const secureContext =
+      url.protocol === "https:" || host === "localhost" || host === "127.0.0.1" || host === "::1";
+    const endpoints = this.connectionEndpoints();
+    const secureTransport = endpoints.some((endpoint) => /^(wss|https):/i.test(endpoint.url));
+    // A configured bootstrap URL is a site the developer published; it keeps
+    // working when this machine's address changes. Anything derived from a live
+    // endpoint is this socket's address today.
+    const durableOrigin = Boolean(
+      this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL
+    );
+
+    let message: string;
+    if (!secureContext) {
+      message =
+        `${origin} is plain HTTP on a non-local address. Phones can pair and use the app over ` +
+        `it, but the browser will not register a service worker there, so Add to Home Screen ` +
+        `produces a bookmark rather than an app, the offline screen is never cached, and this ` +
+        `device's Crosslink identity is stored unencrypted. Publish Crosslink's static bootstrap ` +
+        `(writeStaticBootstrap) to any free static host and set pairing.bootstrapUrl to it.`;
+    } else if (!durableOrigin) {
+      message =
+        `${origin} is secure, so the offline shell and Add to Home Screen work — but the origin ` +
+        `is this host's current address, and an installed app breaks when that address changes. ` +
+        `Publish the static bootstrap and set pairing.bootstrapUrl for an install that survives.`;
+    } else if (!secureTransport) {
+      message =
+        `Installs from ${origin} are durable, but this host advertises no wss:// route. A page ` +
+        `served over https cannot open a ws:// socket, so those installs cannot reach this ` +
+        `machine. Configure a relay (relayUrl) or a tunnel (tunnelUrl).`;
+    } else {
+      message = `Durable, installable bootstrap at ${origin} with a secure route to this host.`;
+    }
+
+    return {
+      origin,
+      secureContext,
+      offlineShell: secureContext,
+      installable: secureContext,
+      encryptedDeviceIdentity: secureContext,
+      secureTransport,
+      durableOrigin,
+      message
+    };
+  }
+
+  /**
+   * Writes Crosslink's mobile bootstrap as a static site this host's
+   * application metadata already describes.
+   *
+   * Publish the result to any free static host and point `pairing.bootstrapUrl`
+   * at it: that published origin becomes the installed app's identity, so the
+   * install survives this machine changing address, and — being https — it can
+   * register the service worker that caches the offline screen. See
+   * {@link describeMobileDelivery} for what a given configuration delivers.
+   */
+  async writeStaticBootstrap(
+    outDir: string,
+    overrides: Partial<StaticBootstrapOptions> = {}
+  ): Promise<StaticBootstrapResult> {
+    const app = this.config.application;
+    return writeStaticBootstrap({
+      outDir,
+      entry: this.config.mobile?.entry,
+      ...overrides,
+      application: {
+        id: app.id,
+        name: app.name,
+        shortName: app.shortName ?? app.pwaConfig?.shortName,
+        icon: app.icon,
+        accentColor: app.accentColor ?? app.pwaConfig?.themeColor,
+        backgroundColor: app.backgroundColor ?? app.pwaConfig?.bgColor,
+        textColor: app.textColor,
+        appearance: app.appearance,
+        capabilities: this.mobileCapabilities(),
+        offlineTitle: app.offline?.title,
+        offlineMessage: app.offline?.message,
+        display: app.pwaConfig?.display,
+        ...overrides.application
+      }
+    });
+  }
+
+  /** Capabilities the built-in mobile client asks for when pairing. */
+  private mobileCapabilities(): string[] {
+    return (
+      this.config.mobile?.capabilities ?? (this.config.capabilities ?? []).map((cap) => cap.id)
+    );
+  }
+
+  private bootstrapView(): BootstrapHostView {
+    const app = this.config.application;
+    const assets = this.config.mobile?.assets;
+    return {
+      application: {
+        id: app.id,
+        name: app.name,
+        shortName: app.shortName ?? app.pwaConfig?.shortName,
+        icon: app.icon,
+        accentColor: app.accentColor ?? app.pwaConfig?.themeColor,
+        backgroundColor: app.backgroundColor ?? app.pwaConfig?.bgColor,
+        textColor: app.textColor,
+        appearance: app.appearance,
+        capabilities: this.mobileCapabilities(),
+        offlineTitle: app.offline?.title,
+        offlineMessage: app.offline?.message,
+        display: app.pwaConfig?.display,
+        icons: app.pwaConfig?.icons
+      },
+      mobile: {
+        entry: this.config.mobile?.entry ?? "",
+        assetDirs: assets ? (Array.isArray(assets) ? assets : [assets]) : []
+      },
+      getInstallHandoff: (id) => this.getInstallHandoff(id),
+      bootstrapOrigin: () => this.bootstrapOrigin()
+    };
+  }
+
+  /**
+   * The phone-facing bootstrap handler: manifest, service worker, icons, the
+   * browser SDK, the install handoff and the developer's mobile entry.
+   *
+   * Exposed so a host that already runs its own HTTP server can mount it there
+   * instead of letting Crosslink attach it to the transport port.
+   */
+  createBootstrapHandler(): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
+    if (!this.config.mobile?.entry) {
+      throw new Error(
+        "createBootstrapHandler() needs `mobile.entry` — the path to your mobile HTML page."
+      );
+    }
+    return createBootstrapHandler(this.bootstrapView());
+  }
+
+  private mobileHttpHandler():
+    | ((req: http.IncomingMessage, res: http.ServerResponse) => void | Promise<void>)
+    | undefined {
+    if (!this.config.mobile?.entry || this.config.mobile.enabled === false) return undefined;
+    return createBootstrapHandler(this.bootstrapView());
+  }
+
+  /**
+   * The loopback control surface the desktop pairing widget talks to.
+   *
+   * Mount it on the application's own (loopback-bound) HTTP server and the
+   * widget works with no pairing routes written by the application. The
+   * handler refuses non-loopback peers itself, so a host that mounts it on the
+   * wrong server fails closed rather than exposing code minting to the network.
+   */
+  createControlHandler(
+    options: ControlHandlerOptions = {}
+  ): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
+    return createControlHandler(
+      {
+        getPairingCode: (ip, mode) => this.getPairingCode(ip, mode),
+        setNetworkMode: (mode) => this.setNetworkMode(mode),
+        listDevices: () => this.listDevices(),
+        revokeDevice: (deviceId) => this.revokeDevice(deviceId),
+        bootstrapOrigin: () => this.bootstrapOrigin(),
+        remoteNote: () => {
+          const diagnostics = this.getRemoteDiagnostics();
+          // A `vpnSuspected` endpoint reports reachable and still fails: the
+          // router forwards, the VPN swallows the reply. Say so rather than let
+          // the QR promise a route that hangs.
+          if (!diagnostics || (diagnostics.reachable && !diagnostics.vpnSuspected)) return null;
+          return diagnostics.message;
+        },
+        onHostEvent: (listener: (event: ControlEvent) => void) => {
+          // A redeemed or revoked code is dead; the widget has to replace what
+          // is on screen or the next person to scan it gets `pairing_expired`.
+          const paired = (): void => listener({ type: "pairing-invalidated" });
+          const revoked = (): void => listener({ type: "pairing-invalidated" });
+          const connected = (info: { deviceId: string }): void =>
+            listener({ type: "device-connected", deviceId: info.deviceId });
+          const disconnected = (info: { deviceId: string }): void =>
+            listener({ type: "device-disconnected", deviceId: info.deviceId });
+          this.on("devicePaired", paired);
+          this.on("deviceRevoked", revoked);
+          this.on("deviceConnected", connected);
+          this.on("deviceDisconnected", disconnected);
+          return () => {
+            this.off("devicePaired", paired);
+            this.off("deviceRevoked", revoked);
+            this.off("deviceConnected", connected);
+            this.off("deviceDisconnected", disconnected);
+          };
+        }
+      },
+      options
+    );
+  }
+
   getRemoteDiagnostics(): NatMappingResult | null {
     return this.remote?.diagnostics ?? null;
   }
@@ -1430,7 +1811,7 @@ export class CrosslinkServer extends EventEmitter {
   }
 
   private acceptTransport(transport: CrosslinkTransport): void {
-    if (this.config.security?.localNetworkOnly) {
+    if (this.config.security?.localNetworkOnly || this.config.networkMode === "local-only") {
       if (transport.kind === "lan") {
         const addr = transport.remoteAddress;
         if (!addr || !isLocalAddress(addr)) {
