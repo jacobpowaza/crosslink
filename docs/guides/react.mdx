@@ -158,9 +158,6 @@ export function Settings() {
   return (
     <CrosslinkPairingCard
       source
-      appName="Example Notes"
-      appIcon="/icon-192.png"
-      brand={{ accentColor: "#f97316", appearance: "dark" }}
       onDeviceConnected={(deviceId) => console.log("paired", deviceId)}
     />
   );
@@ -170,7 +167,9 @@ export function Settings() {
 `source` points it at the Crosslink system endpoints your host exposes. The card
 mints the pairing session, renders the QR and the nine-digit code, refreshes both
 before they expire, mints a new one when a device redeems the old one, and lists
-and revokes paired devices — no state, effects or fetches of your own.
+and revokes paired devices — no state, effects or fetches of your own. Your
+name, icon and colours come from the host's `application` block; pass
+`appName`, `appIcon` or `brand` only to override one of them here.
 
 The component is a thin mount around `createPairingCard`; it is the same
 implementation a Vue or plain-JS page gets, not a React reimplementation. See

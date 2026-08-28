@@ -76,7 +76,11 @@ export {
   type ControlEvent,
   type ControlHandlerOptions
 } from "./mobile/control-host.js";
-export { renderBootScript, type BootPayload } from "./mobile/boot-script.js";
+export {
+  renderBootScript,
+  type BootPayload,
+  type MobileAttributionConfig
+} from "./mobile/boot-script.js";
 export { readBrowserBundle, renderIconPng, renderMarkSvg } from "./mobile/assets.js";
 export {
   writeStaticBootstrap,

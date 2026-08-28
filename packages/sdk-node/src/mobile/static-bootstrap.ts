@@ -29,7 +29,11 @@
 import { mkdir, writeFile, readFile, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { generateServiceWorker } from "@crosslink/sdk-browser";
-import { renderBootScript, type BootPayload } from "./boot-script.js";
+import {
+  renderBootScript,
+  type BootPayload,
+  type MobileAttributionConfig
+} from "./boot-script.js";
 import { readBrowserBundle, renderIconPng, renderMarkSvg } from "./assets.js";
 
 export interface StaticBootstrapOptions {
@@ -57,6 +61,8 @@ export interface StaticBootstrapOptions {
   entry?: string;
   /** Local files copied in beside the entry, e.g. icons and stylesheets. */
   assets?: string[];
+  /** Presentation of the "Powered by Crosslink" badge on the mobile screens. */
+  attribution?: MobileAttributionConfig | null;
 }
 
 export interface StaticBootstrapResult {
@@ -186,7 +192,8 @@ export async function writeStaticBootstrap(
     secureContext: true,
     offlineTitle: app.offlineTitle ?? null,
     offlineMessage: app.offlineMessage ?? null,
-    debuggingUrl: DEBUGGING_URL
+    debuggingUrl: DEBUGGING_URL,
+    attribution: options.attribution ?? null
   };
 
   const entryHtml = options.entry

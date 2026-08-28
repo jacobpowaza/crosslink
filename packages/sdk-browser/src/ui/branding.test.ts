@@ -61,7 +61,7 @@ describe("Crosslink branding", () => {
     expect(crosslinkLogoSvg({ color: b.logoColor })).toContain(CROSSLINK_LOGO_PATH);
   });
 
-  it("keeps the mark and attribution on the pairing card whatever an app configures", () => {
+  it("keeps the mark on the pairing card whatever an app configures", () => {
     const card = createPairingCard({
       source: false,
       injectStyles: false,
@@ -78,9 +78,9 @@ describe("Crosslink branding", () => {
     expect(mark?.querySelector("path")?.getAttribute("d")).toBe(CROSSLINK_LOGO_PATH);
     expect(card.element.querySelector("#not-crosslink")).toBeNull();
 
-    const attribution = card.element.querySelector(".cl-pair-attribution");
-    expect(attribution?.textContent).toContain("Powered by");
-    expect(attribution?.querySelector("a")?.getAttribute("href")).toContain("crosslink");
+    // The desktop card carries the wordmark itself and no attribution line;
+    // "Powered by Crosslink" belongs to the Crosslink-owned mobile screens.
+    expect(card.element.querySelector(".cl-pair-attribution")).toBeNull();
 
     // The application's own icon and name sit beside the mark, not instead of it.
     expect(card.element.querySelector(".cl-pair-app-name")?.textContent).toBe("Crosslink Notes");

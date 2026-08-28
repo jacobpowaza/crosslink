@@ -15,6 +15,24 @@
  */
 import type { NetworkMode, PairingCardEndpoint } from "./pairing-card.js";
 
+/**
+ * The application the host is pairing for, as the host declares it.
+ *
+ * The desktop page does not repeat any of this: `createCrosslinkServer` is
+ * already given an `application` block, and the card renders whatever the host
+ * reports so the widget stays correct when the application is re-branded in
+ * one place.
+ */
+export interface PairingApplication {
+  id?: string;
+  name?: string;
+  icon?: string | null;
+  accentColor?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  appearance?: "light" | "dark" | "auto";
+}
+
 /** A pairing session as the host describes it. */
 export interface PairingSession {
   /** The nine-digit code shown on screen. */
@@ -33,6 +51,8 @@ export interface PairingSession {
   networkMode?: NetworkMode;
   /** Why remote access produced no public route, when it did not. */
   remoteNote?: string | null;
+  /** Application identity and palette, so the card needs no local copy. */
+  application?: PairingApplication | null;
 }
 
 /** How a pairing card reaches the host. */

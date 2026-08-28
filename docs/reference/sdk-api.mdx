@@ -421,13 +421,17 @@ experiences. You mount them; Crosslink implements them.
 createPairingCard({ target: "#crosslink" });
 ```
 
+The card reads the application's identity and palette from the host's
+`application` block, delivered with every pairing session. The options below are
+overrides, applied field by field over what the host reported.
+
 | Option | Type | Description |
 | --- | --- | --- |
 | `target` | `HTMLElement \| string` | Where to mount |
 | `source` | `false \| true \| string \| PairingSource` | Omit for the canonical `/__crosslink` source. `true` is a compatibility alias; a string selects another base path; an object supplies a custom transport; `false` explicitly selects advanced controlled mode |
-| `appName` | `string` | Shown beside the Crosslink mark |
-| `appIcon` | `string` | Your icon. Never replaces the mark |
-| `brand` | `CrosslinkTheme` | `accentColor`, `backgroundColor`, `textColor`, `appearance` |
+| `appName` | `string` | Overrides the host's application name |
+| `appIcon` | `string` | Overrides the host's icon. Never replaces the Crosslink mark |
+| `brand` | `CrosslinkTheme` | `accentColor`, `backgroundColor`, `textColor`, `appearance` — each overrides the host's |
 | `blurb` | `string` | One sentence about what pairing does |
 | `refreshLeadSeconds` | `number` | Headroom before expiry at which a new code is minted (default 15) |
 | `onSession` | `(session) => void` | After a session is minted |
@@ -473,11 +477,19 @@ An HTTP handler serving your `mobile.entry` plus the manifest, service worker,
 icons, browser SDK and install handoff. Mounted automatically on the transport
 port when `mobile.entry` is set; call it to mount on a server you already run.
 
+`mobile.attribution` configures the "Powered by Crosslink" badge the bootstrap
+mounts on every Crosslink-owned mobile screen — `placement`, `color`,
+`background`, `size`, `offset`, `logoWidth`, `zIndex`, `className`. It defaults
+to the foot of the screen and there is no field that removes it. See
+[Mobile bootstrap](/client/mobile-bootstrap#the-powered-by-crosslink-badge).
+
 ### `host.createControlHandler(options?)`
 
 The loopback-only system endpoints the pairing card consumes: `/pairing`,
 `/network-mode`, `/devices`, `/revoke`, `/events`, `/widget.js`. Refuses
-non-loopback peers itself. `options.fallback` handles everything outside the
+non-loopback peers itself. `/pairing` answers with the session *and* the host's
+`application` block, which is how the card renders your name, icon and colours
+without the page repeating them. `options.fallback` handles everything outside the
 Crosslink base path, so your own routes sit behind it.
 
 ### `host.describeMobileDelivery()`

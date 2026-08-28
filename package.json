@@ -35,6 +35,7 @@
     "demo:chat:remote": "CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat",
     "check:remote": "node scripts/check-remote-access.mjs",
     "docs:check": "node scripts/validate-docs.mjs && npm --prefix docs run check",
+    "security:secrets": "gitleaks detect --no-banner --redact && gitleaks detect --no-git --no-banner --redact",
     "security:check": "npm audit --omit=dev --audit-level=high && node scripts/security-baseline.mjs",
     "check:ci": "npm run build && npm run typecheck && npm test && npm run docs:check && npm run security:check"
   },

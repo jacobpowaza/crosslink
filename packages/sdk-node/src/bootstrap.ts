@@ -55,8 +55,18 @@ export function buildInstallStartUrl(startUrl: string, handoffId: string): strin
 
 /** Builds the hosted bootstrap URL for a manifest URI. */
 export function buildBootstrapUri(manifestUri: string, url: string): string {
-  const base = url.replace(/\/+$/, "");
   const fragment = `${BOOTSTRAP_FRAGMENT_KEY}=${encodeURIComponent(manifestUri)}`;
+  const base = url.replace(/\/+$/, "");
+  // A bare origin needs its path back before the fragment: `http://host:8080#…`
+  // is a URL a browser resolves, but it is not the origin's start URL, and the
+  // difference shows up as a service-worker scope that does not match the page
+  // the phone actually landed on.
+  try {
+    const parsed = new URL(base);
+    if (parsed.pathname === "/" && !base.endsWith("/")) return `${base}/#${fragment}`;
+  } catch {
+    /* not absolute; the caller validated it, so leave it as given */
+  }
   return `${base}#${fragment}`;
 }
 

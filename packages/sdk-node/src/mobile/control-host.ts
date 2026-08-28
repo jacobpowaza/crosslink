@@ -17,6 +17,24 @@ import http from "node:http";
 import { readBrowserBundle } from "./assets.js";
 import type { PairingCodeInfo, PairingNetworkMode, DeviceSummary } from "../server.js";
 
+/**
+ * Application identity the widget renders.
+ *
+ * The host already holds this — `createCrosslinkServer` is configured with an
+ * `application` block — so the desktop page never restates it. Sending it with
+ * the session is what keeps the pairing widget free of per-application
+ * hardcoding.
+ */
+export interface ControlApplicationInfo {
+  id: string;
+  name: string;
+  icon?: string | null;
+  accentColor?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  appearance?: "light" | "dark" | "auto";
+}
+
 /** What the control surface needs from a host. */
 export interface ControlHostView {
   getPairingCode(ip: string | undefined, mode: PairingNetworkMode): Promise<PairingCodeInfo>;
@@ -25,6 +43,8 @@ export interface ControlHostView {
   revokeDevice(deviceId: string): boolean;
   /** Absolute origin the phone should load the bootstrap from, if known. */
   bootstrapOrigin(): string | null;
+  /** Application identity and palette the widget draws with. */
+  application(): ControlApplicationInfo;
   /** Human-readable reason remote access produced no public route. */
   remoteNote(): string | null;
   /** Subscribes to host events the widget reacts to. */
@@ -153,12 +173,16 @@ export function createControlHandler(
     }
 
     if (route === "/pairing" && req.method === "GET") {
-      const requested = url.searchParams.get("mode");
-      if (requested && MODES.includes(requested as PairingNetworkMode)) {
-        mode = requested as PairingNetworkMode;
-        await view.setNetworkMode(mode);
-      }
       try {
+        const requested = url.searchParams.get("mode");
+        if (requested && MODES.includes(requested as PairingNetworkMode)) {
+          mode = requested as PairingNetworkMode;
+          // Inside the try on purpose: applying a mode is the step most likely
+          // to fail (asking a router for a mapping and being refused), and an
+          // escaping error leaves the widget with a transport-level failure it
+          // can only report as an unknown fault.
+          await view.setNetworkMode(mode);
+        }
         const info = await view.getPairingCode(req.socket.remoteAddress, mode);
         const origin = view.bootstrapOrigin();
         json(res, 200, {
@@ -169,7 +193,8 @@ export function createControlHandler(
           bootstrapUrl: info.bootstrapUri ?? (origin ? `${origin}/#pair=${encodeURIComponent(info.uri ?? "")}` : null),
           endpoints: info.endpoints ?? [],
           networkMode: mode,
-          remoteNote: view.remoteNote()
+          remoteNote: view.remoteNote(),
+          application: view.application()
         });
       } catch (err) {
         const message = (err as Error).message;

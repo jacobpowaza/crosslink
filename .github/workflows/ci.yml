@@ -23,6 +23,18 @@ jobs:
       - run: npm run docs:check
       - run: npm run security:check
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: a secret that was committed and then removed is still a
+      # secret, so the scan has to see every commit rather than the tip tree.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   native-protocol:
     runs-on: ubuntu-latest
     steps:

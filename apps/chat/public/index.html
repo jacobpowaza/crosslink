@@ -239,18 +239,14 @@
     const $ = id => document.getElementById(id);
 
     // ── Crosslink pairing card ──────────────────────────
-    // With no source option, the card uses the Crosslink system endpoints the
-    // host exposes, so it mints the pairing session, renders the QR and
-    // the 9-digit code, replaces the code before it expires, mints a new one
-    // when a device redeems it, applies connection-mode changes and lists and
-    // revokes paired devices. None of that lives in this demo.
-    CrosslinkSDK.createPairingCard({
-      target: "#pairCardContainer",
-      appName: "Crosslink Chat",
-      appIcon: "/icon-192.png",
-      brand: { accentColor: "#38bdf8", backgroundColor: "#000000" },
-      blurb: "<strong>Connect another device</strong> with Crosslink. Trusted devices can use this app across the routes the host makes available, with end-to-end encryption built into the framework."
-    });
+    // One line, and no application metadata: the card talks to the Crosslink
+    // control surface the host exposes, so it takes the app's name, icon and
+    // colours from the `application` block in server.ts and then mints the
+    // pairing session, renders the QR and the 9-digit code, replaces the code
+    // before it expires, mints a new one when a device redeems it, applies
+    // connection-mode changes, and lists and revokes paired devices. None of
+    // that lives in this demo.
+    CrosslinkSDK.createPairingCard({ target: "#pairCardContainer" });
 
     // ── this demo's own chat state ──────────────────────
     const sse = new EventSource("/api/events");

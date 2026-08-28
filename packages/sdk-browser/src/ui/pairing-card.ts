@@ -19,6 +19,7 @@
 
 import {
   createHttpPairingSource,
+  type PairingApplication,
   type PairingSession,
   type PairingSource,
   type PairingSourceEvent
@@ -26,9 +27,6 @@ import {
 import {
   crosslinkLogoSvg,
   resolveCrosslinkTheme,
-  CROSSLINK_REPOSITORY,
-  CROSSLINK_ATTRIBUTION_TEXT,
-  CROSSLINK_ATTRIBUTION_LINK_TEXT,
   type CrosslinkTheme,
   type ResolvedCrosslinkTheme
 } from "./branding.js";
@@ -221,6 +219,57 @@ const PAIRING_CARD_STYLES = `
 }
 
 /* ── Small Dropdown Menu ─────────────────────────────── */
+/* ── Pending state while a setting is applied ───────── */
+/* A mode change is a round trip to the host — it asks a router for a mapping,
+   or re-derives which routes to advertise — so the popover says it is working
+   rather than looking like the click did nothing. */
+.cl-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  display: inline-block;
+  flex-shrink: 0;
+  animation: clSpin 0.7s linear infinite;
+}
+@keyframes clSpin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cl-spinner { animation-duration: 2.4s; }
+  .cl-pair-refresh[data-busy="true"]::before { animation-duration: 2.4s; }
+}
+.cl-mode-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--cl-muted);
+}
+.cl-mode-pending[hidden] {
+  display: none;
+}
+/* Inputs stay in the DOM and keep their checked state; they simply refuse a
+   second change until the first one has an answer. */
+.cl-settings-dropdown[data-pending="true"] .cl-dropdown-item {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.cl-pair-refresh[data-busy="true"]::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  vertical-align: -2px;
+  animation: clSpin 0.7s linear infinite;
+}
+
 .cl-settings-dropdown {
   position: absolute;
   top: 44px;
@@ -364,8 +413,9 @@ const PAIRING_CARD_STYLES = `
 .cl-pair-app {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .cl-pair-app[hidden] {
   display: none;
@@ -384,7 +434,7 @@ const PAIRING_CARD_STYLES = `
   display: block;
 }
 .cl-pair-app-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--cl-fg);
   letter-spacing: -0.01em;
@@ -402,21 +452,6 @@ const PAIRING_CARD_STYLES = `
 .cl-pair-status-on {
   color: #4ade80;
   font-weight: 600;
-}
-.cl-pair-attribution {
-  grid-column: 1 / -1;
-  border-top: 1px solid var(--cl-divider);
-  padding-top: 12px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--cl-attribution, var(--cl-muted));
-  text-align: center;
-}
-.cl-pair-attribution a {
-  color: inherit;
-  font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 .cl-pair-blurb {
   font-size: 13px;
@@ -754,6 +789,7 @@ export class PairingCard {
   private hintEl: HTMLElement;
   private settingsPopover: HTMLElement;
   private routeSummaryEl!: HTMLElement;
+  private modePendingEl!: HTMLElement;
   private appRowEl!: HTMLElement;
   private statusEl!: HTMLElement;
   private brand: ResolvedCrosslinkTheme;
@@ -810,7 +846,10 @@ export class PairingCard {
     this.logoEl.className = "cl-pair-logo-wrap";
     this.renderBrandMark();
 
-    // Which application is being joined, beneath the framework that secures it.
+    // Which application is being joined. It sits with the QR rather than under
+    // the Crosslink mark: the phone is being asked to connect to *this* app, so
+    // the icon and name belong with the thing the user is about to scan. The
+    // left column stays Crosslink's own explanation of what pairing is.
     this.appRowEl = document.createElement("div");
     this.appRowEl.className = "cl-pair-app";
     this.renderAppRow();
@@ -824,10 +863,12 @@ export class PairingCard {
     this.refreshBtn = document.createElement("button");
     this.refreshBtn.className = "cl-pair-refresh";
     this.refreshBtn.textContent = "Refresh code";
-    this.refreshBtn.addEventListener("click", () => this.handleRefresh());
+    // `refresh()` mints a new session when the card drives itself and falls
+    // through to `options.onRefresh` when the application owns the loop, so the
+    // button does the right thing in both modes.
+    this.refreshBtn.addEventListener("click", () => void this.refresh());
 
     left.appendChild(this.logoEl);
-    left.appendChild(this.appRowEl);
     left.appendChild(this.blurbEl);
     left.appendChild(this.refreshBtn);
 
@@ -846,6 +887,7 @@ export class PairingCard {
     this.qrWrapEl.className = "cl-qr-wrap";
     this.renderQr(options.qr);
 
+    center.appendChild(this.appRowEl);
     center.appendChild(qrLabel);
     center.appendChild(this.qrWrapEl);
 
@@ -887,7 +929,10 @@ export class PairingCard {
     this.element.appendChild(center);
     this.element.appendChild(div2);
     this.element.appendChild(right);
-    this.element.appendChild(this.createAttribution());
+    // No attribution line here. The desktop card already draws the Crosslink
+    // wordmark in its own column; the "Powered by Crosslink" badge belongs to
+    // the Crosslink-owned mobile screens, where `PoweredByCrosslink` mounts it
+    // automatically and the framework, not the page, is what the user sees.
 
     // Auto mount if target provided
     if (options.target) {
@@ -967,6 +1012,7 @@ export class PairingCard {
     try {
       const session = await source.getSession(this.currentMode);
       if (this.destroyed) return;
+      if (session.application) this.adoptHostApplication(session.application);
       if (session.networkMode) this.currentMode = normalizeNetworkMode(session.networkMode);
       this.update({
         loading: false,
@@ -996,6 +1042,36 @@ export class PairingCard {
       // the user has to click to recover.
       this.refreshTimer = setTimeout(() => void this.refresh(), 5_000);
     }
+  }
+
+  /**
+   * Takes the application's identity from the host.
+   *
+   * `createCrosslinkServer` is already configured with an `application` block —
+   * name, icon, accent, background — so a page that mounts the card needs to
+   * repeat none of it. Options still win where they are given: an application
+   * that wants the pairing screen to differ from its host metadata says so
+   * explicitly, and nothing here overrides that.
+   */
+  private adoptHostApplication(app: PairingApplication): void {
+    const explicit: CrosslinkTheme = {
+      appName: this.options.appName,
+      appIcon: this.options.appIcon,
+      ...this.options.brand
+    };
+    const merged: CrosslinkTheme = {
+      appName: explicit.appName ?? app.name,
+      appIcon: explicit.appIcon ?? app.icon ?? undefined,
+      accentColor: explicit.accentColor ?? app.accentColor,
+      backgroundColor: explicit.backgroundColor ?? app.backgroundColor,
+      textColor: explicit.textColor ?? app.textColor,
+      appearance: explicit.appearance ?? app.appearance
+    };
+    const resolved = resolveCrosslinkTheme(merged);
+    if (JSON.stringify(resolved) === JSON.stringify(this.brand)) return;
+    this.brand = resolved;
+    this.applyBrand();
+    this.renderAppRow();
   }
 
   private sessionStatusText(): string {
@@ -1123,6 +1199,20 @@ export class PairingCard {
       </label>
     `;
 
+    // Applying a mode is not instant: the host re-derives its routes and may
+    // ask a router for a mapping. The row below says so while that happens.
+    this.modePendingEl = document.createElement("div");
+    this.modePendingEl.className = "cl-mode-pending";
+    this.modePendingEl.setAttribute("role", "status");
+    this.modePendingEl.setAttribute("aria-live", "polite");
+    this.modePendingEl.hidden = true;
+    const spinner = document.createElement("span");
+    spinner.className = "cl-spinner";
+    const pendingText = document.createElement("span");
+    pendingText.textContent = "Applying…";
+    this.modePendingEl.append(spinner, pendingText);
+    pop.appendChild(this.modePendingEl);
+
     // Built as an element rather than markup because `update()` rewrites it.
     this.routeSummaryEl = document.createElement("div");
     this.routeSummaryEl.className = "cl-route-summary";
@@ -1184,6 +1274,7 @@ export class PairingCard {
   }
 
   private async applyNetworkMode(mode: NetworkMode): Promise<void> {
+    this.setSettingsPending(true);
     try {
       await this.source?.setNetworkMode?.(mode);
       await this.options.onNetworkModeChange?.(mode);
@@ -1195,9 +1286,33 @@ export class PairingCard {
         errorCode: (error as Error & { code?: string }).code ?? "CL-P001"
       });
       this.options.onError?.(error);
+      this.setSettingsPending(false);
       return;
     }
-    await this.refresh();
+    try {
+      // The new mode is only really applied once a session minted under it is
+      // on screen, so the spinner runs until the QR has been replaced.
+      await this.refresh();
+    } finally {
+      this.setSettingsPending(false);
+    }
+  }
+
+  /**
+   * Shows the popover as busy and refuses further changes until it settles.
+   *
+   * The radios keep their state rather than being re-rendered: the user has
+   * already chosen, and the question is only whether the host agrees yet.
+   */
+  private setSettingsPending(pending: boolean): void {
+    this.modePendingEl.hidden = !pending;
+    if (pending) this.settingsPopover.setAttribute("data-pending", "true");
+    else this.settingsPopover.removeAttribute("data-pending");
+    this.settingsPopover
+      .querySelectorAll<HTMLInputElement>('input[name="cl-net-mode"]')
+      .forEach((radio) => {
+        radio.disabled = pending;
+      });
   }
 
   getNetworkMode(): NetworkMode {
@@ -1215,8 +1330,10 @@ export class PairingCard {
     if (state.loading) {
       this.renderLoading();
       this.refreshBtn.disabled = true;
+      this.refreshBtn.setAttribute("data-busy", "true");
     } else {
       this.refreshBtn.disabled = false;
+      this.refreshBtn.removeAttribute("data-busy");
     }
 
     if (state.networkMode) {
@@ -1311,26 +1428,6 @@ export class PairingCard {
     this.appRowEl.hidden = !icon && this.brand.appName === "This app";
   }
 
-  /**
-   * The Crosslink attribution.
-   *
-   * Built and appended by the constructor with no option guarding it: an
-   * application configures colours, and the line stays.
-   */
-  private createAttribution(): HTMLElement {
-    const row = document.createElement("div");
-    row.className = "cl-pair-attribution";
-    const prefix = document.createElement("span");
-    prefix.textContent = `${CROSSLINK_ATTRIBUTION_TEXT} `;
-    const link = document.createElement("a");
-    link.href = CROSSLINK_REPOSITORY;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = CROSSLINK_ATTRIBUTION_LINK_TEXT;
-    row.append(prefix, link);
-    return row;
-  }
-
   private renderStatus(status: string | null, connected: boolean): void {
     this.statusEl.textContent = status ?? "";
     this.statusEl.hidden = !status;
@@ -1340,10 +1437,13 @@ export class PairingCard {
   /**
    * Applies the application palette to the card's CSS variables.
    *
-   * The mark inherits `--cl-logo`, which `resolveCrosslinkTheme` has already
-   * lifted to clear the WCAG contrast floor against the card background — so an
-   * accent that would have rendered the logo unreadable is corrected here
-   * rather than accepted as configured.
+   * The mark inherits `--cl-logo`. On this card that is the card's own
+   * foreground rather than the application accent: the pairing card is a
+   * Crosslink surface, and drawing the wordmark in the app's colour reads as
+   * the application's logo instead of the framework's. The application accent
+   * still drives the card's own accented elements. `resolveCrosslinkTheme`
+   * derives the foreground from the background, so it clears contrast on a
+   * light card as well as a dark one.
    */
   private applyBrand(): void {
     const style = this.element.style;
@@ -1352,7 +1452,7 @@ export class PairingCard {
     style.setProperty("--cl-muted", this.brand.mutedColor);
     style.setProperty("--cl-divider", this.brand.dividerColor);
     style.setProperty("--cl-accent", this.brand.accentColor);
-    style.setProperty("--cl-logo", this.brand.logoColor);
+    style.setProperty("--cl-logo", this.brand.textColor);
     style.setProperty("--cl-attribution", this.brand.attributionColor);
   }
 

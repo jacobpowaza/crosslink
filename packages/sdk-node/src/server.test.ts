@@ -893,7 +893,9 @@ describe("hosted bootstrap", () => {
     });
     const info = await server.getPairingCode();
     expect(info.bootstrapUri).toBeTruthy();
-    expect(info.bootstrapUri).toMatch(/^https:\/\/my-pwa\.netlify\.app#pair=/);
+    // The origin keeps its path: `https://host/#pair=…` is the page's start
+    // URL, and a service-worker scope has to match the page the phone lands on.
+    expect(info.bootstrapUri).toMatch(/^https:\/\/my-pwa\.netlify\.app\/#pair=/);
     // The bootstrap URI decodes to a valid crosslink:// manifest URI
     const fragment = info.bootstrapUri!.split("#")[1];
     const params = new URLSearchParams(fragment);
@@ -902,7 +904,7 @@ describe("hosted bootstrap", () => {
     expect(info.qrSvg).toBeTruthy();
   }, 10000);
 
-  it("falls back to a crosslink:// QR when no bootstrapUrl is set", async () => {
+  it("falls back to a crosslink:// QR when there is no bootstrap page at all", async () => {
     const server = await startServer({
       networkMode: "lan-and-relay",
       signalingUrl: "https://signal.crosslink.app",
@@ -910,7 +912,9 @@ describe("hosted bootstrap", () => {
       lan: { enabled: false },
     });
     const info = await server.getPairingCode();
-    // No bootstrap URL means no bootstrapUri and the QR is the raw manifest
+    // No published bootstrapUrl and no `mobile.entry`: there is no page a
+    // camera could open, so the QR carries the raw manifest for an in-app
+    // scanner instead.
     expect(info.bootstrapUri).toBeFalsy();
     expect(info.qrSvg).toBeTruthy();
   }, 10000);

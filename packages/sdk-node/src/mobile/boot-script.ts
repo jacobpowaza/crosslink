@@ -13,6 +13,40 @@
  */
 
 /**
+ * How the "Powered by Crosslink" badge is drawn on the mobile screens.
+ *
+ * The badge itself is not optional — every Crosslink-owned mobile surface
+ * carries it — but where it sits and what colour it is belong to the
+ * application. There is deliberately no `enabled` flag and no text override:
+ * position, colour, size and spacing are the whole of the surface.
+ */
+export interface MobileAttributionConfig {
+  /** Screen corner, or `inline` to sit in the page flow. Default bottom-center. */
+  placement?:
+    | "top-left"
+    | "top-center"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-center"
+    | "bottom-right"
+    | "inline";
+  /** Text colour. */
+  color?: string;
+  /** Background pill behind the badge. */
+  background?: string;
+  /** Font size; a number is pixels. */
+  size?: string | number;
+  /** Distance from the chosen screen edges; a number is pixels. */
+  offset?: string | number;
+  /** Width of the wordmark; a number is pixels. */
+  logoWidth?: string | number;
+  /** Stacking order, for a page with its own fixed furniture. */
+  zIndex?: number;
+  /** Extra class, for application-specific styling. */
+  className?: string;
+}
+
+/**
  * Metadata the host stamps into the page as `window.__CROSSLINK__`.
  *
  * Everything here comes from `createCrosslinkServer`'s `application` block, so
@@ -39,6 +73,8 @@ export interface BootPayload {
   offlineTitle: string | null;
   offlineMessage: string | null;
   debuggingUrl: string;
+  /** Presentation of the "Powered by Crosslink" badge. Null uses the default. */
+  attribution?: MobileAttributionConfig | null;
 }
 
 /**
@@ -167,13 +203,20 @@ export function renderBootScript(payload: BootPayload): string {
       icon: config.icon || undefined,
       themeColor: config.accentColor
     },
-    poweredBy: {
-      placement: "top-left",
-      offset: 8,
-      size: 10,
-      accentColor: config.accentColor,
-      backgroundColor: config.backgroundColor
-    },
+    /* Every Crosslink-owned mobile screen carries the attribution, mounted by
+       the bootstrap rather than by the application's page. It sits at the foot
+       of the screen unless the application moved it; nothing here can turn it
+       off, and the wording is not configurable. */
+    poweredBy: Object.assign(
+      {
+        placement: "bottom-center",
+        offset: 8,
+        size: 10,
+        accentColor: config.accentColor,
+        backgroundColor: config.backgroundColor
+      },
+      config.attribution || {}
+    ),
     onAuthorized: function (rpc, client) {
       api.rpc = rpc;
       api.client = client;

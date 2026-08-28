@@ -57,6 +57,7 @@ import {
   createBootstrapHandler,
   type BootstrapHostView
 } from "./mobile/bootstrap-host.js";
+import type { MobileAttributionConfig } from "./mobile/boot-script.js";
 import {
   writeStaticBootstrap,
   type StaticBootstrapOptions,
@@ -135,6 +136,12 @@ export interface MobileAppConfig {
   capabilities?: string[];
   /** Set false to serve nothing automatically and keep a custom handler. */
   enabled?: boolean;
+  /**
+   * Where the "Powered by Crosslink" badge sits on the mobile screens and what
+   * it looks like. Crosslink mounts it automatically on every screen it owns;
+   * this moves and re-colours it, and there is no option that removes it.
+   */
+  attribution?: MobileAttributionConfig;
 }
 
 export interface CrosslinkServerConfig {
@@ -915,16 +922,26 @@ export class CrosslinkServer extends EventEmitter {
     info.uri = uri;
     info.endpoints = endpoints;
 
-    // When a hosted bootstrap page is configured, the QR is an https:// link
-    // so scanning it with an iPhone opens Safari (a `crosslink://` scheme has
-    // no iOS handler). The page pulls `#bootstrap=<manifest>` and pairs in one
-    // tap; see docs/BOOTSTRAP.md.
-    const bootstrapUrl = this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL;
-    if (bootstrapUrl) {
-      const base = assertBootstrapUrl(bootstrapUrl);
+    // The QR has to carry a URL a phone camera will open. iOS has no handler
+    // for a `crosslink://` scheme, so a QR containing the raw pairing URI is
+    // one the Camera app silently ignores — it is only useful to an in-app
+    // scanner. Whenever this host has a bootstrap page to send the phone to,
+    // the QR is the http(s) link to it with the pairing URI in the fragment,
+    // which keeps the payload out of every request line and log.
+    //
+    // A configured `pairing.bootstrapUrl` wins: it is a published https origin,
+    // so it stays the installed app's identity across network changes. Failing
+    // that, the host's own built-in bootstrap is served on the transport port,
+    // reachable at whichever route this code advertises — the tunnel or the
+    // router-mapped public address before the LAN one, so a code minted for a
+    // phone somewhere else points at a route that reaches here.
+    const base = this.bootstrapBaseFor(endpoints);
+    if (base) {
       info.bootstrapUri = buildBootstrapUri(uri, base);
       info.qrSvg = await QRCode.toString(info.bootstrapUri, { type: "svg", margin: 1 });
     } else {
+      // No page to send a camera to. The raw URI still pairs an in-app scanner,
+      // which is the only client that can act on it.
       info.qrSvg = await QRCode.toString(uri, { type: "svg", margin: 1 });
     }
 
@@ -1113,9 +1130,20 @@ export class CrosslinkServer extends EventEmitter {
    * fix would be to install it again.
    */
   bootstrapOrigin(): string | null {
+    return this.bootstrapOriginFor(this.connectionEndpoints());
+  }
+
+  /**
+   * The same choice, made against one specific set of endpoints.
+   *
+   * A pairing code is minted for a mode, and that mode decides which routes it
+   * advertises; the origin baked into its QR has to come from those same
+   * routes, or a `remote` code can end up pointing a phone at a LAN address it
+   * cannot reach.
+   */
+  private bootstrapOriginFor(endpoints: readonly PairingEndpoint[]): string | null {
     const configured = this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL;
     if (configured) return assertBootstrapUrl(configured);
-    const endpoints = this.connectionEndpoints();
     const preferred =
       endpoints.find((e) => e.kind === "tunnel")?.url ??
       endpoints.find((e) => e.kind === "wan")?.url ??
@@ -1126,6 +1154,22 @@ export class CrosslinkServer extends EventEmitter {
     url.search = "";
     url.hash = "";
     return url.toString().replace(/\/$/, "");
+  }
+
+  /**
+   * Origin the QR should point a camera at, or null when there is no page to
+   * open there.
+   *
+   * A published `pairing.bootstrapUrl` is always a page. The derived origin is
+   * one only when this host actually serves the built-in bootstrap: a host
+   * configured without `mobile.entry` has nothing but a WebSocket on that port,
+   * and a QR that opened it would give the phone a blank tab.
+   */
+  private bootstrapBaseFor(endpoints: readonly PairingEndpoint[]): string | null {
+    const configured = this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL;
+    if (configured) return assertBootstrapUrl(configured);
+    if (!this.config.mobile?.entry || this.config.mobile.enabled === false) return null;
+    return this.bootstrapOriginFor(endpoints);
   }
 
   /**
@@ -1294,6 +1338,7 @@ export class CrosslinkServer extends EventEmitter {
     return writeStaticBootstrap({
       outDir,
       entry: this.config.mobile?.entry,
+      attribution: this.config.mobile?.attribution ?? null,
       ...overrides,
       application: {
         id: app.id,
@@ -1339,6 +1384,7 @@ export class CrosslinkServer extends EventEmitter {
         display: app.pwaConfig?.display,
         icons: app.pwaConfig?.icons
       },
+      attribution: this.config.mobile?.attribution ?? null,
       mobile: {
         entry: this.config.mobile?.entry ?? "",
         assetDirs: assets ? (Array.isArray(assets) ? assets : [assets]) : []
@@ -1389,6 +1435,21 @@ export class CrosslinkServer extends EventEmitter {
         listDevices: () => this.listDevices(),
         revokeDevice: (deviceId) => this.revokeDevice(deviceId),
         bootstrapOrigin: () => this.bootstrapOrigin(),
+        // The widget renders the application's identity from this rather than
+        // from options repeated in the desktop page: one `application` block
+        // configured on the host is the whole of what an app declares.
+        application: () => {
+          const app = this.config.application;
+          return {
+            id: app.id,
+            name: app.name,
+            icon: app.icon ?? null,
+            accentColor: app.accentColor ?? app.pwaConfig?.themeColor,
+            backgroundColor: app.backgroundColor ?? app.pwaConfig?.bgColor,
+            textColor: app.textColor,
+            appearance: app.appearance
+          };
+        },
         remoteNote: () => {
           const diagnostics = this.getRemoteDiagnostics();
           // A `vpnSuspected` endpoint reports reachable and still fails: the

@@ -19,6 +19,7 @@ let mode = "auto";
 let revoked: string[] = [];
 let emit: ((event: { type: "pairing-invalidated" }) => void) | null = null;
 let failNext: Error | null = null;
+let failNextMode: Error | null = null;
 
 const view: ControlHostView = {
   async getPairingCode(_ip, requested): Promise<PairingCodeInfo> {
@@ -37,6 +38,11 @@ const view: ControlHostView = {
     };
   },
   async setNetworkMode(next) {
+    if (failNextMode) {
+      const err = failNextMode;
+      failNextMode = null;
+      throw err;
+    }
     mode = next;
   },
   listDevices: () => devices,
@@ -45,6 +51,13 @@ const view: ControlHostView = {
     return true;
   },
   bootstrapOrigin: () => "https://example.github.io",
+  application: () => ({
+    id: "com.example.notes",
+    name: "Example Notes",
+    icon: "/icon-192.png",
+    accentColor: "#f97316",
+    backgroundColor: "#101014"
+  }),
   remoteNote: () => null,
   onHostEvent: (listener) => {
     emit = listener as typeof emit;
@@ -81,6 +94,14 @@ describe("Crosslink control surface", () => {
     expect(body.networkMode).toBe("auto");
     // The card needs the URL the QR encodes for its "open here" fallback.
     expect(body.bootstrapUrl).toContain("https://example.github.io");
+    // …and the application's identity, so the desktop page does not restate
+    // the name, icon and colours the host was already configured with.
+    expect(body.application).toMatchObject({
+      id: "com.example.notes",
+      name: "Example Notes",
+      icon: "/icon-192.png",
+      accentColor: "#f97316"
+    });
   });
 
   it("applies a requested connection mode before minting", async () => {
@@ -111,6 +132,17 @@ describe("Crosslink control surface", () => {
     failNext = new Error("remote access could not be established: no reachable endpoint");
     const res = await fetch(`${origin}/__crosslink/pairing`);
     expect(res.status).toBe(409);
+  });
+
+  it("maps a failed mode change to a coded status instead of a dead request", async () => {
+    // Applying a mode asks the router for a mapping and can be refused. That
+    // used to escape the handler, so the widget saw a transport-level failure
+    // and could only render an unknown fault beside its QR.
+    failNextMode = new Error("remote access could not be established: no reachable endpoint");
+    const res = await fetch(`${origin}/__crosslink/pairing?mode=remote`);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("remote access");
+    mode = "auto";
   });
 
   it("lists only devices that still have trust", async () => {

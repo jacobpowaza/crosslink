@@ -1,0 +1,18 @@
+# Crosslink secret scanning.
+#
+# Extends gitleaks' default rules; the only allowlist is for paths that are
+# never committed. `.crosslink-data/` holds a host's own device tokens and
+# keychain material, generated at runtime and gitignored — scanning a working
+# tree would otherwise report a developer's live pairing data as a leak, which
+# trains people to ignore the scanner.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Runtime state that is gitignored and never published"
+paths = [
+  '''(^|/)\.crosslink-data/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)package-lock\.json$'''
+]

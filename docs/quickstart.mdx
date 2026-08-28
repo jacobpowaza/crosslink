@@ -81,12 +81,10 @@ console.log(host.describeMobileDelivery().message);
   <script src="/__crosslink/widget.js"></script>
   <script>
     // The pairing card mints the session, renders the QR and the nine-digit
-    // code, refreshes both before they expire, and lists paired devices.
-    CrosslinkSDK.createPairingCard({
-      target: "#crosslink",
-      appName: "Example Notes",
-      brand: { accentColor: "#f97316" }
-    });
+    // code, refreshes both before they expire, and lists paired devices. It
+    // takes the app's name, icon and colours from the host's `application`
+    // block, so nothing about the app is restated here.
+    CrosslinkSDK.createPairingCard({ target: "#crosslink" });
   </script>
 </body>
 </html>

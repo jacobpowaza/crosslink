@@ -156,10 +156,12 @@ console.log(server.describeMobileDelivery().message);
 ```
 
 The desktop page mounts Crosslink's self-driving pairing card. With no `source`
-option it uses the canonical loopback control surface:
+option it uses the canonical loopback control surface, and it takes the name,
+icon and colours from the `application` block above — the page states nothing
+about the app twice:
 
 ```js
-CrosslinkSDK.createPairingCard({ target: "#crosslink", appName: "Notes" });
+CrosslinkSDK.createPairingCard({ target: "#crosslink" });
 ```
 
 The mobile page contains application UI and one callback; Crosslink injects the
@@ -222,6 +224,50 @@ The client SDK tries each in order, falling through on failure. Sessions
 survive IP changes via reconnect with exponential backoff.
 
 ## Architecture
+
+### Two HTTP surfaces, deliberately separated
+
+Crosslink splits what a host serves in two, because the two halves have opposite
+reachability requirements:
+
+| Surface | Bound to | Serves |
+| --- | --- | --- |
+| **Control** `/__crosslink/*` | loopback only | Mints pairing codes, changes network mode, lists and revokes devices, serves the desktop widget bundle |
+| **Bootstrap** | the transport port | The phone-facing page: manifest, Service Worker, icons, browser SDK, install handoff, and your `mobile.entry` |
+
+The control surface mints trust, so it must never answer the network a QR is
+scanned on — the handler refuses a non-loopback peer itself rather than trusting
+the surrounding server to have bound correctly. The bootstrap surface shares the
+transport port so one router mapping covers both the page and the socket it
+connects on.
+
+### What the QR encodes
+
+Not the pairing URI. iOS Camera has no handler for a custom scheme and silently
+ignores `crosslink://`, so the QR carries an ordinary page URL with the pairing
+payload in the *fragment*:
+
+```text
+https://<bootstrap origin>/#pair=crosslink%3A%2F%2Fpair%3Fv%3D2%26e%3D…%26c%3D<code>
+```
+
+A fragment never reaches a server, so the payload stays out of request lines,
+proxies and access logs. The page runs the browser SDK, unwraps `#pair=`, and
+pairs with no further round trip. `pairing.bootstrapUrl` points at a published
+https origin when you have one — that origin becomes the installed app's
+identity and survives the desktop changing address; without one, the host's own
+bootstrap origin is used.
+
+### Framework-owned UI
+
+Pairing, onboarding, install, offline and revoked screens are Crosslink's, not
+yours. You declare one `application` block on the host and it drives all of
+them: the desktop pairing card, the installable manifest, and every mobile
+screen. The desktop card draws the Crosslink wordmark; the mobile screens carry
+a "Powered by Crosslink" badge mounted by the bootstrap, whose placement,
+colour and size you configure through `mobile.attribution`.
+
+### Installation address vs. transport address
 
 The installation address and transport address are separate:
 
@@ -349,9 +395,11 @@ The full documentation site lives in `docs/` (Mintlify). Start here:
 ## Development
 
 ```bash
-npm test          # 477 tests: unit, both SDKs, full-stack integration
+npm test          # 560 tests: unit, both SDKs, full-stack integration
 npm run typecheck # strict TS across every workspace
 npm run build     # 19 build targets
+npm run security:check   # dependency audit + secret/isolation baseline
+npm run security:secrets # gitleaks over the history and the working tree
 ```
 
 Both SDKs are unit-testable without a network. `@crosslink/sdk-browser` ships

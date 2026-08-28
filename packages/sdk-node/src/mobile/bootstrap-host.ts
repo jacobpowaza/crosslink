@@ -15,7 +15,11 @@
 import http from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { renderBootScript, type BootPayload } from "./boot-script.js";
+import {
+  renderBootScript,
+  type BootPayload,
+  type MobileAttributionConfig
+} from "./boot-script.js";
 import { readBrowserBundle, renderIconPng, renderMarkSvg } from "./assets.js";
 import { buildInstallStartUrl } from "../bootstrap.js";
 
@@ -36,6 +40,8 @@ export interface BootstrapHostView {
     display?: "standalone" | "minimal-ui" | "fullscreen";
     icons?: Array<{ src: string; sizes?: string; type?: string }>;
   };
+  /** Presentation of the "Powered by Crosslink" badge on the mobile screens. */
+  attribution?: MobileAttributionConfig | null;
   mobile: {
     /** Absolute path of the developer's mobile entry HTML. */
     entry: string;
@@ -280,7 +286,8 @@ export function createBootstrapHandler(
       secureContext: secure,
       offlineTitle: app.offlineTitle ?? null,
       offlineMessage: app.offlineMessage ?? null,
-      debuggingUrl: DEBUGGING_URL
+      debuggingUrl: DEBUGGING_URL,
+      attribution: view.attribution ?? null
     };
   }
 

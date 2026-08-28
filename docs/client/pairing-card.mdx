@@ -14,8 +14,11 @@ createPairingCard({ target: "#crosslink" });
 That is a complete integration. The card renders the QR, the nine-digit code and
 the countdown, mints a fresh session when the current one is close to expiring,
 mints another when a device redeems one, exposes the connection-mode settings,
-lists paired devices and revokes them, and shows the Crosslink mark and
-attribution.
+lists paired devices and revokes them, and shows the Crosslink mark.
+
+It also takes your application's name, icon and colours from the host: the
+`application` block you pass to `createCrosslinkServer` travels with each
+pairing session, so the desktop page states none of it a second time.
 
 With no `source` option, the card uses the Crosslink system endpoints your host
 already exposes (`/__crosslink/*`). You do not write those routes. The old
@@ -29,21 +32,41 @@ HTTP source. Add `source: false` before continuing to drive the card with
 `PairingSource` objects keep their behavior.
 </Note>
 
-## What you configure
+## Where the branding comes from
 
-Your application's identity, and nothing structural.
+Configure it once, on the host:
+
+```ts
+createCrosslinkServer({
+  application: {
+    id: "com.example.chat",
+    name: "Example Chat",
+    icon: "/icon-192.png",
+    accentColor: "#38bdf8",
+    backgroundColor: "#0f172a",
+    appearance: "dark"
+  },
+  mobile: { entry: "./mobile.html" }
+});
+```
+
+The same block drives the pairing card, the installable manifest, the mobile
+onboarding, the offline screen and the revoked screen. Nothing is repeated in
+the page.
+
+## Overriding it in the page
+
+Only when the pairing screen should differ from your host metadata. Options win
+over what the host reports, field by field — set the name and the colours still
+come from the host.
 
 ```js
 createPairingCard({
   target: "#crosslink",
 
-  appName: "Crosslink Chat",
-  appIcon: "/icon-192.png",
-  brand: {
-    accentColor: "#38bdf8",
-    backgroundColor: "#0f172a",
-    appearance: "dark"
-  },
+  appName: "Pair with the desk",
+  appIcon: "/pairing-icon.png",
+  brand: { accentColor: "#f97316" },
   blurb: "<strong>Connect another device</strong> to use Chat from your phone."
 });
 ```
@@ -59,9 +82,21 @@ createPairingCard({
 | `blurb` | One sentence in your own words about what pairing does. |
 
 There is no option that replaces the card's markup, swaps its renderer, or
-removes the Crosslink mark and attribution. That is deliberate: the value of a
-recognisable pairing screen is that it is the same screen in every Crosslink
-application.
+removes the Crosslink mark. That is deliberate: the value of a recognisable
+pairing screen is that it is the same screen in every Crosslink application.
+
+The card carries the wordmark and no separate attribution line. The
+"Powered by Crosslink" badge belongs to the Crosslink-owned mobile screens,
+where the bootstrap mounts it for you — see
+[Mobile bootstrap](/client/mobile-bootstrap#the-powered-by-crosslink-badge).
+
+## While a setting is applied
+
+Changing the connection mode is a round trip to the host: it re-derives which
+routes to advertise and may ask your router for a port mapping, which routinely
+takes seconds. The settings popover shows a spinner and refuses further changes
+until a session minted under the new mode is on screen, so a slow mode change
+never looks like a click that did nothing.
 
 ## Framework bindings
 

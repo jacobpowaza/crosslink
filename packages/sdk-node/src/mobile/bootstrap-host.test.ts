@@ -15,6 +15,7 @@ import {
   type BootstrapHostView
 } from "./bootstrap-host.js";
 import { writeStaticBootstrap } from "./static-bootstrap.js";
+import { renderBootScript } from "./boot-script.js";
 
 const DEVELOPER_PAGE = `<!doctype html>
 <html lang="en">
@@ -142,6 +143,42 @@ describe("Crosslink-served mobile bootstrap", () => {
     expect(body).toContain("notes.write");
     // Loopback is a secure context, so the worker is registered here.
     expect(body).toContain('"secureContext":true');
+  });
+
+  it("mounts the attribution at the foot of the mobile screens by default", async () => {
+    const { body } = await get("/__crosslink/boot.js");
+    // The badge is the bootstrap's, not the developer page's: the mobile app
+    // gets "Powered by Crosslink" without writing any markup for it.
+    expect(body).toContain("poweredBy");
+    expect(body).toContain('placement: "bottom-center"');
+    // Nothing in the payload can switch it off; the shape only carries
+    // presentation, and an unconfigured host sends none at all.
+    expect(body).toContain('"attribution":null');
+  });
+
+  it("lets the application move and re-colour the attribution", () => {
+    const script = renderBootScript({
+      appId: "com.example.notes",
+      appName: "Example Notes",
+      capabilities: [],
+      icon: null,
+      accentColor: "#f97316",
+      backgroundColor: "#101014",
+      textColor: null,
+      appearance: "auto",
+      serviceWorkerUrl: "/sw.js",
+      secureContext: true,
+      offlineTitle: null,
+      offlineMessage: null,
+      debuggingUrl: "https://example.test/debug",
+      attribution: { placement: "top-right", color: "#ffffff", size: 12 }
+    });
+
+    // Presentation is merged over the defaults at runtime, so the application's
+    // placement wins while the badge itself stays.
+    expect(script).toContain('"placement":"top-right"');
+    expect(script).toContain('"color":"#ffffff"');
+    expect(script).toContain("config.attribution || {}");
   });
 
   it("generates an icon when the application supplies none", async () => {
