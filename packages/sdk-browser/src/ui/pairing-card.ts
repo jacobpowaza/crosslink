@@ -101,20 +101,22 @@ export interface PairingCardOptions {
   /** Endpoint URL to revoke device access. Default: /api/revoke */
   revokeEndpoint?: string;
   /**
-   * Lets the card drive itself against a live host.
+   * Where the self-driving card gets pairing sessions.
    *
-   * `true` uses the Crosslink system endpoints at `/__crosslink` on the page's
-   * own origin; a string names a different base path; an object is a custom
-   * transport for a host the page cannot reach over HTTP. With any of them the
+   * Omit this option for the canonical Crosslink system endpoints at
+   * `/__crosslink` on the page's own origin. `true` is retained as a legacy
+   * alias for that default; a string names a different base path; an object is
+   * a custom transport for a host the page cannot reach over HTTP. With any of them the
    * card mints its own pairing session, renders the QR and code, replaces the
    * code before it expires, mints a fresh one when a device redeems the old
    * one, and applies connection-mode changes — the loop every application used
    * to write beside it.
    *
-   * Omit it to keep the card controlled: `update()` is then the only way state
-   * changes, which is what a host that already owns its own pairing loop wants.
+   * Set `false` to keep the card controlled: `update()` is then the only way
+   * state changes, which is what a host that already owns its own pairing loop
+   * wants. This explicit opt-out keeps the ordinary integration zero-config.
    */
-  source?: true | string | PairingSource;
+  source?: false | true | string | PairingSource;
   /** Seconds of headroom before expiry at which a new code is minted. Default 15. */
   refreshLeadSeconds?: number;
   /** Called after the card mints a session. Self-driving mode only. */
@@ -901,7 +903,7 @@ export class PairingCard {
       });
     }
 
-    if (options.source !== undefined) this.attachSource(options.source);
+    if (options.source !== false) this.attachSource(options.source ?? true);
   }
 
   /* ------------------- self-driving session lifecycle ------------------ */

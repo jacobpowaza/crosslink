@@ -88,8 +88,10 @@ on the phone means the phone itself.
 ## 4. The phone page
 
 `mobile/index.html` is your UI and one callback. No pairing screen, no SAS
-prompt, no service worker, no manifest — Crosslink has already run all of that
-by the time `onConnected` fires, and runs it again after every reconnect.
+prompt, Service Worker, or manifest belongs in this file — Crosslink owns those
+pieces wherever the browser/deployment supports them. By the time
+`onConnected` fires, pairing and authorization are complete; it fires again
+after every reconnect.
 
 ```html
 <!doctype html>
@@ -131,8 +133,8 @@ node host.mjs
 
 Show the pairing QR on a desktop page with
 [`createPairingCard`](/client/pairing-card), scan it with a phone on the same
-Wi-Fi, and Crosslink runs pairing, the optional Add to Home Screen step, and the
-handoff into your page.
+Wi-Fi, and Crosslink runs pairing and the handoff into your page. This default
+plain-HTTP LAN path is direct development access, not the installed-PWA mode.
 
 ## Serving the client from the host
 
@@ -142,9 +144,9 @@ app grows:
 - **One mapping.** Remote access forwards exactly one port. A page on port 3000
   and a socket on port 54676 needs two, and the second one is the one people
   forget.
-- **One origin.** The browser stores the page's origin as the app's identity.
-  When the page and the socket share it, an installed PWA keeps working without
-  cross-origin exceptions.
+- **One development origin.** The host-served page and socket need no
+  cross-origin exceptions. That convenient LAN origin is still today's desktop
+  address, not a durable installed-app identity.
 - **No route mismatch.** A page that loads cannot then fail to reach the socket,
   because they are the same listener.
 
@@ -153,10 +155,11 @@ add its origin to `lan.allowedOrigins` rather than moving the socket.
 
 ## Making it installable
 
-Nothing above needs changing — Crosslink already serves a manifest, a service
-worker and icons generated from your `application` metadata, and the QR already
-points at an `https`/`http` page rather than a `crosslink://` URI (an iPhone
-camera has no handler for a custom scheme).
+Your mobile application code does not change: Crosslink already generates the
+manifest, Service Worker, and icons from `application` metadata. The deployment
+does change: use a stable HTTPS bootstrap origin and a permitted WSS route. The
+QR points at an `https`/`http` page rather than a `crosslink://` URI because an
+iPhone camera has no handler for a custom scheme.
 
 What decides whether an install actually behaves like an app is the **origin**
 the phone loaded. On a plain-HTTP LAN address the browser will not register a

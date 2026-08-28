@@ -60,8 +60,11 @@ That is the entire mobile setup. From `mobile.entry` alone, Crosslink serves:
 | `/__crosslink/icon-*.png` | Your icon, or a generated one |
 | `/__crosslink/install/:id` | Install handoff, so an installed app does not re-pair |
 
-It rides on the same port as the Crosslink transport, so the installable page
-and the socket it opens share an origin and a router mapping.
+In host-served mode these assets ride on the Crosslink transport port. On plain
+LAN HTTP that is convenient direct browser access, not an installable offline
+PWA. In secure published-bootstrap mode the stable HTTPS application origin is
+separate from the desktop transport and connects only through a permitted
+`wss://` route. See [Durable Origins](/client/durable-origin).
 
 ## What your mobile page looks like
 

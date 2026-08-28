@@ -103,6 +103,71 @@ describe("remote access enabled after startup", () => {
   });
 });
 
+describe("mobile delivery diagnostics", () => {
+  it("labels plain LAN HTTP without claiming PWA capabilities", async () => {
+    const server = await startServer({
+      lan: { enabled: true, bind: "all", host: "192.168.1.25" },
+      mobile: { entry: "/tmp/crosslink-mobile-test.html" },
+      networkMode: "local-only"
+    });
+
+    const delivery = server.describeMobileDelivery();
+    expect(delivery).toMatchObject({
+      mode: "lan-http",
+      secureContext: false,
+      bootstrapAssetsConfigured: true,
+      serviceWorkerOriginEligible: false,
+      offlineShell: false,
+      installable: false,
+      directLanTransport: true,
+      secureWssTransport: false,
+      dynamicEndpointDiscovery: false,
+      capabilityBasis: "deployment-configuration"
+    });
+    expect(delivery.message).toContain("Mode: LAN HTTP");
+    expect(delivery.message).toContain("Installable PWA: unavailable");
+    expect(delivery.message).toContain("Direct LAN transport: available");
+  });
+
+  it("does not claim a PWA merely because a transport origin exists", async () => {
+    const server = await startServer({
+      tunnelUrl: "https://desktop.example.test",
+      networkMode: "auto"
+    });
+
+    const delivery = server.describeMobileDelivery();
+    expect(delivery).toMatchObject({
+      mode: "unavailable",
+      bootstrapAssetsConfigured: false,
+      serviceWorkerOriginEligible: false,
+      offlineShell: false,
+      installable: false
+    });
+    expect(delivery.message).toContain("No mobile entry or published bootstrap is configured");
+  });
+
+  it("labels a published bootstrap and reports only configured secure transport", async () => {
+    const server = await startServer({
+      pairing: { bootstrapUrl: "https://example.github.io/notes/" },
+      tunnelUrl: "https://desktop.example.test",
+      networkMode: "auto"
+    });
+
+    const delivery = server.describeMobileDelivery();
+    expect(delivery).toMatchObject({
+      mode: "secure-published-bootstrap",
+      secureContext: true,
+      durableOrigin: true,
+      directLanTransport: false,
+      secureWssTransport: true,
+      secureTransport: true
+    });
+    expect(delivery.message).toContain("Mode: Secure published bootstrap");
+    expect(delivery.message).toContain("Service Worker: origin eligible (verify registration in browser)");
+    expect(delivery.message).toContain("Secure WSS transport: configured");
+  });
+});
+
 function storageDir(): string {
   return mkdtempSync(path.join(tmpdir(), "crosslink-server-"));
 }

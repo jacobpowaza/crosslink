@@ -8,7 +8,7 @@
  *
  * The default source talks to the control surface `createCrosslinkServer`
  * exposes, so an application that changes nothing gets the whole flow from
- * `createPairingCard({ target, source: true })`. A host the page cannot reach
+ * `createPairingCard({ target })`. A host the page cannot reach
  * over HTTP — an Electron renderer behind a preload bridge — supplies its own
  * object instead. The source decides where a session comes from, never what
  * the pairing screen looks like.

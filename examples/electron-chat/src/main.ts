@@ -6,6 +6,7 @@ import {
   createCrosslinkServer,
   type CrosslinkServer,
   type PairingCodeInfo,
+  type PairingNetworkMode,
 } from "@crosslink/sdk-node";
 
 interface ChatMessage {
@@ -172,11 +173,22 @@ async function startCrosslink(): Promise<void> {
 
   host.on("devicePaired", () => {
     currentPairing = null;
+    publishPairingEvent({ type: "invalidate" });
     publishState();
   });
-  host.on("deviceConnected", publishState);
-  host.on("deviceDisconnected", publishState);
-  host.on("deviceRevoked", publishState);
+  host.on("deviceConnected", (info) => {
+    publishPairingEvent({ type: "connected", deviceId: info.deviceId });
+    publishState();
+  });
+  host.on("deviceDisconnected", (info) => {
+    publishPairingEvent({ type: "disconnected", deviceId: info.deviceId });
+    publishState();
+  });
+  host.on("deviceRevoked", () => {
+    currentPairing = null;
+    publishPairingEvent({ type: "invalidate" });
+    publishState();
+  });
   host.on("connectivity", publishState);
   await host.start();
 }
@@ -197,21 +209,49 @@ function publishState(): void {
   }
 }
 
+function publishPairingEvent(event: {
+  type: "invalidate" | "connected" | "disconnected";
+  deviceId?: string;
+}): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("crosslink:pairing-event", event);
+  }
+}
+
+function pairingMode(value: unknown): PairingNetworkMode {
+  if (value === "auto" || value === "local-only" || value === "lan-and-relay" || value === "remote") {
+    return value;
+  }
+  throw new Error("invalid Crosslink network mode");
+}
+
 function installIpc(): void {
   const trust = (event: Electron.IpcMainInvokeEvent): void => {
     if (event.senderFrame?.url !== RENDERER_URL) throw new Error("untrusted IPC sender");
   };
   ipcMain.handle("crosslink:state", (event) => { trust(event); return publicState(); });
-  ipcMain.handle("crosslink:pair", async (event) => {
+  ipcMain.handle("crosslink:pair", async (event, requestedMode: unknown = "auto") => {
     trust(event);
+    const mode = pairingMode(requestedMode);
     if (!currentPairing || currentPairing.expiresAt <= Date.now() + 10_000) {
-      currentPairing = await host.getPairingCode("electron-renderer");
+      currentPairing = await host.getPairingCode("electron-renderer", mode);
     }
     return {
       code: currentPairing.code,
       expiresAt: currentPairing.expiresAt,
       qrSvg: currentPairing.qrSvg,
+      bootstrapUrl: currentPairing.bootstrapUri,
+      uri: currentPairing.uri,
+      endpoints: currentPairing.endpoints,
+      networkMode: mode,
+      remoteNote: host.getRemoteDiagnostics()?.message ?? null,
     };
+  });
+  ipcMain.handle("crosslink:set-network-mode", async (event, requestedMode: unknown) => {
+    trust(event);
+    const mode = pairingMode(requestedMode);
+    await host.setNetworkMode(mode);
+    currentPairing = null;
   });
   ipcMain.handle("crosslink:send", (event, text: unknown) => {
     trust(event);

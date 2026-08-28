@@ -10,6 +10,7 @@ export type {
   DeviceSummary,
   ServerEvents,
   ConnectivityStatus,
+  MobileDeliveryDiagnostics,
 } from "./server.js";
 export {
   FileHostDeviceStore,

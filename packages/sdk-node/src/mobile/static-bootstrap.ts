@@ -78,6 +78,18 @@ export const STATIC_PRECACHE = [
   "./crosslink-mark.svg"
 ];
 
+const GENERATED_FILE_NAMES = new Set([
+  "index.html",
+  "crosslink-sdk.js",
+  "crosslink-boot.js",
+  "manifest.webmanifest",
+  "sw.js",
+  "crosslink-mark.svg",
+  "icon-192.png",
+  "icon-512.png",
+  ".nojekyll"
+]);
+
 function escapeAttribute(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -145,6 +157,17 @@ export async function writeStaticBootstrap(
 ): Promise<StaticBootstrapResult> {
   const app = options.application;
   const outDir = path.resolve(options.outDir);
+  const assetOutputs = (options.assets ?? []).map((asset) => ({ asset, name: path.basename(asset) }));
+  const copied = new Set<string>();
+  for (const { asset, name } of assetOutputs) {
+    if (GENERATED_FILE_NAMES.has(name)) {
+      throw new Error(`static bootstrap asset ${JSON.stringify(asset)} would overwrite generated ${name}`);
+    }
+    if (copied.has(name)) {
+      throw new Error(`static bootstrap assets contain duplicate output name ${name}`);
+    }
+    copied.add(name);
+  }
   await mkdir(outDir, { recursive: true });
 
   const payload: BootPayload = {
@@ -157,8 +180,9 @@ export async function writeStaticBootstrap(
     textColor: app.textColor ?? null,
     appearance: app.appearance ?? "auto",
     serviceWorkerUrl: "./sw.js",
-    // A published static site is https by definition; the flag exists for the
-    // host-served case, where it may not be.
+    // This is the intended deployment capability. The emitted boot script also
+    // checks `window.isSecureContext` at runtime, so copying the directory to a
+    // plain-HTTP host cannot make an optimistic Service Worker claim.
     secureContext: true,
     offlineTitle: app.offlineTitle ?? null,
     offlineMessage: app.offlineMessage ?? null,
@@ -196,7 +220,13 @@ export async function writeStaticBootstrap(
   await write("manifest.webmanifest", JSON.stringify(manifest, null, 2));
   await write(
     "sw.js",
-    generateServiceWorker({ version: `${app.id}-static-1`, precacheAssets: STATIC_PRECACHE })
+    generateServiceWorker({
+      version: `${app.id}-static-1`,
+      precacheAssets: [
+        ...STATIC_PRECACHE,
+        ...assetOutputs.map(({ name }) => `./${name}`)
+      ]
+    })
   );
   await write("crosslink-mark.svg", renderMarkSvg(app.accentColor, app.backgroundColor));
   await write("icon-192.png", renderIconPng(192, app.accentColor ?? "#38bdf8"));
@@ -206,8 +236,7 @@ export async function writeStaticBootstrap(
   // worker without this produces a site that is subtly not what was emitted.
   await write(".nojekyll", "");
 
-  for (const asset of options.assets ?? []) {
-    const name = path.basename(asset);
+  for (const { asset, name } of assetOutputs) {
     await copyFile(asset, path.join(outDir, name));
     written.push(name);
   }

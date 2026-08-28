@@ -1,3 +1,10 @@
+import {
+  createPairingCard,
+  type NetworkMode,
+  type PairingSession,
+  type PairingSourceEvent,
+} from "@crosslink/sdk-browser";
+
 interface Device { deviceId: string; name: string; caps: string[]; }
 interface Message { id: string; sender: "desktop" | "device"; text: string; at: number; }
 interface State {
@@ -9,12 +16,14 @@ interface State {
 }
 interface CrosslinkBridge {
   getState(): Promise<State>;
-  getPairingCode(): Promise<{ code: string; expiresAt: number; qrSvg: string | null }>;
+  getPairingSession(mode?: NetworkMode): Promise<PairingSession>;
+  setNetworkMode(mode: NetworkMode): Promise<void>;
   sendMessage(text: string): Promise<Message>;
   revokeDevice(deviceId: string): Promise<boolean>;
   setBackgroundEnabled(enabled: boolean): Promise<State["background"]>;
   onState(listener: (state: State) => void): () => void;
   onMessage(listener: (message: Message) => void): () => void;
+  onPairingEvent(listener: (event: PairingSourceEvent) => void): () => void;
 }
 
 export {};
@@ -24,9 +33,6 @@ declare global { interface Window { crosslink: CrosslinkBridge } }
 const messages = document.querySelector<HTMLDivElement>("#messages")!;
 const form = document.querySelector<HTMLFormElement>("#composer")!;
 const input = document.querySelector<HTMLInputElement>("#message")!;
-const pairButton = document.querySelector<HTMLButtonElement>("#pair-button")!;
-const qr = document.querySelector<HTMLImageElement>("#pair-qr")!;
-const pairCode = document.querySelector<HTMLElement>("#pair-code")!;
 let state: State;
 const settingsButton = document.querySelector<HTMLButtonElement>("#settings-button")!;
 const settingsMenu = document.querySelector<HTMLDivElement>("#settings-menu")!;
@@ -106,16 +112,15 @@ backgroundToggle.addEventListener("change", async () => {
   }
 });
 
-pairButton.addEventListener("click", async () => {
-  pairButton.disabled = true;
-  try {
-    const pairing = await window.crosslink.getPairingCode();
-    if (pairing.qrSvg) qr.src = `data:image/svg+xml;base64,${btoa(pairing.qrSvg)}`;
-    pairCode.textContent = pairing.code.replace(/(.{3})/g, "$1 ").trim();
-    document.querySelector("#pairing")!.classList.add("visible");
-  } finally {
-    pairButton.disabled = false;
-  }
+const pairingCard = createPairingCard({
+  target: "#crosslink-pairing",
+  appName: "Crosslink Electron Chat",
+  brand: { accentColor: "#818cf8", backgroundColor: "#111113", appearance: "dark" },
+  source: {
+    getSession: (mode) => window.crosslink.getPairingSession(mode),
+    setNetworkMode: (mode) => window.crosslink.setNetworkMode(mode),
+    subscribe: (listener) => window.crosslink.onPairingEvent(listener),
+  },
 });
 
 form.addEventListener("submit", async (event) => {
@@ -129,4 +134,5 @@ input.addEventListener("input", () => input.setCustomValidity(""));
 
 window.crosslink.onState(render);
 window.crosslink.onMessage(renderMessage);
+window.addEventListener("beforeunload", () => pairingCard.destroy(), { once: true });
 void window.crosslink.getState().then(render);

@@ -14,6 +14,34 @@ Whether you actually get that depends on the **origin** the phone loaded the pag
 from. This is browser policy, not a Crosslink setting, so it is worth
 understanding before you ship rather than discovering on a phone.
 
+## Stable origin and current desktop are different addresses
+
+**Installed application origin != current desktop network address.**
+
+```text
+Stable HTTPS origin
+    ↓
+installed mobile application identity
+    ↓
+Crosslink endpoint discovery
+    ↓
+current desktop endpoint
+    ↓
+authorized secure transport
+```
+
+The installed HTTPS origin owns the application identity, Service Worker,
+offline shell cache, installation state, cached Crosslink bootstrap, and stable
+mobile entry point. Crosslink separately owns desktop endpoint discovery,
+current LAN-address resolution, secure transport selection, optional relay or
+signaling, reconnect after a desktop restart, pairing/trust state, and device
+authorization.
+
+Installing the app does not pin it to the desktop IP that happened to exist
+during installation. The paired record keeps the desktop's cryptographic
+identity and route hints; when signaling is configured, live presence replaces
+stale LAN/relay hints with the desktop's current endpoint.
+
 ## Three browser rules
 
 **A service worker needs a secure context.** No worker means no cached shell,
@@ -32,12 +60,41 @@ that *cannot* take the LAN shortcut.
 That last one is the awkward part, and Crosslink does not paper over it: a
 blocked route is reported as blocked rather than retried until it times out.
 
-## What each setup actually delivers
+## The two delivery modes
+
+### LAN HTTP
+
+LAN HTTP is for local development and direct browser access while the phone can
+reach the desktop's LAN address. It provides direct LAN communication, pairing,
+trust, and development without publishing a site. It is not a secure-context
+installation origin: there is no Service Worker, durable offline PWA, stable
+HTTPS identity, or reliable Add to Home Screen lifecycle.
+
+### Secure published bootstrap
+
+A published bootstrap is the stable HTTPS application origin. It can register
+the Service Worker, cache the offline shell, support installation where the
+browser allows it, and reopen independently of today's desktop address. It
+still needs a browser-permitted route to the desktop: `wss://` via a secure
+tunnel or relay. An HTTPS page cannot generally connect directly to
+`ws://192.168.x.x` because that is mixed content.
+
+The deployment-level host diagnostic and browser runtime diagnostic answer
+different questions:
+
+```ts
+console.log(host.describeMobileDelivery().message); // configured deployment
+console.log(describeBootstrapEnvironment());        // this browser, right now
+```
+
+The host never claims that a worker registered merely because it generated
+`sw.js`; only the browser runtime can confirm registration and install support.
+
+## Capability comparison
 
 | Serving the page from | Offline shell | Add to Home Screen | Encrypted identity | Direct LAN route | Survives an IP change |
 | --- | --- | --- | --- | --- | --- |
 | `http://192.168.x.x:8787` (host's LAN address) | ✗ | bookmark only | ✗ | ✓ | ✗ |
-| `http://127.0.0.1:8787` (same machine) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | A published static site over `https` | ✓ | ✓ | ✓ | ✗ — needs `wss` | ✓ |
 | An `https` tunnel to the host | ✓ | ✓ | ✓ | via the tunnel | only with a stable hostname |
 
@@ -61,17 +118,37 @@ unencrypted.
 
 ## Getting a durable origin for free
 
-Publish Crosslink's bootstrap as a static site. It costs nothing, needs no
-domain and no certificate, and it never has to be online for your app to work —
-it is only a shell.
+Publish Crosslink's bootstrap as a static site. It can use ordinary static
+hosting and needs no application server. The host must be reachable for the
+first load and updates; after the Service Worker has successfully cached the
+shell, an installed launch can render that shell while the host is offline.
 
 ```ts
 await host.writeStaticBootstrap("./dist-bootstrap");
 ```
 
-That writes `index.html`, `sw.js`, `manifest.webmanifest`, the browser SDK, your
-icons and a `.nojekyll` marker, all with relative links so a GitHub Pages project
-site (`https://you.github.io/your-app/`) works unchanged.
+That writes the following files, all with relative links so a GitHub Pages
+project site (`https://you.github.io/your-app/`) works unchanged:
+
+| File | Contents |
+| --- | --- |
+| `index.html` | Your mobile entry (or Crosslink's empty shell) plus generated PWA head/script tags |
+| `crosslink-sdk.js` | The browser SDK |
+| `crosslink-boot.js` | Public app id/name, requested capability ids, branding, offline copy, and bootstrap wiring |
+| `manifest.webmanifest` | Public application name, colors, display mode, icon paths, relative scope/start URL |
+| `sw.js` | Versioned shell-cache and offline behavior |
+| `crosslink-mark.svg` | Generated public framework mark |
+| `icon-192.png`, `icon-512.png` | Generated public application icons |
+| `.nojekyll` | Prevents GitHub Pages from rewriting the output |
+| requested assets | Basename copies of files passed through `assets`, included in the shell precache |
+
+The output is a self-contained static application shell. It embeds no desktop
+endpoint, signaling/relay token, pairing code, device private key, trusted-device
+record, or application RPC data. Publishing a new build is how bootstrap asset
+updates are delivered. The writer creates/updates the listed files but does not
+delete unrelated files already in the output directory. It rejects a requested
+asset whose basename would overwrite a generated file (for example `sw.js`) or
+collide with another requested asset.
 
 Publish it once, then point your host at it:
 
@@ -111,9 +188,52 @@ tunnel (tunnelUrl).
 ## Choosing
 
 - **Building or demoing?** Use the defaults. Open the mobile page on
-  `127.0.0.1` when you want to exercise the full install and offline flow.
+  `127.0.0.1` in a same-machine browser for a quick secure-context check; use a
+  real HTTPS origin for phone installation testing.
 - **Companion app used while the desktop is running, same Wi-Fi?** The LAN
   origin is fine. Expect a bookmark rather than an install, and say so to users.
 - **Installed app that must open when the desktop is off?** Publish the static
   bootstrap and configure a relay. This is the configuration the promise at the
   top of this page describes.
+
+## Static-host traffic and trust boundary
+
+The first pairing payload is carried in the URL fragment (`#pair=…`), which
+browsers do not send in the HTTP request. The static host receives normal asset
+requests and their usual metadata (for example IP address, user agent, referrer
+policy output, and requested paths). During the iOS install handoff it may also
+receive an opaque, short-lived `crosslink_install` id and credential-free public
+target metadata in same-origin cookies/requests. It does not receive the
+nine-digit pairing code, trusted-device private keys, or plaintext RPC frames.
+
+RPC travels from the installed app to the selected desktop transport. A relay,
+when used, forwards Crosslink ciphertext; the static asset host is not on that
+path unless the operator deliberately deploys another service at the same
+domain.
+
+The static host is not the authority that approves devices and it cannot forge
+the desktop's pinned cryptographic identity. It **is** part of the mobile code
+supply chain: whoever can replace `crosslink-sdk.js`, `crosslink-boot.js`, or the
+Service Worker can run code under the installed application's origin and act as
+that mobile client while the code runs. Host the files somewhere whose content
+integrity and account access you trust. Non-extractable browser keys protect
+stored ciphertext from copy-and-leave theft; they do not protect against
+malicious same-origin JavaScript using the key in place.
+
+No Crosslink-operated service is mandatory. The generated directory works on
+ordinary static hosting. Runtime dependencies are selected by deployment:
+
+| Concern | Required service |
+| --- | --- |
+| Initial pairing | A permitted route advertised by the desktop; no central service when a direct secure route exists |
+| Dynamic endpoint discovery | A configured signaling/presence service, which can be self-hosted |
+| Transport relay | Optional configured relay, which can be self-hosted; needed when no permitted direct route exists |
+| Reconnect | Stored routes, plus signaling when the current endpoint must be rediscovered |
+| Application RPC | Desktop route directly or encrypted relay; never the static host |
+| Telemetry | None required by the generated bootstrap |
+| Update delivery | The static host serves newly published public assets |
+
+A secure published bootstrap without a WSS route is installable in origin terms
+but unable to reach the desktop. A deployment without signaling may reconnect
+through stored stable routes, but it must not be described as dynamically
+discovering a changed desktop endpoint.

@@ -418,13 +418,13 @@ experiences. You mount them; Crosslink implements them.
 `@crosslink/sdk-browser` — the canonical desktop pairing UI.
 
 ```js
-createPairingCard({ target: "#crosslink", source: true });
+createPairingCard({ target: "#crosslink" });
 ```
 
 | Option | Type | Description |
 | --- | --- | --- |
 | `target` | `HTMLElement \| string` | Where to mount |
-| `source` | `true \| string \| PairingSource` | Drives the card against a live host. `true` uses `/__crosslink`; a string is a different base path; an object is a custom transport. Omit for a controlled card |
+| `source` | `false \| true \| string \| PairingSource` | Omit for the canonical `/__crosslink` source. `true` is a compatibility alias; a string selects another base path; an object supplies a custom transport; `false` explicitly selects advanced controlled mode |
 | `appName` | `string` | Shown beside the Crosslink mark |
 | `appIcon` | `string` | Your icon. Never replaces the mark |
 | `brand` | `CrosslinkTheme` | `accentColor`, `backgroundColor`, `textColor`, `appearance` |
@@ -482,16 +482,25 @@ Crosslink base path, so your own routes sit behind it.
 
 ### `host.describeMobileDelivery()`
 
-What your configuration actually delivers, as booleans plus a `message`:
-`secureContext`, `offlineShell`, `installable`, `encryptedDeviceIdentity`,
-`secureTransport`, `durableOrigin`. See [Durable Origins](/client/durable-origin).
+A deployment-level diagnostic with `mode`, `directLanTransport`,
+`secureWssTransport`, `dynamicEndpointDiscovery`, `bootstrapAssetsConfigured`,
+`durableOrigin`, and the
+origin capabilities `serviceWorkerOriginEligible`, `offlineShell`, `installable`,
+and `encryptedDeviceIdentity`. Its multiline `message` labels LAN HTTP versus a
+secure published bootstrap. These are configuration/origin capabilities, not a
+claim about a particular phone; use `describeBootstrapEnvironment()` in the
+page for actual browser runtime support. See [Durable Origins](/client/durable-origin).
 
 ### `host.writeStaticBootstrap(outDir, overrides?)`
 
-Writes Crosslink's bootstrap as a static site — `index.html`, `sw.js`,
-`manifest.webmanifest`, the browser SDK, icons, `.nojekyll` — with relative links
-so a GitHub Pages project site works unchanged. Publish it and set
-`pairing.bootstrapUrl` to make installs durable.
+Writes Crosslink's bootstrap as a static site — `index.html`, `crosslink-sdk.js`,
+`crosslink-boot.js`, `sw.js`, `manifest.webmanifest`, `crosslink-mark.svg`, two
+generated PNG icons, `.nojekyll`, and any explicitly requested assets. All
+framework links are relative, so ordinary static hosting and GitHub Pages
+project sites work. It embeds public application branding/capability metadata,
+not host endpoints, relay credentials, pairing codes, device keys, or trusted
+device records. See [Durable Origins](/client/durable-origin) for its traffic,
+trust, and optional-service boundaries.
 
 ### `host.bootstrapOrigin()`
 

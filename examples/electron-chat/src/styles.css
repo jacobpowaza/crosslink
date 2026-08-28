@@ -22,8 +22,10 @@ main { height: calc(100vh - 68px); display: grid; grid-template-columns: minmax(
 h1 { font-size: clamp(34px, 4vw, 50px); line-height: .98; letter-spacing: -.055em; margin: 0 0 18px; } .intro > p:not(.eyebrow) { color: #a1a1aa; line-height: 1.55; }
 button { border: 0; border-radius: 9px; padding: 10px 14px; cursor: pointer; background: #fafafa; color: #18181b; font-weight: 700; }
 button:disabled { opacity: .5; }
-.pairing { display: none; grid-template-columns: 112px 1fr; align-items: center; gap: 16px; margin-top: 22px; padding: 14px; background: #fafafa; color: #18181b; border-radius: 14px; }
-.pairing.visible { display: grid; } .pairing img { width: 112px; height: 112px; } .pairing span { display: block; color: #71717a; font-size: 11px; } .pairing strong { font-size: 19px; letter-spacing: .08em; }
+#crosslink-pairing .cl-pair-card { grid-template-columns: 1fr; text-align: center; padding: 20px 24px; gap: 20px; border: 1px solid #27272a; }
+#crosslink-pairing .cl-pair-left { align-items: center; }
+#crosslink-pairing .cl-pair-divider { width: 100%; height: 1px; }
+#crosslink-pairing .cl-pair-logo { margin-left: auto; margin-right: auto; }
 .device-heading { display: flex; justify-content: space-between; margin-top: 28px; padding-bottom: 10px; color: #71717a; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid #27272a; }
 .device { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #18181b; font-size: 13px; } .device button { background: transparent; color: #f87171; padding: 5px; font-size: 11px; }
 .chat { min-width: 0; display: flex; flex-direction: column; }

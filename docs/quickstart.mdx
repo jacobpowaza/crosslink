@@ -84,7 +84,6 @@ console.log(host.describeMobileDelivery().message);
     // code, refreshes both before they expire, and lists paired devices.
     CrosslinkSDK.createPairingCard({
       target: "#crosslink",
-      source: true,
       appName: "Example Notes",
       brand: { accentColor: "#f97316" }
     });
@@ -155,8 +154,11 @@ node host.mjs
 ```
 
 Open `http://127.0.0.1:8100`, scan the QR with a phone on the same Wi-Fi, and
-Crosslink takes it from there: pairing, an optional Add to Home Screen step, then
-your notes list.
+Crosslink takes it from there: pairing and then your notes list. The phone loads
+the desktop's plain-HTTP LAN address in this development mode, so the browser
+does not register a Service Worker or provide the durable installed-PWA
+lifecycle. The secure published mode linked under **Before you ship** is the
+Add to Home Screen path.
 
 ## What you did not write
 

@@ -8,7 +8,7 @@ Crosslink ships the desktop pairing experience. You mount it; you do not build i
 ```js
 import { createPairingCard } from "@crosslink/sdk-browser";
 
-createPairingCard({ target: "#crosslink", source: true });
+createPairingCard({ target: "#crosslink" });
 ```
 
 That is a complete integration. The card renders the QR, the nine-digit code and
@@ -17,10 +17,16 @@ mints another when a device redeems one, exposes the connection-mode settings,
 lists paired devices and revokes them, and shows the Crosslink mark and
 attribution.
 
+With no `source` option, the card uses the Crosslink system endpoints your host
+already exposes (`/__crosslink/*`). You do not write those routes. The old
+`source: true` spelling remains a compatibility alias, but omission is the
+canonical path.
+
 <Note>
-`source: true` points the card at the Crosslink system endpoints your host
-already exposes (`/__crosslink/*`). You do not write those routes — see
-[Mobile Bootstrap](/client/mobile-bootstrap) for how they get there.
+Migration for older controlled integrations: omission now means the canonical
+HTTP source. Add `source: false` before continuing to drive the card with
+`update()`. Existing `source: true`, custom base-path strings, and custom
+`PairingSource` objects keep their behavior.
 </Note>
 
 ## What you configure
@@ -30,7 +36,6 @@ Your application's identity, and nothing structural.
 ```js
 createPairingCard({
   target: "#crosslink",
-  source: true,
 
   appName: "Crosslink Chat",
   appIcon: "/icon-192.png",
@@ -67,7 +72,6 @@ mounts the same implementation:
 import { CrosslinkPairingCard } from "@crosslink/react";
 
 <CrosslinkPairingCard
-  source
   appName="Crosslink Chat"
   brand={{ accentColor: "#38bdf8" }}
 />;
@@ -83,7 +87,6 @@ The card drives itself, so callbacks are for your UI, not for its behaviour.
 ```js
 createPairingCard({
   target: "#crosslink",
-  source: true,
   onSession: (session) => console.log("code", session.code),
   onDeviceConnected: (deviceId) => showDashboard(deviceId),
   onError: (error) => console.warn("pairing unavailable:", error.message)
@@ -96,7 +99,7 @@ a retry. You do not need to build recovery on top of it.
 ## When your host is not reachable over HTTP
 
 An Electron renderer behind a preload bridge, or any page that cannot call the
-host directly, supplies its own source instead of `source: true`:
+host directly, supplies its own source:
 
 ```js
 createPairingCard({
@@ -112,14 +115,14 @@ createPairingCard({
 The source decides where a pairing session comes from. It never decides what the
 pairing screen looks like — both paths render the identical card.
 
-## Controlled mode
+## Controlled mode (advanced)
 
-Omit `source` entirely and the card renders only what you pass to `update()`.
-This exists for hosts that already own a pairing loop; it is not the normal
-integration path, and choosing it means writing the loop the card would
-otherwise run for you.
+Set `source: false` and the card renders only what you pass to `update()`.
+This explicit opt-out exists for hosts that already own a pairing loop; it is
+not the normal integration path, and choosing it means writing the loop the
+card would otherwise run for you.
 
 ```js
-const card = createPairingCard({ target: "#crosslink" });
+const card = createPairingCard({ target: "#crosslink", source: false });
 card.update({ code: "123456789", qr: svg, expiresAt: Date.now() + 120_000 });
 ```

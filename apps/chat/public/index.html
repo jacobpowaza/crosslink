@@ -239,14 +239,13 @@
     const $ = id => document.getElementById(id);
 
     // ── Crosslink pairing card ──────────────────────────
-    // `source: true` points the card at the Crosslink system endpoints the
-    // host exposes, so the card mints the pairing session, renders the QR and
+    // With no source option, the card uses the Crosslink system endpoints the
+    // host exposes, so it mints the pairing session, renders the QR and
     // the 9-digit code, replaces the code before it expires, mints a new one
     // when a device redeems it, applies connection-mode changes and lists and
     // revokes paired devices. None of that lives in this demo.
     CrosslinkSDK.createPairingCard({
       target: "#pairCardContainer",
-      source: true,
       appName: "Crosslink Chat",
       appIcon: "/icon-192.png",
       brand: { accentColor: "#38bdf8", backgroundColor: "#000000" },

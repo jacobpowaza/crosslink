@@ -127,14 +127,15 @@ CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
 npm run demo:echo
 ```
 
-## Host App (~20 lines)
+## Canonical application path
 
 ```ts
 import { createCrosslinkServer } from "@crosslink/sdk-node";
 import { consoleLogger } from "@crosslink/core";
 
 const server = createCrosslinkServer({
-  application: { id: "com.me.notes", name: "Notes" },
+  application: { id: "com.me.notes", name: "Notes", accentColor: "#f97316" },
+  mobile: { entry: "./mobile/index.html" },
   capabilities: [
     { id: "notes.read", title: "Read notes", risk: "low", defaultGranted: true },
     { id: "notes.purge", title: "Delete everything", risk: "high", confirmEachUse: true },
@@ -149,11 +150,34 @@ server.expose("notes.purge", () => db.purge(), { capability: "notes.purge" });
 server.declareEvent("notes.changed");
 
 await server.start();
-const code = await server.getPairingCode();
-console.log("Pair:", code.code);
+console.log(server.describeMobileDelivery().message);
 ```
 
-## Browser Client
+The desktop page mounts Crosslink's self-driving pairing card. With no `source`
+option it uses the canonical loopback control surface:
+
+```js
+CrosslinkSDK.createPairingCard({ target: "#crosslink", appName: "Notes" });
+```
+
+The mobile page contains application UI and one callback; Crosslink injects the
+SDK, manifest, Service Worker, pairing/onboarding flow, offline shell, endpoint
+discovery, and reconnect behavior:
+
+```js
+crosslink.onConnected(async (rpc) => {
+  render(await rpc.call("notes.get"));
+});
+```
+
+See the [Quickstart](docs/quickstart.mdx) for the loopback desktop handler and
+complete runnable files.
+
+## Advanced: manual browser client
+
+Use the lower-level client only for a native shell, custom transport, tests, or
+another integration where Crosslink cannot serve its canonical mobile
+bootstrap. This path assumes responsibility for pairing and lifecycle UI.
 
 ```ts
 import { createCrosslinkClient } from "@crosslink/sdk-browser";
@@ -196,6 +220,17 @@ The client SDK tries each in order, falling through on failure. Sessions
 survive IP changes via reconnect with exponential backoff.
 
 ## Architecture
+
+The installation address and transport address are separate:
+
+```text
+stable HTTPS origin → installed app identity → endpoint discovery
+    → current desktop endpoint → authorized secure transport
+```
+
+Installing the PWA does not pin it to the LAN IP used during pairing. The
+origin owns the Service Worker/cache; Crosslink resolves the desktop's current
+route independently. See [Durable Origins](docs/client/durable-origin.mdx).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐

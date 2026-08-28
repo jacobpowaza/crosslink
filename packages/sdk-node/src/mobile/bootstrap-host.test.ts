@@ -214,6 +214,7 @@ describe("static bootstrap for a durable origin", () => {
       const result = await writeStaticBootstrap({
         outDir,
         entry: path.join(dir, "mobile.html"),
+        assets: [path.join(dir, "styles.css")],
         application: {
           id: "com.example.notes",
           name: "Example Notes",
@@ -223,6 +224,18 @@ describe("static bootstrap for a durable origin", () => {
       });
 
       const files = await readdir(outDir);
+      expect(new Set(files)).toEqual(new Set([
+        ".nojekyll",
+        "crosslink-boot.js",
+        "crosslink-mark.svg",
+        "crosslink-sdk.js",
+        "icon-192.png",
+        "icon-512.png",
+        "index.html",
+        "manifest.webmanifest",
+        "styles.css",
+        "sw.js"
+      ]));
       for (const required of [
         "index.html",
         "sw.js",
@@ -250,8 +263,31 @@ describe("static bootstrap for a durable origin", () => {
 
       const boot = await readFile(path.join(outDir, "crosslink-boot.js"), "utf8");
       expect(boot).toContain('"secureContext":true');
+      expect(boot).toContain("window.isSecureContext === true");
+      expect(boot).not.toContain("signalingToken");
+      expect(boot).not.toContain("relayToken");
+
+      const worker = await readFile(path.join(outDir, "sw.js"), "utf8");
+      expect(worker).toContain('"./styles.css"');
     } finally {
       await rm(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an asset that would replace a generated security-critical file", async () => {
+    const outDir = await mkdtemp(path.join(tmpdir(), "crosslink-static-collision-"));
+    const assetDir = await mkdtemp(path.join(tmpdir(), "crosslink-static-asset-"));
+    try {
+      const conflicting = path.join(assetDir, "sw.js");
+      await writeFile(conflicting, "self.addEventListener('fetch', () => {})");
+      await expect(writeStaticBootstrap({
+        outDir,
+        assets: [conflicting],
+        application: { id: "com.example.notes", name: "Example Notes" }
+      })).rejects.toThrow("would overwrite generated sw.js");
+    } finally {
+      await rm(outDir, { recursive: true, force: true });
+      await rm(assetDir, { recursive: true, force: true });
     }
   });
 });

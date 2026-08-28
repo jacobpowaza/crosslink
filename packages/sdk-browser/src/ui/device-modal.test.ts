@@ -30,7 +30,7 @@ describe("connected devices dialog", () => {
       })) as unknown as typeof fetch
     );
 
-    const card = createPairingCard({ injectStyles: false, devicesEndpoint: "/devices" });
+    const card = createPairingCard({ source: false, injectStyles: false, devicesEndpoint: "/devices" });
     document.body.appendChild(card.element);
     // The dialog is opened from the settings popover; drive it the same way.
     const openItem = Array.from(card.element.querySelectorAll(".cl-dropdown-item")).find((el) =>

@@ -45,6 +45,23 @@ describe("pairing card session lifecycle", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the canonical HTTP source when source is omitted", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+      new Response(JSON.stringify(session()), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const card = createPairingCard({ injectStyles: false });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe("/__crosslink/pairing");
+    card.destroy();
   });
 
   it("mints and renders a session with no application code", async () => {

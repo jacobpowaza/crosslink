@@ -12,6 +12,7 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@crosslink/sdk-browser": "*",
     "@crosslink/sdk-node": "*"
   },
   "devDependencies": {

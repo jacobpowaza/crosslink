@@ -5,8 +5,11 @@ description: Bundle a secure Crosslink host into a desktop application.
 
 The runnable [`examples/electron-chat`](https://github.com/jacobpowaza/crosslink/tree/main/examples/electron-chat)
 app is the reference integration. It keeps Crosslink in Electron's main process
-and gives the sandboxed renderer only four narrow operations: read status, mint
-a pairing code, send a message, and revoke a device.
+and gives the sandboxed renderer narrow IPC operations for status, pairing
+sessions/mode changes, messages, revocation, and pairing lifecycle events. A
+custom `PairingSource` adapts that bridge to the same `createPairingCard()` used
+by HTTP-hosted desktop pages; the example does not implement its own QR, code,
+refresh, or invalidation UI.
 
 ```bash
 npm install
@@ -22,7 +25,7 @@ npm run dev -w @crosslink/example-electron-chat
 | Process | Holds | Must not hold |
 | --- | --- | --- |
 | Main | Crosslink host, identity, grants, relay tokens, approval UI | Remote renderer code |
-| Preload | Four validated IPC wrappers | Raw `ipcRenderer` |
+| Preload | Narrow validated IPC wrappers and event subscriptions | Raw `ipcRenderer` |
 | Renderer | Display state and user input | Node.js, filesystem, keys, service tokens |
 
 The example uses `contextIsolation: true`, `sandbox: true`,

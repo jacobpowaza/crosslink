@@ -16,6 +16,7 @@ describe("PairingCard UI Component", () => {
 
   it("creates a pairing card and renders DOM structure", () => {
     const card = createPairingCard({
+      source: false,
       appName: "Crosslink Notes",
       blurb: "<strong>Connect your phone</strong> to sync notes.",
       code: "123456789",
@@ -39,7 +40,7 @@ describe("PairingCard UI Component", () => {
   });
 
   it("updates state with new code, QR, and loading status", () => {
-    const card = new PairingCard({ injectStyles: false });
+    const card = new PairingCard({ source: false, injectStyles: false });
 
     card.update({ loading: true });
     expect(card.element.querySelector(".cl-qr-skeleton")).toBeTruthy();
@@ -60,7 +61,7 @@ describe("PairingCard UI Component", () => {
   });
 
   it("handles error states gracefully", () => {
-    const card = new PairingCard({ injectStyles: false });
+    const card = new PairingCard({ source: false, injectStyles: false });
     card.update({ error: "Failed to connect to signaling server", errorCode: "CL-P503" });
 
     expect(card.element.querySelector(".cl-error-code")?.textContent).toBe("CL-P503");
@@ -76,7 +77,7 @@ describe("PairingCard UI Component", () => {
   });
 
   it("renders skeletons whenever a pairing code is absent or loading", () => {
-    const card = new PairingCard({ injectStyles: false });
+    const card = new PairingCard({ source: false, injectStyles: false });
     expect(card.element.querySelectorAll(".cl-pill").length).toBe(9);
     expect(card.element.querySelector(".cl-qr-skeleton")).toBeTruthy();
 
@@ -107,6 +108,7 @@ describe("PairingCard UI Component", () => {
 
   it("applies custom theme variables", () => {
     const card = new PairingCard({
+      source: false,
       injectStyles: false,
       theme: {
         bg: "#112233",
@@ -126,7 +128,7 @@ describe("PairingCard UI Component", () => {
 
   it("triggers onRefresh callback when refresh button is clicked", async () => {
     const refreshSpy = vi.fn().mockResolvedValue(undefined);
-    const card = new PairingCard({ onRefresh: refreshSpy, injectStyles: false });
+    const card = new PairingCard({ source: false, onRefresh: refreshSpy, injectStyles: false });
 
     const btn = card.element.querySelector(".cl-pair-refresh") as any;
     expect(btn).toBeTruthy();
@@ -138,7 +140,7 @@ describe("PairingCard UI Component", () => {
   });
 
   it("toggles settings dropdown when cog button is clicked", () => {
-    const card = new PairingCard({ injectStyles: false });
+    const card = new PairingCard({ source: false, injectStyles: false });
     const cog = card.element.querySelector(".cl-cog-btn") as any;
     expect(cog).toBeTruthy();
 
@@ -158,6 +160,7 @@ describe("PairingCard UI Component", () => {
   it("switches network mode and invokes onNetworkModeChange callback", () => {
     const modeSpy = vi.fn();
     const card = new PairingCard({
+      source: false,
       networkMode: "remote",
       onNetworkModeChange: modeSpy,
       injectStyles: false,
@@ -179,6 +182,7 @@ describe("PairingCard UI Component", () => {
   it("syncs a server-reported mode without treating it as another user change", () => {
     const modeSpy = vi.fn();
     const card = new PairingCard({
+      source: false,
       networkMode: "auto",
       onNetworkModeChange: modeSpy,
       injectStyles: false,
@@ -199,13 +203,13 @@ describe("PairingCard UI Component", () => {
     expect(normalizeNetworkMode("ngrok")).toBe("auto");
     expect(normalizeNetworkMode(undefined)).toBe("auto");
 
-    const card = new PairingCard({ networkMode: "open-lan-remote" as never, injectStyles: false });
+    const card = new PairingCard({ source: false, networkMode: "open-lan-remote" as never, injectStyles: false });
     expect(card.getNetworkMode()).toBe("remote");
     card.destroy();
   });
 
   it("names the routes the current QR advertises, and says nothing more", () => {
-    const card = new PairingCard({ injectStyles: false });
+    const card = new PairingCard({ source: false, injectStyles: false });
     card.update({
       endpoints: [
         { kind: "lan", url: "ws://192.168.1.50:8100" },

@@ -361,6 +361,37 @@ export interface CrosslinkServerConfig {
   attachTo?: "existing-server" | { type: "existing-server"; server?: unknown };
 }
 
+/** Deployment facts the host can know without pretending to inspect a phone. */
+export interface MobileDeliveryDiagnostics {
+  mode: "unavailable" | "lan-http" | "secure-hosted-bootstrap" | "secure-published-bootstrap";
+  origin: string | null;
+  /** Whether the configured origin is a browser secure context. */
+  secureContext: boolean;
+  /** A host-served mobile entry or explicitly published bootstrap is configured. */
+  bootstrapAssetsConfigured: boolean;
+  /** Whether that origin is eligible to register Crosslink's generated worker. */
+  serviceWorkerOriginEligible: boolean;
+  /** Origin-level capability; actual registration is reported in the browser. */
+  offlineShell: boolean;
+  /** Origin-level capability; browser/platform install support is reported in the browser. */
+  installable: boolean;
+  /** Origin-level capability; actual storage selection is reported by the browser client. */
+  encryptedDeviceIdentity: boolean;
+  /** Legacy alias for `secureWssTransport`. */
+  secureTransport: boolean;
+  /** A direct LAN route is advertised and permitted from this delivery origin. */
+  directLanTransport: boolean;
+  /** At least one browser-permitted `wss://`/`https://` route is advertised. */
+  secureWssTransport: boolean;
+  /** Signaling/presence can resolve the desktop's current endpoint after it changes. */
+  dynamicEndpointDiscovery: boolean;
+  /** The origin is explicitly configured rather than derived from today's host endpoint. */
+  durableOrigin: boolean;
+  /** Reminds callers that browser runtime support must be checked separately. */
+  capabilityBasis: "deployment-configuration";
+  message: string;
+}
+
 export type PairingNetworkMode = NonNullable<CrosslinkServerConfig["networkMode"]>;
 
 export interface PairingCodeInfo {
@@ -1119,32 +1150,36 @@ export class CrosslinkServer extends EventEmitter {
    * different fixes, and a host that logs `message` at startup tells the
    * developer which one they have.
    */
-  describeMobileDelivery(): {
-    origin: string | null;
-    secureContext: boolean;
-    /** A service worker can register, so the offline shell can be cached. */
-    offlineShell: boolean;
-    /** Add to Home Screen produces an app rather than a bookmark. */
-    installable: boolean;
-    /** Device identity can be wrapped in a non-extractable WebCrypto key. */
-    encryptedDeviceIdentity: boolean;
-    /** A `wss://` route exists, so a published https bootstrap can connect. */
-    secureTransport: boolean;
-    /** The origin survives a DHCP lease change and leaving the network. */
-    durableOrigin: boolean;
-    message: string;
-  } {
+  describeMobileDelivery(): MobileDeliveryDiagnostics {
+    const durableOrigin = Boolean(
+      this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL
+    );
+    const bootstrapAssetsConfigured =
+      durableOrigin || Boolean(this.config.mobile?.entry && this.config.mobile.enabled !== false);
     const origin = this.bootstrapOrigin();
     if (!origin) {
       return {
+        mode: "unavailable",
         origin: null,
         secureContext: false,
+        bootstrapAssetsConfigured,
+        serviceWorkerOriginEligible: false,
         offlineShell: false,
         installable: false,
         encryptedDeviceIdentity: false,
         secureTransport: false,
+        directLanTransport: false,
+        secureWssTransport: false,
+        dynamicEndpointDiscovery: false,
         durableOrigin: false,
+        capabilityBasis: "deployment-configuration",
         message:
+          "Mode: unavailable\n" +
+          "Installable PWA: unavailable\n" +
+          "Service Worker: unavailable\n" +
+          "Direct LAN transport: unavailable\n" +
+          "Secure WSS transport: not configured\n" +
+          "Desktop endpoint: unavailable\n\n" +
           "No route is advertised yet, so there is no address a phone can load the bootstrap from."
       };
     }
@@ -1154,45 +1189,90 @@ export class CrosslinkServer extends EventEmitter {
     const secureContext =
       url.protocol === "https:" || host === "localhost" || host === "127.0.0.1" || host === "::1";
     const endpoints = this.connectionEndpoints();
-    const secureTransport = endpoints.some((endpoint) => /^(wss|https):/i.test(endpoint.url));
+    const secureWssTransport = endpoints.some((endpoint) => /^(wss|https):/i.test(endpoint.url));
+    const hasLanTransport = endpoints.some((endpoint) => endpoint.kind === "lan");
+    const permittedFromOrigin = (endpoint: PairingEndpoint): boolean =>
+      !secureContext || /^(wss|https):/i.test(endpoint.url);
+    const directLanTransport = endpoints.some(
+      (endpoint) => endpoint.kind === "lan" && permittedFromOrigin(endpoint)
+    );
+    const dynamicEndpointDiscovery = endpoints.some(
+      (endpoint) => endpoint.kind === "sig" && permittedFromOrigin(endpoint)
+    );
     // A configured bootstrap URL is a site the developer published; it keeps
     // working when this machine's address changes. Anything derived from a live
     // endpoint is this socket's address today.
-    const durableOrigin = Boolean(
-      this.config.pairing?.bootstrapUrl ?? process.env.CROSSLINK_BOOTSTRAP_URL
-    );
+    const serviceWorkerOriginEligible = secureContext && bootstrapAssetsConfigured;
+    const mode: MobileDeliveryDiagnostics["mode"] = !bootstrapAssetsConfigured
+      ? "unavailable"
+      : durableOrigin
+        ? "secure-published-bootstrap"
+        : secureContext
+          ? "secure-hosted-bootstrap"
+          : "lan-http";
 
-    let message: string;
-    if (!secureContext) {
-      message =
+    const modeLabel: Record<MobileDeliveryDiagnostics["mode"], string> = {
+      unavailable: "unavailable",
+      "lan-http": "LAN HTTP",
+      "secure-hosted-bootstrap": "Secure host-served bootstrap",
+      "secure-published-bootstrap": "Secure published bootstrap"
+    };
+    const lines = [
+      `Mode: ${modeLabel[mode]}`,
+      `Installable PWA: ${serviceWorkerOriginEligible ? "origin eligible (verify in browser)" : "unavailable"}`,
+      `Service Worker: ${serviceWorkerOriginEligible ? "origin eligible (verify registration in browser)" : "unavailable"}`,
+      `Offline shell: ${serviceWorkerOriginEligible ? "generated; available after successful worker registration" : "unavailable"}`,
+      `Direct LAN transport: ${directLanTransport ? "available" : hasLanTransport ? "blocked from this secure origin" : "not configured"}`,
+      `Secure WSS transport: ${secureWssTransport ? "configured" : "not configured"}`,
+      `Desktop endpoint: ${dynamicEndpointDiscovery ? "discovered dynamically" : "stored pairing routes only"}`
+    ];
+
+    let detail: string;
+    if (!bootstrapAssetsConfigured) {
+      detail =
+        "No mobile entry or published bootstrap is configured. Transport routes may exist, " +
+        "but this host is not currently delivering Crosslink's mobile application shell.";
+    } else if (!secureContext) {
+      detail =
         `${origin} is plain HTTP on a non-local address. Phones can pair and use the app over ` +
         `it, but the browser will not register a service worker there, so Add to Home Screen ` +
         `produces a bookmark rather than an app, the offline screen is never cached, and this ` +
         `device's Crosslink identity is stored unencrypted. Publish Crosslink's static bootstrap ` +
         `(writeStaticBootstrap) to any free static host and set pairing.bootstrapUrl to it.`;
     } else if (!durableOrigin) {
-      message =
-        `${origin} is secure, so the offline shell and Add to Home Screen work — but the origin ` +
-        `is this host's current address, and an installed app breaks when that address changes. ` +
+      detail =
+        `${origin} is eligible for a service worker and Add to Home Screen — browser runtime ` +
+        `support still decides whether they work. The origin is this host's current address, so ` +
+        `an installed app breaks when that address changes. ` +
         `Publish the static bootstrap and set pairing.bootstrapUrl for an install that survives.`;
-    } else if (!secureTransport) {
-      message =
+    } else if (!secureWssTransport) {
+      detail =
         `Installs from ${origin} are durable, but this host advertises no wss:// route. A page ` +
         `served over https cannot open a ws:// socket, so those installs cannot reach this ` +
         `machine. Configure a relay (relayUrl) or a tunnel (tunnelUrl).`;
     } else {
-      message = `Durable, installable bootstrap at ${origin} with a secure route to this host.`;
+      detail =
+        `Durable bootstrap configured at ${origin} with a secure route to this host. ` +
+        `Use describeBootstrapEnvironment() in the page to confirm this browser actually ` +
+        `registered the worker and supports installation.`;
     }
 
     return {
+      mode,
       origin,
       secureContext,
-      offlineShell: secureContext,
-      installable: secureContext,
-      encryptedDeviceIdentity: secureContext,
-      secureTransport,
+      bootstrapAssetsConfigured,
+      serviceWorkerOriginEligible,
+      offlineShell: serviceWorkerOriginEligible,
+      installable: serviceWorkerOriginEligible,
+      encryptedDeviceIdentity: serviceWorkerOriginEligible,
+      secureTransport: secureWssTransport,
+      directLanTransport,
+      secureWssTransport,
+      dynamicEndpointDiscovery,
       durableOrigin,
-      message
+      capabilityBasis: "deployment-configuration",
+      message: `${lines.join("\n")}\n\n${detail}`
     };
   }
 

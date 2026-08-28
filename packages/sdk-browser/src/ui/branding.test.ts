@@ -63,6 +63,7 @@ describe("Crosslink branding", () => {
 
   it("keeps the mark and attribution on the pairing card whatever an app configures", () => {
     const card = createPairingCard({
+      source: false,
       injectStyles: false,
       appName: "Crosslink Notes",
       appIcon: "/notes.png",
