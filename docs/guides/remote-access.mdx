@@ -57,6 +57,62 @@ The port is also remembered across restarts (`listen-port.json` in the host's
 storage directory), so a stored endpoint on a paired phone stays valid after the
 desktop app — or the whole machine — restarts.
 
+## Turning it on after startup
+
+`networkMode` is often a runtime choice — a "reachable from anywhere" switch in
+a settings panel, not a constant in the source. Changing `config.networkMode`
+on a running host is enough: the next `getPairingCode(undefined, "remote")`
+opens remote access if it is not open yet. `server.enableRemoteAccess()` does
+the same thing explicitly, for a UI that wants the diagnostics before it shows a
+QR.
+
+The LAN listener must already be bound to all interfaces (`lan: { bind: "all" }`)
+for this to work — a mapping pointed at a loopback-only socket connects and then
+refuses everything. Hosts started in `networkMode: "remote"` get that binding
+automatically; hosts that may switch later should set it themselves.
+
+## When the router refuses: forward the port yourself
+
+A router with UPnP and NAT-PMP disabled cannot be talked into a mapping, but it
+can still forward a port if you add the rule in its admin page by hand. Tell the
+host that you did — it then advertises the public address on your word, since no
+protocol confirmed anything:
+
+```ts
+const server = createCrosslinkServer({
+  application: { id: "com.example.app", name: "My App", version: "1.0.0" },
+  networkMode: "remote",
+  lan: { enabled: true, bind: "all", port: 8787 },
+  remote: {
+    portForwarded: true,   // "I added the rule: WAN 8787 -> this machine 8787"
+    externalPort: 8787,    // the public port in that rule; defaults to the LAN port
+    publicHost: "home.example.net"   // optional; see below
+  }
+});
+```
+
+The rule in the router must point at **the same LAN port the host listens on**,
+so pin `lan.port` rather than letting it float — a forward aimed at last week's
+ephemeral port silently reaches nothing.
+
+`remote.publicHost` is the part that makes an installed home-screen app durable.
+Without it the address comes from STUN, which is correct right now and wrong the
+day your ISP renews its lease; the host re-checks every 15 minutes and updates
+the endpoint, but a phone that stored the old address and is off Wi-Fi has
+nothing to re-pair against. A dynamic-DNS hostname that follows the address
+(`duckdns`, your registrar's DDNS, your router's built-in client) keeps every
+stored endpoint valid across the change. Setting either option turns remote
+access on by itself — no `networkMode: "remote"` needed.
+
+Nothing on this machine can verify a forward from the inside, so
+`getRemoteDiagnostics()` reports `confidence: "manual"` and `manual: true` for
+this path. Confirm it once from a phone on cellular data:
+
+```bash
+node scripts/check-remote-access.mjs 8787 --forwarded
+node scripts/check-remote-access.mjs 8787 --public-host home.example.net
+```
+
 ## When it cannot work
 
 Remote access depends on your network, so it can genuinely be unavailable. The
@@ -67,9 +123,9 @@ host reports the reason instead of silently degrading:
   `lan-and-relay` with a relay you can reach, or a provider tunnel.
 - **Double NAT.** A private address on the router's WAN interface means another
   router sits in front of it; the mapping would only reach that middle network.
-- **The router refuses.** Some routers ship with UPnP/NAT-PMP disabled. Enabling
-  it in the router's admin page is the only fix, and that is a decision for
-  whoever owns the network.
+- **The router refuses.** Some routers ship with UPnP/NAT-PMP disabled. Enable
+  it in the router's admin page, or forward a port by hand and use
+  `remote.portForwarded` as above.
 
 In every case `getPairingCode()` throws with the specific reason rather than
 handing back a QR that quietly only works on the sofa. `server.getRemoteDiagnostics()`
@@ -105,6 +161,7 @@ cellular data, not from the host machine.
 
 - **A stable identity forever.** Your ISP can change your public address. A PWA
   installed against that origin would then point at the old one; set
-  `pairing.bootstrapUrl` to a stable origin you control if that matters to you.
+  `remote.publicHost` to a dynamic-DNS name, or `pairing.bootstrapUrl` to a
+  stable origin you control, if that matters to you.
 - **A route through a network you do not control.** Corporate and campus Wi-Fi
   usually block inbound connections outright. That is a relay's job.

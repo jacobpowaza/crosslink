@@ -39,6 +39,51 @@ afterEach(async () => {
   await Promise.all(running.splice(0).map((s) => s.stop().catch(() => {})));
 });
 
+// Router discovery is mocked: the point under test is that a runtime switch to
+// `remote` opens remote access at all, not what this machine's router answers —
+// and a test must never negotiate a real port mapping on the developer's router.
+vi.mock("@crosslink/nat-map", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@crosslink/nat-map")>();
+  return {
+    ...actual,
+    openNatMapping: vi.fn(async (opts: { internalPort: number; externalPort?: number; publicHost?: string }) => {
+      const result = {
+        protocol: "none" as const,
+        mapped: false,
+        manual: true,
+        internalPort: opts.internalPort,
+        externalPort: opts.externalPort ?? opts.internalPort,
+        externalAddress: opts.publicHost,
+        reachable: Boolean(opts.publicHost),
+        confidence: "manual" as const,
+        lifetimeSeconds: 0,
+        cgnat: false,
+        attempts: [],
+        message: "manual forward (test)"
+      };
+      return { result, renew: async () => result, release: async () => {} };
+    })
+  };
+});
+
+describe("remote access enabled after startup", () => {
+  it("opens remote access on a `remote` pairing code even when the host started in auto", async () => {
+    const server = await startServer({
+      networkMode: "auto",
+      lan: { enabled: true, bind: "all" }
+    });
+    // The user flips "reachable from anywhere" in a settings panel: config
+    // changes on a host that is already running.
+    server.config.remote = { portForwarded: true, publicHost: "home.example.net", externalPort: 8787 };
+    server.config.networkMode = "remote";
+
+    const info = await server.getPairingCode(undefined, "remote");
+    const wan = info.endpoints?.find((e) => e.kind === "wan");
+    expect(wan?.url).toBe("ws://home.example.net:8787");
+    expect(server.getRemoteDiagnostics()?.confidence).toBe("manual");
+  });
+});
+
 function storageDir(): string {
   return mkdtempSync(path.join(tmpdir(), "crosslink-server-"));
 }

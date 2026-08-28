@@ -40,14 +40,23 @@ export type NatProtocol = "pcp" | "natpmp" | "upnp" | "none";
  *                the router reported, so the endpoint is safe to publish.
  *  - `router`    the router accepted the mapping but nothing corroborated the
  *                external address. Usually correct; publish with a warning.
+ *  - `manual`    no mapping was negotiated: the operator asserted that a port
+ *                is already forwarded to this machine (`assumeForwarded`, or an
+ *                explicit `publicHost`). Only as true as that assertion.
  *  - `none`      no mapping. The endpoint must not be published as remote.
  */
-export type NatConfidence = "verified" | "router" | "none";
+export type NatConfidence = "verified" | "router" | "manual" | "none";
 
 export interface NatMappingResult {
   protocol: NatProtocol;
-  /** True only when an inbound mapping actually exists right now. */
+  /** True only when an inbound mapping was negotiated by this process. */
   mapped: boolean;
+  /**
+   * True when the endpoint rests on a forward this process did not create — a
+   * router rule the operator added by hand, or a hostname they pointed here.
+   * Nothing on this machine can verify it from the inside; see `confidence`.
+   */
+  manual?: boolean;
   internalPort: number;
   /** Port to advertise on the public address. Equals internalPort when unmapped. */
   externalPort: number;
@@ -87,6 +96,20 @@ export interface NatMapOptions {
   timeoutMs?: number;
   /** Skip STUN corroboration (useful in tests and offline environments). */
   skipStun?: boolean;
+  /**
+   * Treat the public address as already forwarded to `externalPort` when no
+   * router protocol will negotiate a mapping. This is the manual path: the
+   * operator added a port-forward rule in the router themselves, so there is
+   * nothing to negotiate and nothing this machine can check from the inside.
+   */
+  assumeForwarded?: boolean;
+  /**
+   * Public address to advertise instead of the STUN-discovered one. A dynamic
+   * DNS hostname belongs here: a home IP changes when the ISP renews the lease,
+   * and a hostname is what keeps an installed home-screen app pointing at this
+   * machine across that change. Implies `assumeForwarded`.
+   */
+  publicHost?: string;
 }
 
 /** Handle for releasing or renewing a mapping this process created. */
@@ -151,7 +174,7 @@ export async function tryNatMapping(opts: NatMapOptions): Promise<NatMappingResu
     detail: gateway ? `default gateway ${gateway}, local address ${client ?? "unknown"}` : "no default gateway found"
   });
 
-  if (result.cgnat) {
+  if (result.cgnat && !opts.publicHost) {
     result.message =
       `This connection is behind carrier-grade NAT (${result.reflexiveAddress}). ` +
       "The ISP shares one public address across many customers, so no router port " +
@@ -256,12 +279,58 @@ export async function tryNatMapping(opts: NatMapOptions): Promise<NatMappingResu
     } else if (result.externalAddress) {
       result.confidence = "router";
     }
+    // An explicitly configured public host wins over both the router and STUN:
+    // it is usually a dynamic-DNS name pointing at this address, and the whole
+    // reason to set it is that the raw address is the part that changes.
+    if (opts.publicHost) {
+      result.externalAddress = opts.publicHost;
+      result.manual = true;
+      result.confidence = "manual";
+    }
     result.reachable = Boolean(result.externalAddress);
     result.message = result.reachable
       ? `Reachable at ${result.externalAddress}:${result.externalPort} via ${result.protocol.toUpperCase()} ` +
-        `(${result.confidence === "verified" ? "confirmed by STUN" : "reported by the router"}).`
+        `(${
+          result.confidence === "verified"
+            ? "confirmed by STUN"
+            : result.confidence === "manual"
+              ? "address configured, mapping negotiated with the router"
+              : "reported by the router"
+        }).`
       : "The router accepted the mapping but would not report a public address.";
     return result;
+  }
+
+  // Manual path: no protocol would negotiate a mapping, but the operator says a
+  // forward already exists (or gave a hostname that resolves here). Advertise
+  // it, and be explicit in `confidence` that only their assertion backs it.
+  if (opts.publicHost || opts.assumeForwarded) {
+    const host = opts.publicHost ?? result.reflexiveAddress;
+    if (host) {
+      result.externalAddress = host;
+      result.externalPort = wantedExternal;
+      result.manual = true;
+      result.reachable = true;
+      result.confidence = "manual";
+      result.lifetimeSeconds = 0;
+      attempts.push({
+        protocol: "gateway",
+        ok: true,
+        detail: opts.publicHost
+          ? `using configured public host ${host}:${wantedExternal} (no mapping negotiated)`
+          : `assuming port ${wantedExternal} is forwarded to this machine on ${host}`
+      });
+      result.message =
+        `Advertising ${host}:${wantedExternal} as a manually forwarded endpoint. ` +
+        "No router protocol confirmed this; it works only while that forward exists " +
+        `and points at port ${internalPort} on this machine.`;
+      return result;
+    }
+    attempts.push({
+      protocol: "gateway",
+      ok: false,
+      detail: "manual forwarding was requested but no public address could be determined"
+    });
   }
 
   result.message = result.reflexiveAddress

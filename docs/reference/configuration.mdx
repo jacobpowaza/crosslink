@@ -70,6 +70,19 @@ Array of capability objects:
 
 `"auto" | "local-only" | "lan-and-relay" | "remote"` -- Which transports the host offers. `auto` (default) uses LAN plus whatever remote path is configured or discovered; `local-only` disables signaling, relay, tunnel, and port mapping entirely; `lan-and-relay` uses LAN plus the configured relay/signaling services; `remote` requires a working outside-the-network route and fails startup loudly if none can be established.
 
+### remote
+
+Direct inbound access from the internet, via a router port mapping (PCP, NAT-PMP, UPnP) or a port you forwarded by hand. See [Remote Access](/guides/remote-access).
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `enabled` | `boolean` | Default: on for `networkMode: "remote"` or when `portForwarded`/`publicHost` is set, off otherwise |
+| `externalPort` | `number` | Public port to request or advertise. Defaults to the LAN listener's port |
+| `lifetimeSeconds` | `number` | Mapping lease. Default 7200, renewed at 75% of the lease |
+| `autoRenew` | `boolean` | Set false to let the lease lapse instead of renewing it |
+| `portForwarded` | `boolean` | No mapping is negotiated: a port-forward rule was added in the router by hand. The public address is advertised on that word alone (`confidence: "manual"`) |
+| `publicHost` | `string` | Public address or dynamic-DNS hostname to advertise instead of the STUN-discovered one, so a stored endpoint survives an ISP address change. Implies `portForwarded` |
+
 ---
 
 ## Client configuration

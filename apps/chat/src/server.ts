@@ -27,6 +27,12 @@
  *   npm run demo:chat                      # LAN
  *   npm run demo:chat:tunnel               # any Wi-Fi through a public HTTPS tunnel
  *   CROSSLINK_NETWORK_MODE=remote npm run demo:chat   # LAN + router port mapping
+ *
+ * When the router refuses UPnP/NAT-PMP, forward a port to this machine by hand
+ * and say so — the public address is then advertised on that word alone:
+ *   CROSSLINK_NETWORK_MODE=remote CROSSLINK_PORT_FORWARDED=1 \
+ *     CROSSLINK_LAN_PORT=8787 npm run demo:chat
+ *   CROSSLINK_PUBLIC_HOST=home.example.net npm run demo:chat  # survives an IP change
  */
 import http from "node:http";
 import { readFile } from "node:fs/promises";
@@ -47,6 +53,16 @@ const lanPort = process.env.CROSSLINK_LAN_PORT
   ? Number(process.env.CROSSLINK_LAN_PORT)
   : undefined;
 const tunnelUrl = process.env.CROSSLINK_TUNNEL_URL;
+/**
+ * A hand-added router port-forward. Nothing here can verify it, so it is opt-in:
+ * `CROSSLINK_PUBLIC_HOST` additionally pins the address (use a dynamic-DNS name
+ * so an installed home-screen app survives the ISP renewing the lease).
+ */
+const portForwarded = process.env.CROSSLINK_PORT_FORWARDED === "1";
+const publicHost = process.env.CROSSLINK_PUBLIC_HOST;
+const externalPort = process.env.CROSSLINK_EXTERNAL_PORT
+  ? Number(process.env.CROSSLINK_EXTERNAL_PORT)
+  : undefined;
 
 /**
  * `remote` asks the SDK to make this machine reachable from outside the local
@@ -111,6 +127,7 @@ const host = createCrosslinkServer({
   relayUrl: process.env.CROSSLINK_RELAY_URL,
   tunnelUrl,
   networkMode,
+  remote: { portForwarded, publicHost, externalPort },
   lan: { enabled: true, bind: "all", port: lanPort, httpHandler: serveBootstrap },
   // A demo pairs unattended; a real app should leave this off so a human sees
   // and confirms the SAS before a device is trusted.

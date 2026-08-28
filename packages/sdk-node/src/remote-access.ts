@@ -34,10 +34,21 @@ export interface RemoteAccessOptions {
   /** Skips STUN; used by tests so no packets leave the machine. */
   skipStun?: boolean;
   timeoutMs?: number;
+  /**
+   * Advertise the public address even when no router protocol will negotiate a
+   * mapping, on the operator's word that they forwarded the port by hand.
+   */
+  assumeForwarded?: boolean;
+  /**
+   * Public address or dynamic-DNS hostname to advertise. A hostname is what
+   * keeps an installed home-screen app working across an ISP address change.
+   */
+  publicHost?: string;
 }
 
 const RENEW_FRACTION = 0.75;
 const MIN_RENEW_MS = 60_000;
+const MANUAL_REFRESH_MS = 15 * 60_000;
 
 export class RemoteAccess {
   private renewTimer?: ReturnType<typeof setTimeout>;
@@ -60,7 +71,9 @@ export class RemoteAccess {
       lifetimeSeconds: options.lifetimeSeconds,
       description: options.description ?? "Crosslink",
       skipStun: options.skipStun,
-      timeoutMs: options.timeoutMs
+      timeoutMs: options.timeoutMs,
+      assumeForwarded: options.assumeForwarded,
+      publicHost: options.publicHost
     });
     const access = new RemoteAccess(handle, options);
     options.logger?.info("remote.nat-mapping", {
@@ -69,6 +82,7 @@ export class RemoteAccess {
       reachable: handle.result.reachable,
       confidence: handle.result.confidence,
       externalPort: handle.result.externalPort,
+      manual: handle.result.manual === true,
       cgnat: handle.result.cgnat
     });
     if (options.autoRenew !== false) access.scheduleRenew();
@@ -110,9 +124,17 @@ export class RemoteAccess {
    * at expiry — a renewal that fails still leaves time to notice and report it.
    */
   private scheduleRenew(): void {
-    const lifetime = this.handle.result.lifetimeSeconds;
-    if (this.closed || !this.handle.result.mapped || lifetime <= 0) return;
-    const delay = Math.max(MIN_RENEW_MS, lifetime * 1000 * RENEW_FRACTION);
+    const r = this.handle.result;
+    if (this.closed) return;
+    // A manual forward has no lease to renew, but the address behind it still
+    // moves: a home IP changes whenever the ISP renews the DHCP lease. Re-running
+    // discovery on a timer is what picks the new address up. Configuring
+    // `publicHost` with a dynamic-DNS name avoids the problem entirely.
+    const manual = r.manual === true;
+    if (!manual && (!r.mapped || r.lifetimeSeconds <= 0)) return;
+    const delay = manual
+      ? MANUAL_REFRESH_MS
+      : Math.max(MIN_RENEW_MS, r.lifetimeSeconds * 1000 * RENEW_FRACTION);
     this.renewTimer = setTimeout(() => {
       void this.handle
         .renew()
@@ -144,8 +166,10 @@ export function remoteUnavailableError(diagnostics: NatMappingResult): Error {
   return new Error(
     `remote access was requested but this host is not reachable from the internet.\n` +
       `${diagnostics.message}\n\nWhat was tried:\n${attempted}\n\n` +
-      `Options: enable UPnP or NAT-PMP in the router's settings, forward a port to this ` +
-      `machine manually and set remote.externalPort, run the signaling and relay services ` +
-      `somewhere public and set signalingUrl/relayUrl, or opt into a tunnel provider.`
+      `Options: enable UPnP or NAT-PMP in the router's settings; forward a port to this ` +
+      `machine in the router by hand and set remote.externalPort with remote.portForwarded: true ` +
+      `(add remote.publicHost with a dynamic-DNS name so the address survives an ISP lease change); ` +
+      `run the signaling and relay services somewhere public and set signalingUrl/relayUrl; ` +
+      `or opt into a tunnel provider.`
   );
 }

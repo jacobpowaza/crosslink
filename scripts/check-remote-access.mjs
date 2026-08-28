@@ -7,7 +7,11 @@
  * Wi-Fi: it exercises exactly the same discovery the host does at startup, and
  * prints what each router protocol answered.
  *
- *   node scripts/check-remote-access.mjs [port]
+ *   node scripts/check-remote-access.mjs [port] [--public-host <host>] [--forwarded]
+ *
+ * `--forwarded` / `--public-host` check the manual path: no mapping is
+ * negotiated, the address is advertised on the operator's word that a router
+ * port-forward rule already points at this machine.
  */
 import { createServer } from "node:http";
 import {
@@ -18,7 +22,12 @@ import {
   verifyExternalReachability
 } from "@crosslink/nat-map";
 
-const port = Number(process.argv[2] ?? 0);
+const argv = process.argv.slice(2);
+const port = Number(argv.find((a) => !a.startsWith("--")) ?? 0);
+const publicHost = argv.includes("--public-host")
+  ? argv[argv.indexOf("--public-host") + 1]
+  : undefined;
+const assumeForwarded = argv.includes("--forwarded") || Boolean(publicHost);
 
 const probe = createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
@@ -40,6 +49,8 @@ console.log(
 console.log(`\n  Requesting an inbound mapping for local port ${internalPort}…\n`);
 const mapping = await openNatMapping({
   internalPort,
+  publicHost,
+  assumeForwarded,
   description: "Crosslink reachability check"
 });
 

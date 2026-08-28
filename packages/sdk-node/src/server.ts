@@ -201,6 +201,21 @@ export interface CrosslinkServerConfig {
     lifetimeSeconds?: number;
     /** Set false to let the lease lapse instead of renewing it. */
     autoRenew?: boolean;
+    /**
+     * The router will not negotiate a mapping, but a port-forward rule was
+     * added by hand. Advertises `<public address>:<externalPort>` on that word
+     * alone — nothing on this machine can verify a forward from the inside, so
+     * a wrong rule produces a QR that fails only off Wi-Fi.
+     */
+    portForwarded?: boolean;
+    /**
+     * Public address or dynamic-DNS hostname to advertise instead of the
+     * STUN-discovered one. A home IP changes when the ISP renews its lease,
+     * which breaks every endpoint a phone already installed to its home screen;
+     * a hostname that follows the address is what makes the install durable.
+     * Implies `portForwarded`.
+     */
+    publicHost?: string;
   };
   /** Security hardening options. */
   security?: {
@@ -574,16 +589,7 @@ export class CrosslinkServer extends EventEmitter {
     }
 
     // Router port mapping (PCP / NAT-PMP / UPnP), for direct internet reach.
-    if (wantsRemote && this.lan) {
-      this.remote = await RemoteAccess.open({
-        internalPort: this.lan.port,
-        externalPort: this.config.remote?.externalPort,
-        lifetimeSeconds: this.config.remote?.lifetimeSeconds,
-        autoRenew: this.config.remote?.autoRenew,
-        description: `Crosslink ${this.config.application.name}`,
-        logger: this.log
-      });
-    }
+    if (wantsRemote) await this.enableRemoteAccess();
 
     // mDNS local discovery (optional)
     if (this.config.mdns?.enabled && this.lan) {
@@ -730,6 +736,15 @@ export class CrosslinkServer extends EventEmitter {
     // The QR advertises every route this host genuinely has, in preference
     // order, and nothing it does not. Endpoint construction lives in one place
     // (`connectionEndpoints`) so no demo, example or app can invent its own.
+    // A `remote` code asks for a route off this network, whether or not the
+    // host was started in that mode. Try to establish one before deciding the
+    // request cannot be served.
+    if (mode === "remote" && !this.remote && this.lan && this.config.remote?.enabled !== false) {
+      await this.enableRemoteAccess().catch((err) => {
+        this.log.warn("server.remote-enable-failed", { error: String(err) });
+      });
+    }
+
     const endpoints = this.connectionEndpoints(mode);
     if (mode === "remote" && !this.hasRemoteEndpoint(endpoints)) {
       throw remoteUnavailableError(
@@ -743,7 +758,10 @@ export class CrosslinkServer extends EventEmitter {
           lifetimeSeconds: 0,
           cgnat: false,
           attempts: [],
-          message: "Remote access is not enabled and no relay or signaling service is configured."
+          message:
+            "Remote access could not be established and no relay or signaling service is " +
+            "configured. The LAN listener must also be bound to all interfaces (`lan.bind: \"all\"`) " +
+            "for a router forward to reach it."
         }
       );
     }
@@ -857,8 +875,41 @@ export class CrosslinkServer extends EventEmitter {
     return new JsonStore<{ port: number }>(path.join(this.storageDir, "listen-port.json"));
   }
 
+  /**
+   * Opens remote access now, if it is not already open.
+   *
+   * Startup does this automatically for `networkMode: "remote"`, but the mode
+   * is also a runtime choice — a user toggling "reachable from anywhere" in a
+   * settings panel changes `config.networkMode` on a host that started in
+   * `auto`. Without this, that toggle could never produce a `wan` endpoint and
+   * failed with the "remote access is not enabled" message, which described the
+   * startup config rather than the request being made.
+   *
+   * Resolves either way; ask `getRemoteDiagnostics()` what actually happened.
+   */
+  async enableRemoteAccess(): Promise<void> {
+    if (this.remote) return;
+    if (!this.lan) {
+      throw new Error(
+        "remote access needs the LAN listener: it is the socket the router maps a public port to. " +
+          "Remove `lan.enabled: false`, or reach devices through a relay instead."
+      );
+    }
+    this.remote = await RemoteAccess.open({
+      internalPort: this.lan.port,
+      externalPort: this.config.remote?.externalPort,
+      lifetimeSeconds: this.config.remote?.lifetimeSeconds,
+      autoRenew: this.config.remote?.autoRenew,
+      assumeForwarded: this.config.remote?.portForwarded,
+      publicHost: this.config.remote?.publicHost,
+      description: `Crosslink ${this.config.application.name}`,
+      logger: this.log
+    });
+  }
+
   private remoteRequested(): boolean {
     if (this.config.remote?.enabled !== undefined) return this.config.remote.enabled;
+    if (this.config.remote?.portForwarded || this.config.remote?.publicHost) return true;
     return this.config.networkMode === "remote";
   }
 

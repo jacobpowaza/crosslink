@@ -19,6 +19,38 @@ describe("tryNatMapping", () => {
     expect(result.message.length).toBeGreaterThan(0);
     expect(result.protocol).toBe("none");
   }, 10000);
+
+  it("advertises a configured public host as a manual endpoint when no protocol answers", async () => {
+    const result = await tryNatMapping({
+      internalPort: 45123,
+      externalPort: 8787,
+      publicHost: "home.example.net",
+      protocol: "upnp",
+      skipStun: true,
+      timeoutMs: 200
+    });
+
+    expect(result.mapped).toBe(false);
+    expect(result.manual).toBe(true);
+    expect(result.reachable).toBe(true);
+    expect(result.confidence).toBe("manual");
+    expect(result.externalAddress).toBe("home.example.net");
+    expect(result.externalPort).toBe(8787);
+  }, 10000);
+
+  it("does not invent a manual endpoint when assumeForwarded has no public address to use", async () => {
+    const result = await tryNatMapping({
+      internalPort: 45123,
+      assumeForwarded: true,
+      protocol: "upnp",
+      skipStun: true,
+      timeoutMs: 200
+    });
+
+    expect(result.reachable).toBe(false);
+    expect(result.confidence).toBe("none");
+    expect(result.externalAddress).toBeUndefined();
+  }, 10000);
 });
 
 describe("verifyExternalReachability", () => {
