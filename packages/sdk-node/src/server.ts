@@ -166,6 +166,12 @@ export interface CrosslinkServerConfig {
     autoApprove?: boolean; // dev convenience; never for production
     approve?(request: PairingApprovalRequest): PairingApproval | Promise<PairingApproval>;
     /**
+     * Called immediately before the authoritative approval hook. Use it to
+     * raise an Electron/native notification or send a push to a trusted
+     * administrative device. Delivery cannot approve a pairing by itself.
+     */
+    notifyApprovalRequest?(request: PairingApprovalRequest): void | Promise<void>;
+    /**
      * Base URL of the hosted, installable client/bootstrap page. When set, the
      * pairing QR points at an `https://…<this>#pair=<manifest uri>` link instead
      * of a raw `crosslink://` scheme, so scanning it with an iPhone opens Safari,
@@ -324,6 +330,8 @@ export type ServerEvents = {
   deviceConnected: [info: { deviceId: string; transport: string }];
   deviceDisconnected: [info: { deviceId: string; transport: string }];
   pairingIssued: [info: PairingCodeInfo];
+  /** A pairing is waiting for the host user's explicit decision. */
+  pairingApprovalRequested: [request: PairingApprovalRequest];
   /** Emitted whenever host reachability changes. */
   connectivity: [status: ConnectivityStatus];
 };
@@ -491,6 +499,10 @@ export class CrosslinkServer extends EventEmitter {
       ttlMs: this.config.pairing?.ttlMs,
       autoApprove: this.config.pairing?.autoApprove,
       approve: this.config.pairing?.approve,
+      notifyApprovalRequest: async (request) => {
+        this.emit("pairingApprovalRequested", request);
+        await this.config.pairing?.notifyApprovalRequest?.(request);
+      },
       policy: this.config.permissions,
       logger: this.log
     });

@@ -5,6 +5,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+# Guard against a bare `tsc` emitting beside sdk-node sources. Those files
+# shadow the `.ts` modules in Vitest because local imports use `.js` specifiers.
+packages/sdk-node/src/*.js
+packages/sdk-node/src/*.d.ts
+!packages/sdk-node/src/bonjour-service.d.ts
 
 # ── Crosslink runtime data (identity seeds, device records, tokens) ──
 .crosslink-data/

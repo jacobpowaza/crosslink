@@ -64,6 +64,8 @@ describe("signaling service", () => {
     // presence visible over HTTP
     const res = await fetch(`http://127.0.0.1:${signaling.port}/apps/com.test.app`);
     expect(res.status).toBe(200);
+    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(res.headers.get("cache-control")).toBe("no-store");
     const app = (await res.json()) as { appId: string };
     expect(app.appId).toBe("com.test.app");
 

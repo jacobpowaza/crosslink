@@ -298,6 +298,44 @@ describe("permission policy at pairing time", () => {
     expect(request.deniedCaps).toContainEqual({ id: "made.up", reason: "unknown-capability" });
   });
 
+  it("pushes an approval notification before asking for the decision", async () => {
+    const order: string[] = [];
+    const notifyApprovalRequest = vi.fn(async (request: PairingApprovalRequest) => {
+      order.push(`notify:${request.deviceName}`);
+    });
+    const server = await startServer({
+      pairing: {
+        notifyApprovalRequest,
+        approve: () => {
+          order.push("approve");
+          return true;
+        }
+      }
+    });
+    const emitted = vi.fn();
+    server.on("pairingApprovalRequested", emitted);
+
+    await pairDevice(server, ["notes.read"]);
+
+    expect(order).toEqual(["notify:Test Device", "approve"]);
+    expect(notifyApprovalRequest).toHaveBeenCalledOnce();
+    expect(emitted).toHaveBeenCalledOnce();
+  });
+
+  it("still requires the approval decision when notification delivery fails", async () => {
+    const approve = vi.fn(() => false);
+    const server = await startServer({
+      pairing: {
+        notifyApprovalRequest: () => Promise.reject(new Error("push unavailable")),
+        approve
+      }
+    });
+
+    await expect(pairDevice(server, ["notes.read"])).rejects.toThrow(/pairing refused/);
+    expect(approve).toHaveBeenCalledOnce();
+    expect(server.listDevices()).toHaveLength(0);
+  });
+
   it("falls back to the registry defaults when the client requests nothing", async () => {
     const server = await startServer({ pairing: { autoApprove: true } });
     const { record } = await pairDevice(server);

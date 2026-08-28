@@ -81,6 +81,13 @@ export interface HostPairingOptions {
    * array (or `{ caps }`) grants only that subset.
    */
   approve?(request: PairingApprovalRequest): PairingApproval | Promise<PairingApproval>;
+  /**
+   * Announces a pending human decision before `approve` is called. Desktop
+   * shells can turn this into an OS notification; a backend can fan it out to
+   * an already-trusted device through its push provider. Notification delivery
+   * never substitutes for the approval decision and failures are fail-safe.
+   */
+  notifyApprovalRequest?(request: PairingApprovalRequest): void | Promise<void>;
 }
 
 interface LiveSession extends PairingSessionState {
@@ -547,6 +554,20 @@ export class HostPairingManager {
         ErrorCodes.PAIRING_INVALID,
         "no approval hook configured; pairing refused"
       );
+    }
+
+    if (this.options.notifyApprovalRequest) {
+      try {
+        await this.options.notifyApprovalRequest(request);
+        this.log.info("pairing.approval-notified", { device: request.deviceId });
+      } catch (error) {
+        // A notification transport is advisory. The local approval prompt is
+        // still authoritative and must remain available when push is offline.
+        this.log.warn("pairing.approval-notification-failed", {
+          device: request.deviceId,
+          error
+        });
+      }
     }
 
     const answer = await this.options.approve(request);

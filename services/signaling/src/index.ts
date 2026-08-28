@@ -13,6 +13,16 @@ import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import { URL } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+  "cross-origin-resource-policy": "cross-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY"
+};
+
 const MAX_BLOB_BYTES = 16 * 1024;
 const HOST_STALE_MS = 90_000;
 const SWEEP_INTERVAL_MS = 30_000;
@@ -136,12 +146,14 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
 
     const server = http.createServer((req, res) => {
       const url = req.url ?? "/";
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+        res.setHeader(name, value);
+      }
       res.setHeader("content-type", "application/json");
       // Presence is public routing metadata (signaling is untrusted by design);
       // browser clients must be able to read it cross-origin.
       res.setHeader("access-control-allow-origin", "*");
       res.setHeader("access-control-allow-methods", "GET, OPTIONS");
-      res.setHeader("x-content-type-options", "nosniff");
       if (req.method === "OPTIONS") {
         res.statusCode = 204;
         res.end();

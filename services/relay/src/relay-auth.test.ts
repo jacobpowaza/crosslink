@@ -173,6 +173,18 @@ function frameFor(stream: number, payload: string): Buffer {
 }
 
 describe("relay auth token", () => {
+  it("protects operational stats with the configured operator token", async () => {
+    const { base } = await startRelay({ authToken: "s3cret" });
+    const denied = await fetch(`${base}/stats`);
+    expect(denied.status).toBe(401);
+    expect(denied.headers.get("content-security-policy")).toContain("default-src 'none'");
+
+    const allowed = await fetch(`${base}/stats`, {
+      headers: { authorization: "Bearer s3cret" }
+    });
+    expect(allowed.status).toBe(200);
+  });
+
   it("allows channel creation when no token is configured", async () => {
     const { base } = await startRelay();
     expect((await fetch(`${base}/channels`, { method: "POST" })).status).toBe(201);

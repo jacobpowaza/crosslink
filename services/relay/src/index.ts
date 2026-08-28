@@ -26,6 +26,15 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { URL } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY"
+};
+
 export interface RelayOptions {
   port?: number;
   host?: string;
@@ -101,6 +110,9 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
   };
 
   const server = http.createServer((req, res) => {
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      res.setHeader(name, value);
+    }
     res.setHeader("content-type", "application/json");
     const url = req.url ?? "/";
     const ip = req.socket.remoteAddress ?? "unknown";
@@ -116,6 +128,15 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       return;
     }
     if (url === "/stats") {
+      // Operational metadata should not become an unauthenticated internet
+      // endpoint on private deployments. The same operator token used for
+      // channel creation gates stats when configured.
+      if (!authOk(bearerFrom(req.headers.authorization), options.authToken)) {
+        res.statusCode = 401;
+        res.setHeader("www-authenticate", "Bearer");
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
       res.end(JSON.stringify(snapshot()));
       return;
     }
