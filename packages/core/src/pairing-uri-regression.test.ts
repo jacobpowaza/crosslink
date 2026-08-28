@@ -7,6 +7,19 @@ import { describe, expect, it } from "vitest";
 import { buildPairingUri, normalizeCode, parsePairingUri, unwrapBootstrapUri } from "./index.js";
 
 describe("pairing URI regression", () => {
+  it("never digit-normalizes an opaque link handoff that happens to contain nine digits", () => {
+    const opaque = "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9StUvWx";
+    const uri = buildPairingUri({
+      endpoints: [{ kind: "sig", url: "https://signal.crosslink.app" }],
+      code: opaque,
+      appId: "com.test.app",
+      appName: "Test App",
+      hostPubEdB64: "dGVzdHB1YmxpY2tleQ==",
+      link: true
+    });
+    expect(parsePairingUri(uri).code).toBe(opaque);
+  });
+
   it("builds a valid pairing URI with framework default signaling URL", () => {
     const identityPubEd = "test"; // not used for fingerprint validation here
     const uri = buildPairingUri({

@@ -97,6 +97,34 @@ export function buildPairingUri(input: BuildPairingUriInput): string {
   return `${PAIRING_URI_SCHEME}?${params.toString()}`;
 }
 
+/**
+ * Removes session credentials and link intent from a pairing target while
+ * retaining its public routing metadata and pinned host fingerprint. Manual
+ * 9-digit-code pairing must always use this shape so stale `l=1` state cannot
+ * select the silent device-link protocol.
+ */
+export function normalPairingTarget(text: string): string {
+  const parsed = parsePairingUri(unwrapBootstrapUri(text));
+  const params = new URLSearchParams({
+    v: String(PAIRING_URI_VERSION),
+    e: encodeEndpoints(parsed.endpoints),
+    a: parsed.appId,
+    n: parsed.appName,
+    f: parsed.fp16,
+    ...(parsed.transport ? { t: parsed.transport } : {})
+  });
+  return `${PAIRING_URI_SCHEME}?${params.toString()}`;
+}
+
+/** Builds a link URI from a credential-free public target plus an opaque handoff id. */
+export function linkPairingTarget(text: string, handoffId: string): string {
+  const target = normalPairingTarget(text);
+  const params = new URLSearchParams(target.slice(PAIRING_URI_SCHEME.length).replace(/^\?/, ""));
+  params.set("c", handoffId);
+  params.set("l", "1");
+  return `${PAIRING_URI_SCHEME}?${params.toString()}`;
+}
+
 export function parsePairingUri(text: string): ParsedPairingUri {
   const params = paramsFrom(text.trim());
 
@@ -107,12 +135,15 @@ export function parsePairingUri(text: string): ParsedPairingUri {
 
   const endpoints = readEndpoints(params, version);
   const rawCode = params.get("c");
-  const code = rawCode ? normalizeCode(rawCode) : "";
+  const link = params.get("l") === "1";
+  // Opaque install handoff ids may coincidentally contain exactly nine digits.
+  // Normalizing before checking link mode would then strip the rest of the
+  // token and make otherwise valid handoffs fail nondeterministically.
+  const code = rawCode ? (link ? rawCode.trim() : normalizeCode(rawCode)) : "";
   const appId = params.get("a");
   const appName = params.get("n") ?? appId ?? "";
   const fp16 = (params.get("f") ?? "").toLowerCase();
   const transport = params.get("t") ?? undefined;
-  const link = params.get("l") === "1";
 
   if (endpoints.length === 0) {
     throw new Error(

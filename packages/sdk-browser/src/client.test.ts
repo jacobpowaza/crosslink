@@ -19,6 +19,7 @@ import {
   MemoryLogSink,
   RpcRouter,
   buildPairingUri,
+  parsePairingUri,
   type CrosslinkSession
 } from "@crosslink/core";
 import { CrosslinkClient, type PairingConfirmRequest } from "./client.js";
@@ -401,6 +402,57 @@ describe("device link", () => {
       webSocket: h.webSocket
     });
     await expect(client3.pairFromQr(uri)).rejects.toThrow();
+  });
+
+  it("allows the same persisted installation identity to retry briefly after pair_done", async () => {
+    const h = makeHarness();
+    await h.client.pairFromQr(h.pairingUri, ["notes.read"]);
+    const { uri } = beginLink(h, h.client.deviceId);
+    const installStorage = new MemorySecureStorage();
+    const first = new CrosslinkClient({
+      storage: installStorage,
+      deviceName: "Installed Icon",
+      webSocket: h.webSocket
+    });
+    await first.pairFromQr(uri);
+    const installedDeviceId = first.deviceId;
+
+    // Models a reload after the host committed trust but before the paired-app
+    // record became durable. The identity seed survived, so retry is safe.
+    installStorage.delete("crosslink.apps");
+    const retry = new CrosslinkClient({
+      storage: installStorage,
+      deviceName: "Installed Icon",
+      webSocket: h.webSocket
+    });
+    await retry.pairFromQr(uri);
+    expect(retry.deviceId).toBe(installedDeviceId);
+    expect(h.host.store.list().filter((d) => d.deviceId === installedDeviceId)).toHaveLength(1);
+
+    const thief = new CrosslinkClient({ storage: new MemorySecureStorage(), webSocket: h.webSocket });
+    await expect(thief.pairFromQr(uri)).rejects.toThrow();
+  });
+
+  it("does not skip normal verification when an untrusted URI adds l=1", async () => {
+    const h = makeHarness();
+    const normal = parsePairingUri(h.pairingUri);
+    const forgedLinkUri = buildPairingUri({
+      endpoints: normal.endpoints,
+      code: normal.code,
+      appId: normal.appId,
+      appName: normal.appName,
+      hostPubEdB64: bytesToBase64(h.host.identity.edPublicKey),
+      link: true
+    });
+    const confirm = vi.fn(() => true);
+    const client = new CrosslinkClient({
+      storage: new MemorySecureStorage(),
+      onConfirmPairing: confirm,
+      webSocket: h.webSocket
+    });
+
+    await expect(client.pairFromQr(forgedLinkUri)).rejects.toThrow(/mode does not match/);
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("cascades revoke: revoking the linking device also revokes what it linked", async () => {

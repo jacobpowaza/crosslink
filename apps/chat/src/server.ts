@@ -31,7 +31,11 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCrosslinkServer, type CrosslinkServerConfig } from "@crosslink/sdk-node";
+import {
+  buildInstallStartUrl,
+  createCrosslinkServer,
+  type CrosslinkServerConfig
+} from "@crosslink/sdk-node";
 import QRCode from "qrcode";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -218,13 +222,19 @@ async function serveStatic(res: http.ServerResponse, pathname: string): Promise<
   }
 }
 
-function pwaManifest(): unknown {
+function pwaManifest(installId?: string): unknown {
   const app = host.config.application;
   const cfg = app.pwaConfig ?? {};
+  const baseStartUrl = cfg.startUrl ?? "/mobile.html";
+  const validInstallId = installId && installId.length >= 24 && installId.length <= 256
+    ? installId
+    : undefined;
+  const startUrl = validInstallId ? buildInstallStartUrl(baseStartUrl, validInstallId) : baseStartUrl;
   return {
     name: app.name,
     short_name: cfg.shortName ?? app.name,
-    start_url: cfg.startUrl ?? "/mobile.html",
+    id: baseStartUrl,
+    start_url: startUrl,
     display: cfg.display ?? "standalone",
     theme_color: cfg.themeColor ?? "#0f172a",
     background_color: cfg.bgColor ?? "#0f172a",
@@ -367,9 +377,23 @@ async function serveBootstrap(
   req: http.IncomingMessage,
   res: http.ServerResponse
 ): Promise<void> {
-  const pathname = new URL(req.url ?? "/", "http://bootstrap.invalid").pathname;
+  const requestUrl = new URL(req.url ?? "/", "http://bootstrap.invalid");
+  const pathname = requestUrl.pathname;
   if (pathname === "/manifest.webmanifest") {
-    respond(res, 200, "application/manifest+json", JSON.stringify(pwaManifest()));
+    res.setHeader("cache-control", "no-store");
+    respond(
+      res,
+      200,
+      "application/manifest+json",
+      JSON.stringify(pwaManifest(requestUrl.searchParams.get("crosslink_install") ?? undefined))
+    );
+    return;
+  }
+  if (pathname.startsWith("/__crosslink/install/")) {
+    res.setHeader("cache-control", "no-store");
+    const handoffId = decodeURIComponent(pathname.slice("/__crosslink/install/".length));
+    const handoff = host.getInstallHandoff(handoffId);
+    json(res, handoff ? 200 : 404, handoff ?? { error: "install handoff unavailable or expired" });
     return;
   }
   // Anything without a file extension is the mobile page: an installed PWA that

@@ -19,6 +19,8 @@ import {
   type ConnectionState,
   type RpcClient,
   type PairedAppRecord,
+  linkPairingTarget,
+  normalPairingTarget,
   parsePairingUri,
   unwrapBootstrapUri,
   BOOTSTRAP_FRAGMENT_KEY
@@ -29,6 +31,46 @@ import {
   type OfflineConfig,
   type HostReachabilityResult
 } from "./offline-shell.js";
+import { LocalStorageSecureStorage } from "../storage.js";
+
+export const INSTALL_HANDOFF_QUERY_KEY = "crosslink_install";
+export const INSTALL_HANDOFF_COOKIE = "crosslink_install";
+export const INSTALL_HANDOFF_CONTEXT_COOKIE = "crosslink_install_context";
+
+interface InstallHandoffState {
+  handoffId: string;
+  targetUri: string;
+  expiresAt: number;
+  source: "cookie" | "url" | "legacy-link";
+}
+
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const prefix = `${name}=`;
+  for (const part of String(document.cookie ?? "").split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) return decodeSafely(trimmed.slice(prefix.length));
+  }
+  return null;
+}
+
+function cookieAttributes(maxAge: number): string {
+  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
+  return `; Path=/; Max-Age=${Math.max(0, Math.floor(maxAge))}; SameSite=Strict${secure}`;
+}
+
+function persistInstallHandoff(handoffId: string, targetUri: string, expiresAt: number): void {
+  if (typeof document === "undefined") return;
+  const maxAge = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+  document.cookie = `${INSTALL_HANDOFF_COOKIE}=${encodeURIComponent(handoffId)}${cookieAttributes(maxAge)}`;
+  document.cookie = `${INSTALL_HANDOFF_CONTEXT_COOKIE}=${encodeURIComponent(JSON.stringify({ targetUri, expiresAt }))}${cookieAttributes(maxAge)}`;
+}
+
+function clearInstallCookies(): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${INSTALL_HANDOFF_COOKIE}=${cookieAttributes(0)}`;
+  document.cookie = `${INSTALL_HANDOFF_CONTEXT_COOKIE}=${cookieAttributes(0)}`;
+}
 
 export type MobileBootstrapState =
   | "initializing"
@@ -357,6 +399,11 @@ export class CrosslinkMobileBootstrap {
     } else {
       const clientOpts: CrosslinkClientOptions = {
         ...options.clientOptions,
+        ...(options.clientOptions?.storage
+          ? {}
+          : typeof localStorage !== "undefined"
+            ? { storage: new LocalStorageSecureStorage(localStorage) }
+            : {}),
         deviceName: options.clientOptions?.deviceName ?? "mobile",
         onConfirmPairing: (req) => this.showSasConfirmation(req),
         onStateChange: (state, detail) => this.handleClientStateChange(state, detail)
@@ -397,22 +444,28 @@ export class CrosslinkMobileBootstrap {
       }
     }
 
-    // 4. Silent device-link continuation: a fresh, storage-isolated launch
-    // (e.g. an iOS home-screen install) has no paired-app record of its own,
-    // but the URL/pendingPair may carry a link-mode URI minted by the same
-    // pairing session when it nudged "add to home screen". Complete it
-    // automatically — no code entry, no SAS — before falling back to the
-    // normal first-run pairing screen.
-    if (this.client.listApps().length === 0 && this.targetPairingUri) {
+    // 4. A newly-installed iOS web app has its own local/IndexedDB context, but
+    // iOS 17.2+ copies first-party cookies at installation. Discover the
+    // short-lived opaque handoff from that boundary (URL is fallback only),
+    // then redeem it with this context's own persistent device identity.
+    const installHandoff = await this.discoverInstallHandoff();
+    if (this.client.listApps().length === 0 && installHandoff) {
       try {
-        const parsed = parsePairingUri(unwrapBootstrapUri(this.targetPairingUri));
-        if (parsed.link) {
-          await this.client.pairFromQr(this.targetPairingUri, this.options.capabilities);
-          if (typeof localStorage !== "undefined") localStorage.removeItem("crosslink.pendingPair");
-        }
-      } catch {
-        // Token expired/used/unreachable — fall through to the normal flow
-        // below, which shows the ordinary pairing screen as a fallback.
+        console.info("[crosslink/install] redeeming handoff", {
+          standalone: isStandalone(),
+          source: installHandoff.source
+        });
+        const uri = linkPairingTarget(installHandoff.targetUri, installHandoff.handoffId);
+        await this.client.pairFromQr(uri, this.options.capabilities);
+        this.targetPairingUri = installHandoff.targetUri;
+        this.clearInstallState();
+        console.info("[crosslink/install] linked device created; credentials persisted");
+      } catch (err) {
+        console.warn("[crosslink/install] handoff unavailable/expired; falling back to normal pairing", {
+          error: String((err as Error)?.message ?? err)
+        });
+        this.targetPairingUri = installHandoff.targetUri;
+        this.clearInstallState();
       }
     }
 
@@ -450,6 +503,101 @@ export class CrosslinkMobileBootstrap {
         this.targetPairingUri = localStorage.getItem("crosslink.pendingPair");
       } catch {}
     }
+  }
+
+  private async discoverInstallHandoff(): Promise<InstallHandoffState | null> {
+    let urlId = "";
+    if (typeof location !== "undefined") {
+      urlId = new URLSearchParams(location.search).get(INSTALL_HANDOFF_QUERY_KEY) ?? "";
+    }
+    const cookieId = readCookie(INSTALL_HANDOFF_COOKIE) ?? "";
+    const contextRaw = readCookie(INSTALL_HANDOFF_CONTEXT_COOKIE);
+    let targetUri = "";
+    let expiresAt = 0;
+    if (contextRaw) {
+      try {
+        const context = JSON.parse(contextRaw) as { targetUri?: unknown; expiresAt?: unknown };
+        targetUri = typeof context.targetUri === "string" ? normalPairingTarget(context.targetUri) : "";
+        expiresAt = typeof context.expiresAt === "number" ? context.expiresAt : 0;
+      } catch {}
+    }
+
+    const handoffId = cookieId || urlId;
+    if (handoffId && targetUri && expiresAt > Date.now()) {
+      return {
+        handoffId,
+        targetUri,
+        expiresAt,
+        source: cookieId ? "cookie" : "url"
+      };
+    }
+
+    // Cookie transfer is the modern iOS path. A dynamic manifest/start_url can
+    // still recover when cookies are unavailable by resolving the opaque id on
+    // the same origin; no permanent device credential is returned here.
+    if (urlId && typeof fetch === "function") {
+      try {
+        const response = await fetch(`/__crosslink/install/${encodeURIComponent(urlId)}`, {
+          credentials: "same-origin",
+          cache: "no-store"
+        });
+        if (response.ok) {
+          const recovered = await response.json() as { uri?: unknown; expiresAt?: unknown };
+          if (typeof recovered.uri === "string" && typeof recovered.expiresAt === "number") {
+            return {
+              handoffId: urlId,
+              targetUri: normalPairingTarget(recovered.uri),
+              expiresAt: recovered.expiresAt,
+              source: "url"
+            };
+          }
+        }
+      } catch {}
+    }
+
+    if (handoffId || contextRaw) {
+      if (targetUri) this.targetPairingUri = targetUri;
+      this.clearInstallState();
+    }
+
+    // Backward-compatible recovery of old fragment installs. It is consumed
+    // automatically only when it is a syntactically valid link URI; manual
+    // pairing below is always given the stripped normal target.
+    if (this.targetPairingUri) {
+      try {
+        const parsed = parsePairingUri(unwrapBootstrapUri(this.targetPairingUri));
+        if (parsed.link && parsed.code) {
+          return {
+            handoffId: parsed.code,
+            targetUri: normalPairingTarget(this.targetPairingUri),
+            expiresAt: Number.MAX_SAFE_INTEGER,
+            source: "legacy-link"
+          };
+        }
+      } catch {}
+    }
+    return null;
+  }
+
+  private clearInstallState(): void {
+    clearInstallCookies();
+    if (typeof localStorage !== "undefined") localStorage.removeItem("crosslink.pendingPair");
+    if (typeof location === "undefined" || typeof history === "undefined") return;
+    try {
+      const clean = new URL(location.href);
+      clean.searchParams.delete(INSTALL_HANDOFF_QUERY_KEY);
+      const hashParams = new URLSearchParams(clean.hash.replace(/^#/, ""));
+      const pair = hashParams.get(BOOTSTRAP_FRAGMENT_KEY);
+      if (pair) {
+        try {
+          if (parsePairingUri(unwrapBootstrapUri(decodeSafely(pair))).link) {
+            hashParams.delete(BOOTSTRAP_FRAGMENT_KEY);
+          }
+        } catch {}
+      }
+      clean.hash = hashParams.toString() ? `#${hashParams.toString()}` : "";
+      history.replaceState(history.state, "", `${clean.pathname}${clean.search}${clean.hash}`);
+    } catch {}
   }
 
   private getEffectiveAppId(): string {
@@ -490,24 +638,42 @@ export class CrosslinkMobileBootstrap {
     }
   }
 
-  /**
-   * Mints a device-link continuation URI and stamps it into `location.hash`
-   * so that if the user follows the nudge and taps "Add to Home Screen", the
-   * icon iOS creates carries it as its launch URL. A fresh standalone launch
-   * of that icon has empty (storage-isolated) local data, but reads this
-   * fragment and completes the link silently — see `start()` step 4.
-   *
-   * Best-effort: on failure the nudge screen still lets the user continue in
-   * the browser and pair again from there later.
-   */
+  /** Prepares the cookie-first Safari -> standalone install boundary. */
   private async prepareDeviceLinkHandoff(): Promise<void> {
     if (isStandalone() || typeof location === "undefined") return;
     try {
-      const { uri } = await this.client.createDeviceLink();
-      location.hash = `${BOOTSTRAP_FRAGMENT_KEY}=${encodeURIComponent(uri)}`;
-      try { localStorage.setItem("crosslink.pendingPair", uri); } catch {}
-    } catch {
-      /* the user can still install-then-re-pair manually */
+      const { handoffId, uri, expiresAt } = await this.client.createDeviceLink();
+      const targetUri = normalPairingTarget(uri);
+      this.targetPairingUri = targetUri;
+      persistInstallHandoff(handoffId, targetUri, expiresAt);
+
+      // Give the install operation a unique manifest URL. Servers that support
+      // Crosslink's dynamic manifest fallback copy only this opaque id into
+      // start_url; the cookie remains the primary iOS handoff mechanism.
+      const manifest = document.querySelector?.('link[rel="manifest"]') as HTMLLinkElement | null;
+      if (manifest?.href) {
+        const manifestUrl = new URL(manifest.href, location.href);
+        manifestUrl.searchParams.set(INSTALL_HANDOFF_QUERY_KEY, handoffId);
+        manifestUrl.searchParams.set("v", String(expiresAt));
+        manifest.href = manifestUrl.toString();
+      }
+
+      if (typeof history !== "undefined") {
+        const launch = new URL(location.href);
+        launch.searchParams.set(INSTALL_HANDOFF_QUERY_KEY, handoffId);
+        launch.hash = "";
+        history.replaceState(history.state, "", `${launch.pathname}${launch.search}`);
+      }
+      console.info("[crosslink/install] handoff prepared", {
+        currentPath: location.pathname,
+        manifestPath: manifest?.href ? new URL(manifest.href).pathname : null,
+        launchHasHandoff: true,
+        expiresAt
+      });
+    } catch (err) {
+      console.warn("[crosslink/install] could not prepare handoff", {
+        error: String((err as Error)?.message ?? err)
+      });
     }
   }
 
@@ -526,6 +692,7 @@ export class CrosslinkMobileBootstrap {
 
       // Check onboarding state
       if (!this.isOnboardingCompleted(app.appId)) {
+        await this.prepareDeviceLinkHandoff();
         this.transitionTo("add-to-home-screen");
       } else {
         this.transitionTo("authorized");
@@ -617,7 +784,6 @@ export class CrosslinkMobileBootstrap {
 
       case "add-to-home-screen": {
         const appId = this.getEffectiveAppId();
-        this.prepareDeviceLinkHandoff();
         const bootstrapEl = this.createAddToHomeScreen(() => {
           this.markOnboardingCompleted(appId);
           this.transitionTo("authorized");
@@ -674,7 +840,11 @@ export class CrosslinkMobileBootstrap {
         throw new Error("scan the QR code on your computer to start pairing");
       }
 
-      await this.client.pairWithCode(targetUri, code, this.options.capabilities ?? []);
+      const normalTarget = normalPairingTarget(targetUri);
+      this.targetPairingUri = normalTarget;
+      this.clearInstallState();
+      console.info("[crosslink/pairing] falling back to NORMAL pairing");
+      await this.client.pairWithCode(normalTarget, code, this.options.capabilities ?? []);
       if (typeof localStorage !== "undefined") localStorage.removeItem("crosslink.pendingPair");
 
       const apps = this.client.listApps();

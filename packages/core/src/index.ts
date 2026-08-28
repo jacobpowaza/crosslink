@@ -113,6 +113,8 @@ export {
 } from "./pairing/client.js";
 export {
   buildPairingUri,
+  normalPairingTarget,
+  linkPairingTarget,
   parsePairingUri,
   fingerprint16,
   normalizeCode,

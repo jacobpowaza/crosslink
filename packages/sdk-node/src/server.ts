@@ -506,6 +506,16 @@ export class CrosslinkServer extends EventEmitter {
     // No capability gate — any device the router still recognizes may ask.
     this.ensureRouter().expose(DEVICE_LINK_RPC_METHOD, (_input: unknown, ctx: RpcContext) => {
       const session = this.pairing.beginLinkSession(ctx.deviceId);
+      // Link handoffs use the same rendezvous machinery as normal codes. The
+      // previous implementation created only an in-memory host session, so a
+      // link URI advertising a signaling route could never resolve remotely.
+      if (this.signaling) {
+        this.signaling.openPairing({
+          psid: session.psid,
+          codeHash: sha256Hex(session.code),
+          ttlMs: Math.max(1_000, session.expiresAt - Date.now())
+        });
+      }
       const uri = buildPairingUri({
         endpoints: this.connectionEndpoints(),
         code: session.code,
@@ -514,7 +524,11 @@ export class CrosslinkServer extends EventEmitter {
         hostPubEdB64: bytesToBase64(this.identity.edPublicKey),
         link: true
       });
-      return { uri, expiresAt: session.expiresAt };
+      this.log.info("install.handoff-created", {
+        fromDeviceId: ctx.deviceId,
+        expiresAt: session.expiresAt
+      });
+      return { handoffId: session.code, uri, expiresAt: session.expiresAt };
     });
 
     // LAN listener (default on). Remote access maps a router port to this
@@ -846,6 +860,28 @@ export class CrosslinkServer extends EventEmitter {
     return this.remote?.diagnostics ?? null;
   }
 
+  /**
+   * Resolves public routing metadata for a live opaque install handoff. This is
+   * intended for a same-origin `/__crosslink/install/:id` bootstrap endpoint;
+   * possession of the id is still required to complete the signed pairing.
+   */
+  getInstallHandoff(handoffId: string): { uri: string; expiresAt: number } | null {
+    this.assertStarted();
+    const session = this.pairing.lookupLinkSession(handoffId);
+    if (!session) return null;
+    return {
+      uri: buildPairingUri({
+        endpoints: this.connectionEndpoints(),
+        code: session.code,
+        appId: this.config.application.id,
+        appName: this.config.application.name,
+        hostPubEdB64: bytesToBase64(this.identity.edPublicKey),
+        link: true
+      }),
+      expiresAt: session.expiresAt
+    };
+  }
+
   listDevices(): DeviceSummary[] {
     this.assertStarted();
     return this.deviceStore.list().map((d) => ({
@@ -882,14 +918,25 @@ export class CrosslinkServer extends EventEmitter {
 
   revokeDevice(deviceId: string): boolean {
     this.assertStarted();
+    const activeBefore = new Set(
+      this.deviceStore.list().filter((record) => record.revokedAt === undefined).map((record) => record.deviceId)
+    );
     const ok = this.deviceStore.revoke(deviceId, Date.now());
     if (ok) {
-      this.grants.drop(deviceId);
-      this.consent?.forget(deviceId);
-      for (const [session, dev] of this.sessions) {
-        if (dev === deviceId) session.close("device-revoked");
+      const revokedIds = new Set(
+        this.deviceStore
+          .list()
+          .filter((record) => activeBefore.has(record.deviceId) && record.revokedAt !== undefined)
+          .map((record) => record.deviceId)
+      );
+      for (const revokedId of revokedIds) {
+        this.grants.drop(revokedId);
+        this.consent?.forget(revokedId);
       }
-      this.log.warn("device.revoked", { deviceId });
+      for (const [session, dev] of this.sessions) {
+        if (revokedIds.has(dev)) session.close("device-revoked");
+      }
+      this.log.warn("device.revoked", { deviceId, cascadeCount: Math.max(0, revokedIds.size - 1) });
       super.emit("deviceRevoked", deviceId);
     }
     return ok;

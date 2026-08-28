@@ -15,12 +15,15 @@ import {
   CapabilityRegistry,
   DeviceGrants,
   DeviceIdentity,
+  DEVICE_LINK_RPC_METHOD,
   HostAcceptor,
   HostPairingManager,
   InMemoryHostDeviceStore,
   RpcRouter,
   buildPairingUri,
+  linkPairingTarget,
   parsePairingUri,
+  normalPairingTarget,
   type CrosslinkSession
 } from "@crosslink/core";
 import { bytesToBase64 } from "@crosslink/protocol";
@@ -196,6 +199,22 @@ function makeHost() {
     policy: { maxAutoGrantRisk: "low" }
   });
 
+  router.expose(DEVICE_LINK_RPC_METHOD, (_input, ctx) => {
+    const session = pairing.beginLinkSession(ctx.deviceId);
+    return {
+      handoffId: session.code,
+      expiresAt: session.expiresAt,
+      uri: buildPairingUri({
+        endpoints: [{ kind: "sig", url: SIGNALING_URL }],
+        code: session.code,
+        appId: APP_ID,
+        appName: "TestApp",
+        hostPubEdB64: bytesToBase64(identity.edPublicKey),
+        link: true
+      })
+    };
+  });
+
   const accept = (socket: MockSocket): void => {
     let active: CrosslinkSession | undefined;
     new HostAcceptor(
@@ -288,15 +307,17 @@ function makeHarness() {
     json: async () => ({ relay: { url: RELAY_URL, channel: "chan-1" } })
   })) as unknown as typeof fetch;
 
-  const client = new CrosslinkClient({
-    storage,
-    deviceName: "Test Browser",
-    onConfirmPairing: () => true,
-    requestTimeoutMs: 3000,
-    webSocket,
-    fetch: fakeFetch,
-    dialTimeoutMs: 100
-  });
+  const createClient = (clientStorage: MemorySecureStorage, deviceName = "Test Browser") =>
+    new CrosslinkClient({
+      storage: clientStorage,
+      deviceName,
+      onConfirmPairing: () => true,
+      requestTimeoutMs: 3000,
+      webSocket,
+      fetch: fakeFetch,
+      dialTimeoutMs: 100
+    });
+  const client = createClient(storage);
 
   const session = host.pairing.beginSession();
   const pairingUri = buildPairingUri({
@@ -311,21 +332,85 @@ function makeHarness() {
     host,
     client,
     storage,
+    createClient,
     pairingUri,
     setFailRelay: (val: boolean) => { failRelay = val; }
+  };
+}
+
+function installWebAppContext(
+  url: string,
+  standalone: boolean,
+  initialCookies: Map<string, string> = new Map()
+) {
+  const cookies = new Map(initialCookies);
+  let current = new URL(url);
+  const manifest = new MockElement("link") as MockElement & { href: string };
+  manifest.href = new URL("/manifest.webmanifest", current).toString();
+
+  Object.defineProperty(mockDoc, "cookie", {
+    configurable: true,
+    get: () => [...cookies].map(([k, v]) => `${k}=${v}`).join("; "),
+    set: (raw: string) => {
+      const [pair, ...attrs] = raw.split(";");
+      const separator = pair.indexOf("=");
+      const name = pair.slice(0, separator);
+      const value = pair.slice(separator + 1);
+      const expired = attrs.some((a) => /^\s*max-age=0\s*$/i.test(a));
+      if (expired) cookies.delete(name);
+      else cookies.set(name, value);
+    }
+  });
+  (mockDoc as any).querySelector = (selector: string) =>
+    selector === 'link[rel="manifest"]' ? manifest : null;
+
+  const locationMock = {
+    get href() { return current.toString(); },
+    set href(value: string) { current = new URL(value, current); },
+    get pathname() { return current.pathname; },
+    get search() { return current.search; },
+    get hash() { return current.hash; },
+    set hash(value: string) { current.hash = value; },
+    get protocol() { return current.protocol; }
+  };
+  const historyMock = {
+    state: null,
+    replaceState(_state: unknown, _title: string, next: string) {
+      current = new URL(next, current);
+    }
+  };
+  (mockWindow as any).matchMedia = () => ({ matches: standalone });
+  (mockWindow as any).navigator = { standalone };
+  (globalThis as any).location = locationMock;
+  (globalThis as any).history = historyMock;
+
+  return {
+    cookies,
+    manifest,
+    url: () => current.toString(),
+    cleanup() {
+      delete (globalThis as any).location;
+      delete (globalThis as any).history;
+      delete (mockWindow as any).matchMedia;
+      delete (mockWindow as any).navigator;
+      delete (mockDoc as any).querySelector;
+      delete (mockDoc as any).cookie;
+    }
   };
 }
 
 describe("Service Worker generation", () => {
   it("generates a valid service worker with default config", () => {
     const sw = generateServiceWorker();
-    expect(sw).toContain("const CACHE_NAME = \"crosslink-shell-v1.0.0\";");
+    expect(sw).toContain("const CACHE_NAME = \"crosslink-shell-v2.0.0\";");
     expect(sw).toContain("./mobile.html");
     expect(sw).toContain("./bundle.js");
     expect(sw).toContain("isSecuritySensitive");
     expect(sw).toContain("/api/");
     expect(sw).toContain("/pair");
     expect(sw).toContain("/challenge");
+    expect(sw).toContain('url.searchParams.has("crosslink_install")');
+    expect(sw).toContain('fetch(request, { cache: "no-store" })');
   });
 
   it("respects custom version and precache assets", () => {
@@ -569,6 +654,25 @@ describe("CrosslinkOfflineShell", () => {
 });
 
 describe("CrosslinkMobileBootstrap State Machine & Security Flow", () => {
+  it("uses persistent browser storage for its default client identity", () => {
+    storageMap.clear();
+    const first = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      autoRegisterServiceWorker: false,
+      onAuthorized: vi.fn()
+    });
+    const firstId = first.getClient().deviceId;
+    first.destroy();
+
+    const reloaded = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      autoRegisterServiceWorker: false,
+      onAuthorized: vi.fn()
+    });
+    expect(reloaded.getClient().deviceId).toBe(firstId);
+    reloaded.destroy();
+  });
+
   it("Scenario 1 & 13: Brand-new phone scans QR -> Pairing Screen appears, app is blocked from mounting", async () => {
     const { client, pairingUri } = makeHarness();
     const onAuthorized = vi.fn();
@@ -663,8 +767,196 @@ describe("CrosslinkMobileBootstrap State Machine & Security Flow", () => {
 
     expect(bootstrap.getState()).toBe("authorized");
     expect(onAuthorized).toHaveBeenCalledTimes(1);
+    expect(host.store.list()).toHaveLength(1);
 
     bootstrap.destroy();
+  });
+
+  it("transfers trust from Safari cookies into a storage-isolated standalone identity and survives reload", async () => {
+    const h = makeHarness();
+    const parsed = parsePairingUri(h.pairingUri);
+    await h.client.pairWithCode(h.pairingUri, parsed.code, ["test.ping"]);
+
+    const safari = installWebAppContext(
+      `https://app.test/mobile.html#pair=${encodeURIComponent(h.pairingUri)}`,
+      false
+    );
+    const safariBootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      client: h.client,
+      autoRegisterServiceWorker: false,
+      onAuthorized: vi.fn()
+    });
+    await safariBootstrap.start();
+
+    expect(safariBootstrap.getState()).toBe("add-to-home-screen");
+    expect(safari.cookies.has("crosslink_install")).toBe(true);
+    expect(safari.cookies.has("crosslink_install_context")).toBe(true);
+    expect(safari.manifest.href).toContain("crosslink_install=");
+    expect(safari.url()).toContain("crosslink_install=");
+    expect(safari.url()).not.toContain("%3Fl%3D1");
+    expect(h.host.store.list()).toHaveLength(1);
+
+    const copiedCookies = new Map(safari.cookies);
+    const installId = new URL(safari.url()).searchParams.get("crosslink_install");
+    expect(installId).toBeTruthy();
+    safariBootstrap.destroy();
+    safari.cleanup();
+
+    const standaloneStorage = new MemorySecureStorage();
+    const installedClient = h.createClient(standaloneStorage, "Home Screen PWA");
+    expect(installedClient.deviceId).not.toBe(h.client.deviceId);
+    expect(installedClient.listApps()).toHaveLength(0);
+
+    const standalone = installWebAppContext(
+      `https://app.test/mobile.html?crosslink_install=${encodeURIComponent(installId!)}`,
+      true,
+      copiedCookies
+    );
+    const onAuthorized = vi.fn();
+    const installedBootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      client: installedClient,
+      capabilities: ["test.ping"],
+      autoRegisterServiceWorker: false,
+      onAuthorized
+    });
+    await installedBootstrap.start();
+
+    expect(installedBootstrap.getState()).toBe("authorized");
+    expect(onAuthorized).toHaveBeenCalledTimes(1);
+    const installedRecord = h.host.store.get(installedClient.deviceId);
+    expect(installedRecord?.linkedFrom).toBe(h.client.deviceId);
+    expect(h.host.store.list()).toHaveLength(2);
+    expect(standalone.cookies.has("crosslink_install")).toBe(false);
+    installedBootstrap.destroy();
+    standalone.cleanup();
+
+    // A fresh JS/client instance in the same standalone storage must reconnect
+    // as B; it must not need or attempt a second handoff redemption.
+    const reloadedClient = h.createClient(standaloneStorage, "Home Screen PWA");
+    expect(reloadedClient.deviceId).toBe(installedClient.deviceId);
+    const reloadContext = installWebAppContext("https://app.test/mobile.html", true);
+    const reloadAuthorized = vi.fn();
+    const reloadBootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      client: reloadedClient,
+      autoRegisterServiceWorker: false,
+      onAuthorized: reloadAuthorized
+    });
+    await reloadBootstrap.start();
+    expect(reloadBootstrap.getState()).toBe("authorized");
+    expect(reloadAuthorized).toHaveBeenCalledTimes(1);
+    expect(h.host.store.list()).toHaveLength(2);
+
+    h.host.store.revoke(h.client.deviceId, Date.now());
+    await reloadBootstrap.forceReconnect();
+    expect(h.host.store.get(h.client.deviceId)?.revokedAt).toBeDefined();
+    expect(h.host.store.get(reloadedClient.deviceId)?.revokedAt).toBeDefined();
+    expect(reloadBootstrap.getState()).toBe("pairing-required");
+    reloadBootstrap.destroy();
+    reloadContext.cleanup();
+  });
+
+  it("recovers from the dedicated install start URL when no Safari cookie is available", async () => {
+    const h = makeHarness();
+    const parsed = parsePairingUri(h.pairingUri);
+    await h.client.pairWithCode(h.pairingUri, parsed.code, ["test.ping"]);
+    await h.client.connect(APP_ID);
+    const handoff = await h.client.createDeviceLink();
+
+    const standalone = installWebAppContext(
+      `https://app.test/mobile.html?crosslink_install=${encodeURIComponent(handoff.handoffId)}`,
+      true
+    );
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = vi.fn(async (input: string | URL | Request) => ({
+      ok: String(input).includes("/__crosslink/install/"),
+      json: async () => ({ uri: handoff.uri, expiresAt: handoff.expiresAt })
+    }));
+    const installedClient = h.createClient(new MemorySecureStorage(), "Start URL PWA");
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      client: installedClient,
+      autoRegisterServiceWorker: false,
+      onAuthorized: vi.fn()
+    });
+    await bootstrap.start();
+
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(h.host.store.get(installedClient.deviceId)?.linkedFrom).toBe(h.client.deviceId);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/__crosslink/install/"),
+      expect.objectContaining({ cache: "no-store", credentials: "same-origin" })
+    );
+
+    bootstrap.destroy();
+    standalone.cleanup();
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  it("clears an expired install handoff before fresh normal manual pairing", async () => {
+    const h = makeHarness();
+    const target = normalPairingTarget(h.pairingUri);
+    const invalidId = "expired-install-handoff-token-1234567890";
+    const cookies = new Map([
+      ["crosslink_install", encodeURIComponent(invalidId)],
+      ["crosslink_install_context", encodeURIComponent(JSON.stringify({
+        targetUri: target,
+        expiresAt: Date.now() - 1
+      }))]
+    ]);
+    const standalone = installWebAppContext(
+      `https://app.test/mobile.html?crosslink_install=${invalidId}`,
+      true,
+      cookies
+    );
+    const client = h.createClient(new MemorySecureStorage(), "Fallback PWA");
+    const originalFetch = globalThis.fetch;
+    (globalThis as any).fetch = vi.fn(async () => ({ ok: false }));
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      client,
+      autoRegisterServiceWorker: false,
+      onAuthorized: vi.fn()
+    });
+    await bootstrap.start();
+    expect(bootstrap.getState()).toBe("pairing-required");
+    expect(standalone.cookies.has("crosslink_install")).toBe(false);
+    expect(new URL(standalone.url()).searchParams.has("crosslink_install")).toBe(false);
+
+    const normalSession = h.host.pairing.beginSession();
+    await (bootstrap as any).handlePairingSubmit(normalSession.code.replace(/\D/g, ""));
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(h.host.store.get(client.deviceId)?.linkedFrom).toBeUndefined();
+
+    bootstrap.destroy();
+    standalone.cleanup();
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  it("does not let a stale l=1 URI poison manual 9-digit pairing", async () => {
+    const h = makeHarness();
+    const stale = linkPairingTarget(h.pairingUri, "stale-install-handoff-token-1234567890");
+    const standalone = installWebAppContext("https://app.test/mobile.html", true);
+    const client = h.createClient(new MemorySecureStorage(), "Stale Marker PWA");
+    const bootstrap = new CrosslinkMobileBootstrap({
+      appId: APP_ID,
+      client,
+      pairingUri: stale,
+      autoRegisterServiceWorker: false,
+      onAuthorized: vi.fn()
+    });
+    await bootstrap.start();
+    expect(bootstrap.getState()).toBe("pairing-required");
+
+    const normalSession = h.host.pairing.beginSession();
+    await (bootstrap as any).handlePairingSubmit(normalSession.code.replace(/\D/g, ""));
+    expect(bootstrap.getState()).toBe("authorized");
+    expect(h.host.store.get(client.deviceId)?.linkedFrom).toBeUndefined();
+
+    bootstrap.destroy();
+    standalone.cleanup();
   });
 
   it("Scenario 6 & 7: Returning trusted device in standalone mode -> skips pairing and onboarding", async () => {
@@ -813,4 +1105,3 @@ describe("CrosslinkMobileBootstrap State Machine & Security Flow", () => {
     expect(pingRes).toBe("pong");
   });
 });
-

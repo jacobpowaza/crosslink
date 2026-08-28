@@ -178,7 +178,21 @@
     </main>
   </div>
 
-  <script src="./bundle.js?v=2.1.0"></script>
+  <script>
+    // If an older Crosslink worker is already controlling this iPhone, reload
+    // once when the newly-installed worker claims the page so the install flow
+    // cannot continue running a stale bootstrap bundle from its old cache.
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        const key = "crosslink.sw-reloaded.v2";
+        if (!sessionStorage.getItem(key)) {
+          sessionStorage.setItem(key, "1");
+          location.reload();
+        }
+      });
+    }
+  </script>
+  <script src="./bundle.js?v=3.0.0"></script>
   <script>
     const $ = id => document.getElementById(id);
     const vibrate = p => { try { navigator.vibrate?.(p); } catch {} };

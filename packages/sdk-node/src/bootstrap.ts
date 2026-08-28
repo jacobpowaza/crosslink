@@ -28,6 +28,31 @@ export interface BootstrapOptions {
   url: string;
 }
 
+export const INSTALL_HANDOFF_QUERY_KEY = "crosslink_install";
+
+function assertOpaqueInstallId(handoffId: string): void {
+  if (handoffId.length < 24 || handoffId.length > 256) {
+    throw new Error("install handoff id must be a bounded high-entropy opaque value");
+  }
+}
+
+/** Unique manifest URL prevents an install session from receiving a cached peer's start_url. */
+export function buildInstallManifestUrl(manifestUrl: string, handoffId: string, expiresAt: number): string {
+  assertOpaqueInstallId(handoffId);
+  const url = new URL(manifestUrl, "https://crosslink.invalid");
+  url.searchParams.set(INSTALL_HANDOFF_QUERY_KEY, handoffId);
+  url.searchParams.set("v", String(expiresAt));
+  return /^https?:\/\//i.test(manifestUrl) ? url.toString() : `${url.pathname}${url.search}`;
+}
+
+/** Launch URL fallback contains only the opaque server-side handoff id. */
+export function buildInstallStartUrl(startUrl: string, handoffId: string): string {
+  assertOpaqueInstallId(handoffId);
+  const url = new URL(startUrl, "https://crosslink.invalid");
+  url.searchParams.set(INSTALL_HANDOFF_QUERY_KEY, handoffId);
+  return /^https?:\/\//i.test(startUrl) ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+}
+
 /** Builds the hosted bootstrap URL for a manifest URI. */
 export function buildBootstrapUri(manifestUri: string, url: string): string {
   const base = url.replace(/\/+$/, "");

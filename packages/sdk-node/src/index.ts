@@ -33,6 +33,9 @@ export type { RelayChannelInfo, RelayChannelOptions } from "./relay-host.js";
 export {
   buildBootstrapUri,
   assertBootstrapUrl,
+  buildInstallManifestUrl,
+  buildInstallStartUrl,
+  INSTALL_HANDOFF_QUERY_KEY,
 } from "./bootstrap.js";
 export type { BootstrapOptions } from "./bootstrap.js";
 // Unwrap/parse helpers are shared with the browser SDK; re-export for

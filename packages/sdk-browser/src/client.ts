@@ -5,6 +5,7 @@ import {
   createClaim,
   filterEndpoints,
   noopLogger,
+  normalPairingTarget,
   parsePairingUri,
   processChallenge,
   signClaim,
@@ -42,6 +43,8 @@ export interface PairingConfirmRequest {
   hostName: string;
   hostFp16: string;
   grantedCaps: string[];
+  /** Host-signed device-link session; framework callbacks auto-accept these. */
+  link: boolean;
 }
 
 export interface CrosslinkClientOptions {
@@ -276,9 +279,11 @@ export class CrosslinkClient {
         }
         return true;
       };
-      // Link-mode continuation is unattended by design: the human already
-      // confirmed the SAS once, when the linking device itself paired.
-      const confirm = uri.link ? () => true : this.options.onConfirmPairing ?? defaultConfirm;
+      // Only a host-signed link discriminator may suppress SAS. `l=1` in the
+      // URL is untrusted input and is checked against that signed challenge by
+      // processChallenge before this callback runs.
+      const normalConfirm = this.options.onConfirmPairing ?? defaultConfirm;
+      const confirm = (req: PairingConfirmRequest) => req.link ? true : normalConfirm(req);
 
       const { complete, record } = await processChallenge(
         this.identity,
@@ -519,8 +524,12 @@ export class CrosslinkClient {
    * which does not share IndexedDB/localStorage with the Safari tab that
    * paired). Requires an active, authorized connection.
    */
-  async createDeviceLink(): Promise<{ uri: string; expiresAt: number }> {
-    return this.rpc().call(DEVICE_LINK_RPC_METHOD) as Promise<{ uri: string; expiresAt: number }>;
+  async createDeviceLink(): Promise<{ handoffId: string; uri: string; expiresAt: number }> {
+    return this.rpc().call(DEVICE_LINK_RPC_METHOD) as Promise<{
+      handoffId: string;
+      uri: string;
+      expiresAt: number;
+    }>;
   }
 
   /** The live connection, exposed for adapters that upgrade the transport. */
@@ -541,7 +550,7 @@ export class CrosslinkClient {
    * Explicit pairing method taking a target host URI/manifest and entered 9-digit code.
    */
   async pairWithCode(targetUri: string, code: string, requestedCaps?: string[]): Promise<PairedAppRecord> {
-    return this.pairFromQr(targetUri, requestedCaps, code);
+    return this.pairFromQr(normalPairingTarget(targetUri), requestedCaps, code);
   }
 
   /** True when the identity seed is encrypted at rest. */

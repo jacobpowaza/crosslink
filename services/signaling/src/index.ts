@@ -107,6 +107,15 @@ function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
+function pairingSecret(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 9) return digits;
+  const opaque = raw.trim();
+  // Device-link handoffs are high-entropy opaque values. Bound their shape so
+  // pair_resolve cannot be abused as an unbounded hashing endpoint.
+  return opaque.length >= 24 && opaque.length <= 256 ? opaque : null;
+}
+
 export function createSignalingServer(options: SignalingOptions = {}): Promise<SignalingServer> {
   return new Promise((resolve) => {
     const limits = {
@@ -336,8 +345,8 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
 
           case "pair_resolve": {
             const rawCode = typeof msg.code === "string" ? msg.code : "";
-            const normalizedCode = rawCode.replace(/\D/g, "");
-            const codeHash = String(normalizedCode.length === 9 ? sha256Hex(normalizedCode) : "");
+            const secret = pairingSecret(rawCode);
+            const codeHash = secret ? sha256Hex(secret) : "";
             const target = [...conns.values()].find(
               (c): c is HostConn =>
                 c.kind === "host" &&

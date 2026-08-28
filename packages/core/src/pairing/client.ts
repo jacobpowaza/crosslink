@@ -29,6 +29,8 @@ export interface ClientPairingConfirmRequest {
   hostName: string;
   hostFp16: string;
   grantedCaps: string[];
+  /** True only when the host signed that the resolved live session is a link handoff. */
+  link: boolean;
 }
 
 /** Builds the signed pair_claim frame for a fresh pairing attempt. */
@@ -91,6 +93,14 @@ export async function processChallenge(
   const hostPubXB64 = String(challenge.host_pub_x ?? "");
   const challengeNonce = String(challenge.nonce ?? "");
   const grantedCaps = Array.isArray(challenge.granted_caps) ? challenge.granted_caps.map(String) : [];
+  const hostConfirmedLink = challenge.link === true;
+
+  if (hostConfirmedLink !== (qr.link === true)) {
+    throw new CrosslinkError(
+      ErrorCodes.PAIRING_INVALID,
+      "pairing URI mode does not match the host session"
+    );
+  }
 
   const fp = fingerprintFromPublicKey(base64ToBytes(hostPubEdB64));
   if (!fp.startsWith(qr.fp16)) {
@@ -100,14 +110,19 @@ export async function processChallenge(
     );
   }
 
-  const transcript = pairingTranscriptBytes("challenge", [
+  const transcriptFields: unknown[] = [
     String(challenge.ps ?? ""),
     state.claimNonce,
     hostPubEdB64,
     hostPubXB64,
     challengeNonce,
     grantedCaps
-  ]);
+  ];
+  // Normal v1/v2 pairing keeps its established transcript for compatibility.
+  // Link mode appends a signed discriminator so `l=1` in an untrusted URL is
+  // never sufficient on its own to suppress SAS confirmation.
+  if (hostConfirmedLink) transcriptFields.push(true);
+  const transcript = pairingTranscriptBytes("challenge", transcriptFields);
   const sigOk = verifySignature(
     base64ToBytes(String(challenge.sig ?? "")),
     transcript,
@@ -130,7 +145,8 @@ export async function processChallenge(
     sas,
     hostName: qr.appName,
     hostFp16: qr.fp16,
-    grantedCaps
+    grantedCaps,
+    link: hostConfirmedLink
   });
   if (!approved) {
     throw new CrosslinkError(ErrorCodes.PAIRING_INVALID, "pairing cancelled by client user");

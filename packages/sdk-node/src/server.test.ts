@@ -30,6 +30,7 @@ import {
 } from "@crosslink/core";
 import { createCrosslinkServer, type CrosslinkServer } from "./server.js";
 import { MemorySecretStore } from "./keychain.js";
+import { buildInstallManifestUrl, buildInstallStartUrl } from "./bootstrap.js";
 
 const APP_ID = "com.example.host";
 
@@ -596,10 +597,14 @@ describe("device link (Add to Home Screen continuation)", () => {
 
     expect(record2.grantedCaps).toEqual(["notes.read"]);
     expect(record2.fingerprint).toBe(rec1.fingerprint);
+    const link2 = await connectDevice(server, clientIdentity2, record2);
+    expect(await link2.call("notes.list")).toEqual(["alpha"]);
 
     expect(server.revokeDevice(id1.deviceId)).toBe(true);
     const linked = server.listDevices().find((d) => d.deviceId === clientIdentity2.deviceId);
     expect(linked?.revokedAt).toBeDefined();
+    await vi.waitFor(() => expect(link2.currentState).toBe("revoked"), { timeout: 10000 });
+    expect(server.grantedCapabilities(clientIdentity2.deviceId)).toEqual([]);
   }, 15000);
 });
 
@@ -647,6 +652,19 @@ describe("logging", () => {
 });
 
 describe("hosted bootstrap", () => {
+  it("generates unique install metadata whose start URL carries only the opaque handoff id", () => {
+    const handoffId = "opaque-install-handoff-token-1234567890";
+    const manifestUrl = buildInstallManifestUrl("/manifest.webmanifest", handoffId, 123456789);
+    const startUrl = buildInstallStartUrl("/mobile.html", handoffId);
+
+    expect(manifestUrl).toBe(
+      `/manifest.webmanifest?crosslink_install=${encodeURIComponent(handoffId)}&v=123456789`
+    );
+    expect(startUrl).toBe(`/mobile.html?crosslink_install=${encodeURIComponent(handoffId)}`);
+    expect(startUrl).not.toContain("crosslink%3A%2F%2Fpair");
+    expect(startUrl).not.toContain("l=1");
+  });
+
   it("includes a bootstrapUri when pairing.bootstrapUrl is set", async () => {
     const server = await startServer({
       pairing: { autoApprove: true, bootstrapUrl: "https://my-pwa.netlify.app" },

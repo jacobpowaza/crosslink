@@ -113,6 +113,7 @@ export interface PairChallengeFrame {
   host_pub_x: string;
   nonce: string;
   granted_caps: string[];
+  link?: true;
   sig: string;
 }
 

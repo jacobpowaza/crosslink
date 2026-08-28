@@ -99,7 +99,17 @@ interface LiveSession extends PairingSessionState {
    * tagged `linkedFrom`, so revoking `fromDeviceId` cascades to it.
    */
   linkOf?: { fromDeviceId: string; caps: string[] };
+  /** Completed link identity allowed to retry briefly after a lost pair_done. */
+  completedLink?: {
+    deviceId: string;
+    pubEd: string;
+    pubX: string;
+    record: TrustedDeviceRecord;
+    retryUntil: number;
+  };
 }
+
+const LINK_REDEMPTION_RETRY_GRACE_MS = 60_000;
 
 /**
  * Compares two strings without an early exit.
@@ -172,6 +182,22 @@ export class HostPairingManager {
     return session;
   }
 
+  /** Returns a live install handoff without exposing its parent/device state. */
+  lookupLinkSession(handoffId: string): PairingSessionState | null {
+    const psid = this.resolveCode(handoffId);
+    if (!psid) return null;
+    const session = this.sessions.get(psid);
+    if (!session?.linkOf) return null;
+    const parent = this.options.store.get(session.linkOf.fromDeviceId);
+    if (!parent || parent.revokedAt !== undefined) return null;
+    return {
+      psid: session.psid,
+      code: session.code,
+      expiresAt: session.expiresAt,
+      used: session.used
+    };
+  }
+
   /**
    * Maps a raw user-entered code to a live session id, or null.
    *
@@ -188,7 +214,11 @@ export class HostPairingManager {
     for (const [psid, session] of this.sessions) {
       const codeMatches = timingSafeEqualStrings(session.code, wanted) ||
         timingSafeEqualStrings(session.code, trimmed);
-      if (codeMatches && !session.used && session.expiresAt > now && found === null) {
+      const retryableLink =
+        session.linkOf !== undefined &&
+        session.completedLink !== undefined &&
+        session.completedLink.retryUntil > now;
+      if (codeMatches && (!session.used || retryableLink) && session.expiresAt > now && found === null) {
         found = psid;
       }
     }
@@ -248,7 +278,7 @@ export class HostPairingManager {
     }
     const psid = String(claim.ps ?? "");
     const live = this.sessions.get(psid);
-    if (!live || live.used || live.expiresAt <= Date.now()) {
+    if (!live || live.expiresAt <= Date.now()) {
       throw new CrosslinkError(ErrorCodes.PAIRING_EXPIRED, "pairing session unknown or expired");
     }
     if (live.pending) {
@@ -264,6 +294,28 @@ export class HostPairingManager {
 
     if (!pubEdB64 || !pubXB64 || !nonce || !devId) {
       throw new CrosslinkError(ErrorCodes.INVALID_MESSAGE, "missing claim fields");
+    }
+
+    const retryingCompletedLink = live.used && live.completedLink !== undefined;
+    if (live.used && !retryingCompletedLink) {
+      throw new CrosslinkError(ErrorCodes.PAIRING_EXPIRED, "pairing session already used");
+    }
+    if (retryingCompletedLink) {
+      const completed = live.completedLink!;
+      const existing = this.options.store.get(completed.deviceId);
+      const parent = live.linkOf && this.options.store.get(live.linkOf.fromDeviceId);
+      if (
+        completed.retryUntil <= Date.now() ||
+        devId !== completed.deviceId ||
+        pubEdB64 !== completed.pubEd ||
+        pubXB64 !== completed.pubX ||
+        !existing ||
+        existing.revokedAt !== undefined ||
+        !parent ||
+        parent.revokedAt !== undefined
+      ) {
+        throw new CrosslinkError(ErrorCodes.PAIRING_EXPIRED, "install handoff already consumed");
+      }
     }
     const pubEdBytes = base64ToBytes(pubEdB64);
 
@@ -281,7 +333,13 @@ export class HostPairingManager {
     }
 
     let grantedCaps: string[];
-    if (live.linkOf) {
+    if (retryingCompletedLink) {
+      grantedCaps = [...live.completedLink!.record.caps];
+    } else if (live.linkOf) {
+      const parent = this.options.store.get(live.linkOf.fromDeviceId);
+      if (!parent || parent.revokedAt !== undefined) {
+        throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "linking device is no longer trusted");
+      }
       // Silent continuation of an already-trusted device: no policy prompt,
       // no human approval — just narrow to whatever the new device asked for.
       const requestedSet = capsReq ? new Set(capsReq) : null;
@@ -326,16 +384,18 @@ export class HostPairingManager {
       grantedCaps
     };
 
+    const challengeFields: unknown[] = [
+      psid,
+      nonce,
+      bytesToBase64(this.options.identity.edPublicKey),
+      bytesToBase64(this.options.identity.xPublicKey),
+      challengeNonce,
+      grantedCaps
+    ];
+    if (live.linkOf) challengeFields.push(true);
     const sig = bytesToBase64(
       this.options.identity.sign(
-        pairingTranscriptBytes("challenge", [
-          psid,
-          nonce,
-          bytesToBase64(this.options.identity.edPublicKey),
-          bytesToBase64(this.options.identity.xPublicKey),
-          challengeNonce,
-          grantedCaps
-        ])
+        pairingTranscriptBytes("challenge", challengeFields)
       )
     );
 
@@ -347,6 +407,7 @@ export class HostPairingManager {
       host_pub_x: bytesToBase64(this.options.identity.xPublicKey),
       nonce: challengeNonce,
       granted_caps: grantedCaps,
+      ...(live.linkOf ? { link: true } : {}),
       sig
     });
   }
@@ -373,7 +434,7 @@ export class HostPairingManager {
   private processComplete(complete: Record<string, unknown>): TrustedDeviceRecord {
     const psid = String(complete.ps ?? "");
     const live = this.sessions.get(psid);
-    if (!live || !live.pending || live.used || live.expiresAt <= Date.now()) {
+    if (!live || !live.pending || live.expiresAt <= Date.now()) {
       throw new CrosslinkError(ErrorCodes.PAIRING_EXPIRED, "no pending pairing for this session");
     }
     const pending = live.pending;
@@ -397,8 +458,13 @@ export class HostPairingManager {
       throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "completion signature invalid");
     }
 
+    const retryingCompletedLink = live.used && live.completedLink !== undefined;
     live.used = true;
     delete live.pending;
+
+    if (retryingCompletedLink) {
+      return live.completedLink!.record;
+    }
 
     const record: TrustedDeviceRecord = {
       deviceId: deviceIdFromPublicKey(base64ToBytes(pending.claimPubEd)),
@@ -410,6 +476,15 @@ export class HostPairingManager {
       ...(live.linkOf ? { linkedFrom: live.linkOf.fromDeviceId } : {})
     };
     this.options.store.upsert(record);
+    if (live.linkOf) {
+      live.completedLink = {
+        deviceId: record.deviceId,
+        pubEd: record.pubEd,
+        pubX: record.pubX,
+        record,
+        retryUntil: Math.min(live.expiresAt, Date.now() + LINK_REDEMPTION_RETRY_GRACE_MS)
+      };
+    }
     this.options.grants.drop(record.deviceId);
     this.options.grants.grant(record.deviceId, record.caps, {
       expiresAt: this.permissions.grantExpiryFrom(record.addedAt)

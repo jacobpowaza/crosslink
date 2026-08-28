@@ -106,6 +106,39 @@ describe("signaling service", () => {
     clientWs.close();
   });
 
+  it("resolves a high-entropy opaque install handoff", async () => {
+    const hostWs = new WebSocket(base);
+    await new Promise((r) => hostWs.once("open", r));
+    hostWs.send(JSON.stringify({
+      op: "host_hello",
+      app: {
+        appId: "com.test.install",
+        name: "Install Test",
+        fingerprint: "e".repeat(64),
+        pubEdB64: "aGVsbG8",
+        pubXB64: "aGVsbG8y",
+        versions: ["1.0"]
+      }
+    }));
+    await until(hostWs, "host_ok");
+
+    const handoffId = "opaque-install-handoff-token-1234567890";
+    hostWs.send(JSON.stringify({
+      op: "pair_open",
+      psid: "install-psid",
+      code_hash: sha256Hex(handoffId),
+      ttl_ms: 5000
+    }));
+
+    const clientWs = new WebSocket(base);
+    await new Promise((r) => clientWs.once("open", r));
+    clientWs.send(JSON.stringify({ op: "pair_resolve", code: handoffId }));
+    expect(await until(clientWs, "pair_found")).toMatchObject({ psid: "install-psid" });
+
+    hostWs.close();
+    clientWs.close();
+  });
+
   it("rejects oversized blobs", async () => {
     const hostWs = new WebSocket(base);
     await new Promise((r) => hostWs.once("open", r));

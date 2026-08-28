@@ -17,7 +17,7 @@ export interface ServiceWorkerConfig {
 }
 
 export const DEFAULT_SERVICE_WORKER_CONFIG: ServiceWorkerConfig = {
-  version: "1.0.0",
+  version: "2.0.0",
   precacheAssets: [
     "./mobile.html",
     "./bundle.js",
@@ -50,6 +50,7 @@ const NEVER_CACHE_PATTERNS = [
   "/verify-pair",
   "/challenge",
   "/session",
+  "/__crosslink/install/",
   "/revoke",
   "/events"
 ];
@@ -100,6 +101,14 @@ self.addEventListener("fetch", (event) => {
 
   // Never cache auth or API calls
   if (isSecuritySensitive(url)) {
+    return;
+  }
+
+  // Install-specific manifests and bootstrap navigations carry only an opaque
+  // handoff id, but serving a cached response for another install would still
+  // lose or cross-wire the handoff. Always go to the network for them.
+  if (url.searchParams.has("crosslink_install")) {
+    event.respondWith(fetch(request, { cache: "no-store" }));
     return;
   }
 
