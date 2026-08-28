@@ -43,8 +43,8 @@ export class SignalingPeer {
     const peer = new SignalingPeer(ws);
     try {
       await openWithTimeout(ws, timeoutMs);
-    } catch {
-      throw new Error("cannot reach signaling");
+    } catch (err) {
+      throw new Error(`cannot reach signaling: ${String((err as Error)?.message ?? err)}`, { cause: err });
     }
     return peer;
   }

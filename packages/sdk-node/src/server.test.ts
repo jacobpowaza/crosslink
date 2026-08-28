@@ -14,6 +14,7 @@ import { ErrorCodes, bytesToBase64 } from "@crosslink/protocol";
 import {
   ClientLink,
   DeviceIdentity,
+  DEVICE_LINK_RPC_METHOD,
   MemoryLogSink,
   buildPairingUri,
   createClaim,
@@ -103,7 +104,7 @@ async function pairDevice(
   const session = pairing.beginSession();
   const parsed = parsePairingUri(
     buildPairingUri({
-      signalingUrl: "https://signal.test",
+      endpoints: [{ kind: "sig", url: "https://signal.test" }],
       code: session.code,
       appId: APP_ID,
       appName: "Host Under Test",
@@ -547,6 +548,61 @@ describe("device management", () => {
   });
 });
 
+describe("device link (Add to Home Screen continuation)", () => {
+  it("mints a link URI over RPC, completes it with inherited caps, and cascades revoke", async () => {
+    const server = await startServer({
+      pairing: { autoApprove: true },
+      networkMode: "lan-and-relay",
+      signalingUrl: "https://signal.crosslink.app",
+      relayUrl: "https://relay.crosslink.app",
+      lan: { enabled: false }
+    });
+    const { identity: id1, record: rec1 } = await pairDevice(server, ["notes.read"]);
+    const link1 = await connectDevice(server, id1, rec1);
+
+    const { uri } = (await link1.call(DEVICE_LINK_RPC_METHOD)) as { uri: string; expiresAt: number };
+    const parsed = parsePairingUri(uri);
+    expect(parsed.link).toBe(true);
+
+    const pairing = (server as unknown as { pairing: import("@crosslink/core").HostPairingManager })
+      .pairing;
+    const psid = pairing.resolveCode(parsed.code);
+    if (!psid) throw new Error("link code did not resolve");
+
+    const clientIdentity2 = DeviceIdentity.create();
+    const { claim, state } = createClaim(clientIdentity2, parsed, "Installed Icon");
+    signClaim(clientIdentity2, claim, psid);
+    const challenge = await new Promise<Record<string, unknown>>((resolve) => {
+      void pairing.handleClaim(claim, (f) => resolve(f as Record<string, unknown>));
+    });
+    if (challenge.kind === "pair_error") {
+      throw Object.assign(new Error("link refused"), { detail: challenge.error });
+    }
+
+    const { complete, record: record2 } = await processChallenge(
+      clientIdentity2,
+      parsed,
+      state,
+      challenge,
+      () => true
+    );
+    await new Promise<void>((resolve, reject) => {
+      try {
+        pairing.handleComplete(complete, () => resolve());
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    expect(record2.grantedCaps).toEqual(["notes.read"]);
+    expect(record2.fingerprint).toBe(rec1.fingerprint);
+
+    expect(server.revokeDevice(id1.deviceId)).toBe(true);
+    const linked = server.listDevices().find((d) => d.deviceId === clientIdentity2.deviceId);
+    expect(linked?.revokedAt).toBeDefined();
+  }, 15000);
+});
+
 describe("logging", () => {
   it("records the host lifecycle under stable event ids", async () => {
     const sink = new MemoryLogSink();
@@ -594,6 +650,7 @@ describe("hosted bootstrap", () => {
   it("includes a bootstrapUri when pairing.bootstrapUrl is set", async () => {
     const server = await startServer({
       pairing: { autoApprove: true, bootstrapUrl: "https://my-pwa.netlify.app" },
+      networkMode: "lan-and-relay",
       signalingUrl: "https://signal.crosslink.app",
       relayUrl: "https://relay.crosslink.app",
       lan: { enabled: false },
@@ -611,6 +668,7 @@ describe("hosted bootstrap", () => {
 
   it("falls back to a crosslink:// QR when no bootstrapUrl is set", async () => {
     const server = await startServer({
+      networkMode: "lan-and-relay",
       signalingUrl: "https://signal.crosslink.app",
       relayUrl: "https://relay.crosslink.app",
       lan: { enabled: false },
@@ -707,6 +765,7 @@ describe("networkMode", () => {
 describe("security", () => {
   it("enforces maxActivePairingSessions limit", async () => {
     const server = await startServer({
+      networkMode: "lan-and-relay",
       security: { maxActivePairingSessions: 2 },
       signalingUrl: "https://signal.crosslink.app",
       lan: { enabled: false },
@@ -720,6 +779,7 @@ describe("security", () => {
 
   it("cleans up expired sessions before checking limits", async () => {
     const server = await startServer({
+      networkMode: "lan-and-relay",
       security: { maxActivePairingSessions: 1 },
       pairing: { ttlMs: 1 }, // 1ms TTL — expires immediately
       signalingUrl: "https://signal.crosslink.app",
@@ -736,6 +796,7 @@ describe("security", () => {
 
   it("enforces pairingRateLimitMs globally and per IP", async () => {
     const server = await startServer({
+      networkMode: "lan-and-relay",
       security: { pairingRateLimitMs: 100 },
       signalingUrl: "https://signal.crosslink.app",
       lan: { enabled: false },

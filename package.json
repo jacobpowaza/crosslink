@@ -26,26 +26,19 @@
     "demo:notes": "node examples/notes-host/src/cli.ts",
     "demo:pwa": "npm run serve -w @crosslink/demo-pwa",
     "demo:chat": "npm run dev -w @crosslink/demo-chat",
-    "demo:todo-local": "node examples/todo-host/src/cli.ts --local",
-    "demo:todo-relay": "node examples/todo-host/src/cli.ts",
+    "demo:todo": "node examples/todo-host/src/cli.ts",
+    "demo:todo:remote": "node examples/todo-host/src/cli.ts --remote",
     "demo:todo-client": "npm run dev -w @crosslink/example-todo-client",
     "demo:webrtc": "node examples/webrtc-upgrade/src/host.ts",
     "demo:webrtc-client": "npm run serve -w @crosslink/example-webrtc-upgrade",
-    "tunnel": "node scripts/dev-tunnel.mjs",
-    "demo:echo:tunnel": "node scripts/run-with-tunnel.mjs echo",
-    "demo:notes:tunnel": "node scripts/run-with-tunnel.mjs notes",
-    "demo:todo:tunnel": "node scripts/run-with-tunnel.mjs todo",
-    "demo:chat:tunnel": "node scripts/run-with-tunnel.mjs chat",
-    "demo:chat:cf": "CROSSLINK_TUNNEL=cloudflared npm run dev -w @crosslink/demo-chat",
-    "demo:webrtc:tunnel": "node scripts/run-with-tunnel.mjs webrtc"
+    "demo:echo:remote": "node examples/echo-host/src/cli.ts --remote",
+    "demo:chat:remote": "CROSSLINK_NETWORK_MODE=remote npm run dev -w @crosslink/demo-chat",
+    "check:remote": "node scripts/check-remote-access.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "concurrently": "^10.0.5",
     "typescript": "^5.6.3",
     "vitest": "^2.1.9"
-  },
-  "dependencies": {
-    "untun": "^0.2.2"
   }
 }

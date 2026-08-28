@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createSignalingServer, type SignalingServer } from "./index.js";
 import { createHash } from "node:crypto";
 import WebSocket from "ws";
@@ -118,6 +118,109 @@ describe("signaling service", () => {
     );
     const err = await until(hostWs, "error");
     expect(err.error).toMatchObject({ code: "payload_too_large" });
+    hostWs.close();
+  });
+});
+
+describe("signaling service limits", () => {
+  let signaling: SignalingServer;
+  let base: string;
+
+  afterEach(async () => {
+    await signaling.close();
+  });
+
+  it("rejects connections past the per-IP concurrent-connection cap", async () => {
+    signaling = await createSignalingServer({ port: 0, maxConnectionsPerIp: 2 });
+    base = `ws://127.0.0.1:${signaling.port}`;
+
+    const a = new WebSocket(base);
+    const b = new WebSocket(base);
+    await Promise.all([
+      new Promise((r) => a.once("open", r)),
+      new Promise((r) => b.once("open", r))
+    ]);
+
+    const c = new WebSocket(base);
+    const closeCode = await new Promise<number>((resolve) => {
+      c.once("close", (code) => resolve(code));
+      c.once("open", () => {
+        /* if it opens, wait for the close the server should still send */
+      });
+    });
+    expect(closeCode).toBe(4429);
+
+    a.close();
+    b.close();
+  });
+
+  it("frees a connection's per-IP slot once it closes", async () => {
+    signaling = await createSignalingServer({ port: 0, maxConnectionsPerIp: 1 });
+    base = `ws://127.0.0.1:${signaling.port}`;
+
+    const a = new WebSocket(base);
+    await new Promise((r) => a.once("open", r));
+    a.close();
+    await new Promise((r) => a.once("close", r));
+
+    // The slot must be released - a second connection from the same IP
+    // should now be allowed rather than permanently locked out.
+    const b = new WebSocket(base);
+    await new Promise((resolve, reject) => {
+      b.once("open", resolve);
+      b.once("close", (code) => reject(new Error(`unexpectedly rejected with ${code}`)));
+    });
+    b.close();
+  });
+
+  it("disconnects a connection after repeated rate-limit violations", async () => {
+    signaling = await createSignalingServer({
+      port: 0,
+      rateLimitViolationsBeforeClose: 1
+    });
+    base = `ws://127.0.0.1:${signaling.port}`;
+
+    const ws = new WebSocket(base);
+    await new Promise((r) => ws.once("open", r));
+
+    // Each `hb` message is cheap and legal; sending far more than the
+    // window allows should still eventually close the connection.
+    const closed = new Promise<number>((resolve) => ws.once("close", (code) => resolve(code)));
+    for (let i = 0; i < 400; i++) {
+      if (ws.readyState !== WebSocket.OPEN) break;
+      ws.send(JSON.stringify({ op: "hb" }));
+    }
+    const code = await closed;
+    expect(code).toBe(4429);
+  });
+
+  it("rejects pair_open past the per-host pairing-session cap", async () => {
+    signaling = await createSignalingServer({ port: 0, maxPairsPerHost: 2 });
+    base = `ws://127.0.0.1:${signaling.port}`;
+
+    const hostWs = new WebSocket(base);
+    await new Promise((r) => hostWs.once("open", r));
+    hostWs.send(
+      JSON.stringify({
+        op: "host_hello",
+        app: {
+          appId: "com.test.capped",
+          name: "Capped App",
+          fingerprint: "f".repeat(64),
+          pubEdB64: "aGVsbG8",
+          pubXB64: "aGVsbG8y",
+          versions: ["1.0"]
+        }
+      })
+    );
+    await until(hostWs, "host_ok");
+
+    hostWs.send(JSON.stringify({ op: "pair_open", psid: "p1", code_hash: sha256Hex("111111111"), ttl_ms: 5000 }));
+    hostWs.send(JSON.stringify({ op: "pair_open", psid: "p2", code_hash: sha256Hex("222222222"), ttl_ms: 5000 }));
+    hostWs.send(JSON.stringify({ op: "pair_open", psid: "p3", code_hash: sha256Hex("333333333"), ttl_ms: 5000 }));
+
+    const err = await until(hostWs, "error");
+    expect(err.error).toMatchObject({ code: "capacity_exceeded" });
     hostWs.close();
   });
 });

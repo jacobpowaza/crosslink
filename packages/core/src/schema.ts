@@ -18,7 +18,48 @@ export type MiniSchema =
 export type Validator = (value: unknown) => CrosslinkError | null;
 
 export function miniValidator(schema: MiniSchema): Validator {
+  assertKnownSchemaKeys(schema, "$");
   return (value) => check(schema, value, "$");
+}
+
+const KNOWN_KEYS: Record<string, readonly string[]> = {
+  string: ["type", "minLen", "maxLen", "pattern"],
+  number: ["type", "min", "max", "int"],
+  boolean: ["type"],
+  array: ["type", "items", "maxItems"],
+  object: ["type", "properties", "required"],
+  any: ["type"]
+};
+
+/**
+ * Rejects a schema containing keys this validator does not implement.
+ *
+ * A misspelled constraint — `maxLength` where the field is `maxLen` — otherwise
+ * validates nothing at all, silently, and the input it was meant to bound
+ * crosses the trust boundary unchecked. Failing at registration turns that into
+ * an error the developer sees once, rather than a hole nobody sees at all.
+ */
+function assertKnownSchemaKeys(schema: MiniSchema, path: string): void {
+  const known = KNOWN_KEYS[schema.type];
+  if (!known) {
+    throw new TypeError(`unknown schema type at ${path}: ${String((schema as { type: string }).type)}`);
+  }
+  for (const key of Object.keys(schema)) {
+    if (!known.includes(key)) {
+      throw new TypeError(
+        `unknown key "${key}" in ${schema.type} schema at ${path} ` +
+          `(expected one of: ${known.join(", ")})`
+      );
+    }
+  }
+  if (schema.type === "array" && schema.items) {
+    assertKnownSchemaKeys(schema.items, `${path}[]`);
+  }
+  if (schema.type === "object" && schema.properties) {
+    for (const [name, sub] of Object.entries(schema.properties)) {
+      assertKnownSchemaKeys(sub, `${path}.${name}`);
+    }
+  }
 }
 
 function check(schema: MiniSchema, value: unknown, path: string): CrosslinkError | null {

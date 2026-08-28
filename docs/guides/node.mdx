@@ -55,13 +55,18 @@ server.expose("db.query", async (args) => {
 });
 ```
 
-### Streaming method
+### Streaming progress
+
+A handler can emit progress chunks before returning its final result, via `emitProgress` on the RPC context:
 
 ```js
-server.expose("file.read", (args, { stream }) => {
-  const fileStream = fs.createReadStream(args.path);
-  fileStream.on("data", (chunk) => stream.write(chunk));
-  fileStream.on("end", () => stream.end());
+server.expose("file.read", async (args, { emitProgress }) => {
+  const chunks = [];
+  for await (const chunk of fs.createReadStream(args.path)) {
+    emitProgress({ bytes: chunk.length });
+    chunks.push(chunk);
+  }
+  return { content: Buffer.concat(chunks).toString("base64") };
 }, { capability: "file.read" });
 ```
 
@@ -81,36 +86,28 @@ setInterval(() => {
 ## Managing clients
 
 ```js
-// List connected clients
-const links = server.getLinks();
-console.log(`${links.length} clients connected`);
+// List paired devices
+const devices = server.listDevices();
+console.log(`${devices.length} devices paired`);
 
-// Disconnect a specific client
-server.disconnect(deviceId);
+// Revoke a specific device (kills its active session, blocks reconnection)
+server.revokeDevice(deviceId);
 
-// Disconnect all clients
-server.disconnectAll();
+// Revoke every paired device
+server.revokeAllDevices();
 ```
 
 ## Identity persistence
 
-The host identity is persisted automatically:
-
-```text
-.crosslink-data/
-└── com.example.myapp/
-    ├── identity.json    (or keytar/encrypted file)
-    └── paired-devices.json
-```
+The host identity is persisted automatically under `storageDir` (default `./.crosslink-data/<appId>`), in the strongest available secret store (OS keychain, Electron `safeStorage`, or an encrypted file), plus a paired-devices record. Pass `storageDir` in `createCrosslinkServer()` to override the location.
 
 ## Environment variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CROSSLINK_SIGNALING_URL` | `http://127.0.0.1:8081` | Signaling server URL |
-| `CROSSLINK_RELAY_URL` | `http://127.0.0.1:8082` | Relay server URL |
-| `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted file storage |
-| `CROSSLINK_STORAGE_DIR` | `.crosslink-data` | Storage directory |
+| `CROSSLINK_SIGNALING_URL` | _(none)_ | Signaling server URL, if not passed via `signalingUrl` |
+| `CROSSLINK_RELAY_URL` | _(none)_ | Relay server URL, if not passed via `relayUrl` |
+| `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted-file secret storage |
 
 ## Graceful shutdown
 
@@ -121,15 +118,25 @@ process.on("SIGTERM", async () => {
 });
 ```
 
-## Error handling
+## Handling server events
+
+`CrosslinkServer` extends Node's `EventEmitter`. Use `typedOn()` for the typed events it emits:
 
 ```js
-server.on("error", (err) => {
-  console.error("Server error:", err);
+server.typedOn("devicePaired", (record) => {
+  console.log("Paired:", record.deviceId);
 });
 
-server.on("clientError", (err) => {
-  console.error("Client error:", err);
+server.typedOn("deviceConnected", ({ deviceId, transport }) => {
+  console.log(`${deviceId} connected via ${transport}`);
+});
+
+server.typedOn("deviceDisconnected", ({ deviceId, transport }) => {
+  console.log(`${deviceId} disconnected`);
+});
+
+server.typedOn("deviceRevoked", (deviceId) => {
+  console.log(`${deviceId} revoked`);
 });
 ```
 

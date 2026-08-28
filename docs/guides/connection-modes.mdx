@@ -1,62 +1,108 @@
 ---
-title: "Connection Modes & Networking Setup"
-description: "How to configure and choose between Cloudflare Quick Tunnels, Public WAN IP, Local Wi-Fi, and ngrok."
+title: "Connection Modes"
+description: "The four network modes a Crosslink host can run in, what each one advertises, and when to use it."
 ---
 
-# Connection Modes & Networking Setup
+# Connection Modes
 
-Crosslink gives developers and users complete runtime control over how mobile devices connect to desktop applications. Using the **Settings Cog (⚙️)** on the pairing widget, you can switch connection modes on the fly.
+A Crosslink host decides how a phone can reach it. There is nothing to
+configure to make that work on the same Wi-Fi, and nothing to sign up for to
+make it work from another network: no ngrok token, no Cloudflare account, no
+port forwarding, no DNS, no public IP to look up.
 
----
+The mode is a host-side setting, because only the host can open a socket or ask
+a router for a port. It is not something the browser can switch.
 
-## 1. Connection Modes Compared
+```ts
+const server = createCrosslinkServer({
+  application: { id: "com.example.app", name: "My App", version: "1.0.0" },
+  networkMode: "auto",           // the default
+  lan: { enabled: true, bind: "all" }
+});
+```
 
-| Mode | Remote Access | Setup / Cost | Splash Screen | Best For |
-|---|---|---|---|---|
-| **Cloudflare Quick Tunnel** | ✅ Anywhere (Cellular / Remote Wi-Fi) | **$0 / Zero Accounts** | **No** (Direct Safari load) | Quick demoing, instant browser chat, zero-friction pairing |
-| **Public WAN IP (Open LAN)** | ✅ Anywhere | **$0 / Zero Accounts** | **No** | Permanent "Add to Home Screen" PWA installation |
-| **Local Wi-Fi Only** | ❌ Local LAN only | **$0 / Offline** | **No** | Air-gapped networks, office subnets, offline use |
-| **ngrok Tunnel** | ✅ Anywhere | Free or Paid Account | Optional | Custom domains, enterprise tunnels, reserved hostnames |
+## The four modes
 
----
+| Mode | What the host advertises | Use it when |
+|---|---|---|
+| `auto` *(default)* | Its own address on this network, plus any signaling/relay you configured | You want the thing to work with no decisions |
+| `local-only` | Its own address on this network, and nothing else | The host must never be reachable off the local network |
+| `lan-and-relay` | This network, plus a signaling/relay service | Phones may be on other networks and you run (or point at) a relay |
+| `remote` | This network, plus a public address with a confirmed router mapping | A phone on cellular or another Wi-Fi must reach the host directly |
 
-## 2. Setting Up Each Mode
+## What ends up in the QR
 
-### Option A: Cloudflare Quick Tunnel (Default for Instant Web)
-- **How it works:** Crosslink automatically provisions a zero-cost temporary HTTPS tunnel (`https://*.trycloudflare.com`) using `untun`/`cloudflared`.
-- **User experience:** The user scans the QR code with their mobile camera. Safari opens directly into the web app, skipping the "Add to Home Screen" prompt for immediate chatting.
-- **CLI usage:**
-  ```bash
-  npm run demo:chat:cf
-  # or
-  CROSSLINK_TUNNEL=cloudflared npm run demo:chat
-  ```
+The pairing QR carries a list of routes rather than a single URL, tagged by
+kind, in the order the client should try them:
 
-### Option B: Public WAN IP (Open LAN)
-- **How it works:** Crosslink automatically discovers your machine's external IP address via STUN / IP discovery (`api.ipify.org`).
-- **User experience:** The QR code encodes `http://<YOUR_PUBLIC_IP>:8100/mobile.html`.
-- **Why it matters:** Unlike ephemeral tunnels that change domains every restart, your public IP is stable. When added to the iOS Home Screen, the PWA remains permanently installed and accessible.
-- **Port Forwarding:** Ensure your router forwards the application port (e.g. `8100`) to your desktop machine, or use UPnP.
+```
+crosslink://pair?v=2
+  &e=lan~ws://192.168.1.83:54676,wan~ws://203.0.113.9:54676
+  &c=754524531
+  &a=com.crosslink.chat
+  &n=Crosslink+Chat
+  &f=110ed6212454f46f
+```
 
-### Option C: Local Network Only
-- **How it works:** Restricts traffic strictly to the local Wi-Fi subnet (`192.168.x.x` or `10.0.x.x`).
-- **User experience:** Disables all external relay pipes and public signaling brokers. Direct WebSocket connection between phone and computer.
-- **CLI usage:**
-  ```bash
-  CROSSLINK_LOCAL_ONLY=true npm run demo:chat
-  ```
+The client tries each in turn and uses the first that answers. That is why a
+scan works on the sofa and still works on cellular without you choosing
+anything.
 
-### Option D: ngrok Setup
-- **How it works:** Connects through your personal ngrok account with custom auth tokens and domains.
-- **CLI usage:**
-  ```bash
-  CROSSLINK_TUNNEL_PROVIDER=ngrok npm run tunnel
-  ```
+Two rules the host holds to, and which you can rely on:
 
----
+- **A private address is never advertised as a public one.** A `192.168.x.x`,
+  `10.x.x.x` or `172.16.x.x` address is only ever tagged `lan`. It is never
+  dressed up as a `wan` route.
+- **A route is only listed if it exists.** A `wan` endpoint appears only after
+  a router mapping actually succeeded. If `networkMode: "remote"` cannot produce
+  one, `getPairingCode()` throws with the reason instead of quietly handing back
+  a LAN-only QR.
 
-## 3. Switching Modes at Runtime
+## `auto`
 
-Users can click the **Settings Cog (⚙️)** in the top right of the pairing card at any time:
-1. Hovering over the **Info icon (ℹ️)** at the right of any option displays a tooltip detailing its technical requirements and a link to this guide.
-2. Clicking an option dynamically regenerates the QR code on screen in real-time.
+The default. The host listens on every interface and advertises that address.
+If you also passed `signalingUrl`/`relayUrl`, those are advertised too.
+
+Pairing runs over whichever route answers — including straight to the host,
+with no service in the middle at all.
+
+## `local-only`
+
+Same as `auto`, minus anything brokered: no signaling, no relay, no dev-time
+service discovery. The QR contains exactly one route, on this network.
+
+Use it when reaching the host from elsewhere would be a defect, not a feature.
+
+## `lan-and-relay`
+
+Adds a signaling and relay service, for phones that can reach neither the host's
+LAN address nor a public one. The relay forwards ciphertext; it cannot read or
+alter your data, and it is not a trust anchor.
+
+```bash
+npm run stack   # signaling on :8081, relay on :8082
+CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
+CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
+npm run demo:chat
+```
+
+See [Self-hosting](/guides/self-hosting) to run these somewhere durable.
+
+## `remote`
+
+Asks the router for an inbound port using NAT-PMP, PCP or UPnP — whichever the
+router speaks — and advertises the resulting public address as a `wan` route.
+
+This is the mode that makes a QR scanned at home keep working from a coffee
+shop. It also has real preconditions, which are covered in
+[Remote access](/guides/remote-access), including the case where your ISP puts
+you behind carrier-grade NAT and no amount of software can fix it.
+
+```bash
+npm run demo:chat:remote
+# or, in an app:
+#   networkMode: "remote"
+```
+
+`remote` implies `bind: "all"` — a mapping to a loopback-only listener would
+map nothing — and it fails loudly rather than falling back.

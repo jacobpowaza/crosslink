@@ -5,6 +5,7 @@
  * HostAcceptor over every transport (LAN websocket, relay channel), and the
  * RPC router into one object with an approachable surface.
  */
+import http from "node:http";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import QRCode from "qrcode";
@@ -14,11 +15,16 @@ import {
   CrosslinkSession,
   DeviceGrants,
   DeviceIdentity,
+  DEVICE_LINK_RPC_METHOD,
   HostAcceptor,
   HostPairingManager,
   RpcRouter,
   buildPairingUri,
+  isValidEndpointUrl,
+  toHttpUrl,
   noopLogger,
+  sortEndpoints,
+  toWebSocketUrl,
   type CapabilityDef,
   type ConsentPrompt,
   type CrosslinkTransport,
@@ -26,8 +32,10 @@ import {
   type Logger,
   type PairingApproval,
   type PairingApprovalRequest,
+  type PairingEndpoint,
   type PairingSessionState,
   type PermissionPolicy,
+  type RpcContext,
   type RpcHandler,
   type TrustedDeviceRecord,
 } from "@crosslink/core";
@@ -35,6 +43,7 @@ import { bytesToBase64, type Json } from "@crosslink/protocol";
 import { findCrosslinkDataDir, isLocalUrl, loadOrCreateDevTokens, resolveServiceUrls } from "@crosslink/dev-tokens";
 import {
   FileHostDeviceStore,
+  JsonStore,
   loadOrCreateIdentitySecurely,
 } from "./storage.js";
 import type { SecretStore } from "./keychain.js";
@@ -48,6 +57,8 @@ import {
   type ExposeTarget,
 } from "@crosslink/webrtc-adapter";
 import { advertiseMdns, type MdnsBrowser } from "./mdns.js";
+import { RemoteAccess, remoteUnavailableError } from "./remote-access.js";
+import type { NatMappingResult } from "@crosslink/nat-map";
 
 export interface OfflineConfig {
   title?: string;
@@ -86,6 +97,13 @@ export interface CrosslinkServerConfig {
   signalingUrl?: string;
   /** e.g. https://relay.example.com — enables connectivity behind NATs */
   relayUrl?: string;
+  /**
+   * Public URL of a tunnel the developer opted into (ngrok, Cloudflare, …).
+   * Crosslink never starts a tunnel on its own — a provider account is exactly
+   * the configuration this framework exists to avoid — but it will advertise
+   * one that is already running.
+   */
+  tunnelUrl?: string;
   lan?: {
     enabled?: boolean; // default true
     port?: number; // default ephemeral
@@ -95,6 +113,18 @@ export interface CrosslinkServerConfig {
      *  machine with more than one active network - set this (or
      *  CROSSLINK_LAN_HOST) to pin the address phones/tablets should use. */
     host?: string;
+    /**
+     * Serves the app's own HTTP on the same port as the Crosslink transport —
+     * typically the installable mobile page. Sharing the port means remote
+     * access needs only the one router mapping Crosslink already creates.
+     */
+    httpHandler?(req: http.IncomingMessage, res: http.ServerResponse): void | Promise<void>;
+    /**
+     * Extra browser origins allowed to open a WebSocket to this host, beyond
+     * the addresses it advertises itself. Needed only when your own UI is
+     * served from somewhere else — a Vite dev server, say.
+     */
+    allowedOrigins?: string[];
   };
   /**
    * WebRTC upgrade configuration. When set, the host will accept SDP offers
@@ -144,8 +174,34 @@ export interface CrosslinkServerConfig {
      */
     bootstrapUrl?: string;
   };
-  /** Connection mode preference. Controls which transports are enabled. */
-  networkMode?: "auto" | "local-only" | "lan-and-relay";
+  /**
+   * Which transports the host offers.
+   *
+   * - `auto`        LAN, plus whatever remote path is configured or discovered.
+   * - `local-only`  LAN only; no signaling, relay, tunnel or port mapping.
+   * - `lan-and-relay` LAN plus the configured relay/signaling services.
+   * - `remote`      LAN plus a route that works from outside this network.
+   *                 Startup fails loudly if no such route can be established,
+   *                 rather than handing out a QR that only works at home.
+   */
+  networkMode?: "auto" | "local-only" | "lan-and-relay" | "remote";
+  /**
+   * Direct inbound access from the internet, via a router port mapping
+   * negotiated with PCP, NAT-PMP or UPnP. This is the zero-infrastructure path
+   * to remote connectivity: no tunnel provider, no account, no hosted service.
+   * It cannot work behind carrier-grade NAT or on a router that forbids
+   * automatic mapping; `getRemoteDiagnostics()` says which case applies.
+   */
+  remote?: {
+    /** Default: on for `networkMode: "remote"`, off otherwise. */
+    enabled?: boolean;
+    /** Public port to request. Defaults to the LAN listener's port. */
+    externalPort?: number;
+    /** Mapping lease in seconds. Default 7200, renewed automatically. */
+    lifetimeSeconds?: number;
+    /** Set false to let the lease lapse instead of renewing it. */
+    autoRenew?: boolean;
+  };
   /** Security hardening options. */
   security?: {
     /** Maximum number of paired devices. Default unlimited. */
@@ -216,6 +272,8 @@ export interface PairingCodeInfo {
   psid: string;
   /** Hosted `https://…/#pair=<uri>` link for the iOS "Add to Home Screen" flow. */
   bootstrapUri?: string | null;
+  /** Routes advertised in this QR, in the order a client should try them. */
+  endpoints?: PairingEndpoint[];
 }
 
 /**
@@ -273,6 +331,10 @@ function isLocalAddress(ip: string): boolean {
 
 const sanitizeAppId = (id: string): string => id.replace(/[^a-zA-Z0-9._-]/g, "_");
 
+function isAddressInUse(err: unknown): boolean {
+  return (err as { code?: string })?.code === "EADDRINUSE";
+}
+
 export class CrosslinkServer extends EventEmitter {
   readonly config: CrosslinkServerConfig;
   readonly log: Logger;
@@ -287,6 +349,7 @@ export class CrosslinkServer extends EventEmitter {
   private pairing!: HostPairingManager;
 
   private lan?: LanListener;
+  private remote?: RemoteAccess;
   private mdnsBrowser?: MdnsBrowser;
   private signaling?: SignalingLink;
   private relay?: RelayChannel;
@@ -435,13 +498,74 @@ export class CrosslinkServer extends EventEmitter {
 
     this.ensureRouter().setConsentBroker(this.consent);
 
-    // LAN listener (default on)
+    // Framework-level method, exposed on every host regardless of app code:
+    // lets an already-trusted, connected device mint a single-use
+    // continuation token for itself, so it can silently re-establish trust
+    // from a fresh storage context (e.g. iOS "Add to Home Screen", which does
+    // not share IndexedDB/localStorage with the Safari tab that paired it).
+    // No capability gate — any device the router still recognizes may ask.
+    this.ensureRouter().expose(DEVICE_LINK_RPC_METHOD, (_input: unknown, ctx: RpcContext) => {
+      const session = this.pairing.beginLinkSession(ctx.deviceId);
+      const uri = buildPairingUri({
+        endpoints: this.connectionEndpoints(),
+        code: session.code,
+        appId: this.config.application.id,
+        appName: this.config.application.name,
+        hostPubEdB64: bytesToBase64(this.identity.edPublicKey),
+        link: true
+      });
+      return { uri, expiresAt: session.expiresAt };
+    });
+
+    // LAN listener (default on). Remote access maps a router port to this
+    // socket, so it must be bound on all interfaces — a mapping pointed at a
+    // loopback-only listener resolves and then refuses every connection.
+    const wantsRemote = this.remoteRequested();
     if (this.config.lan?.enabled !== false) {
-      this.lan = await startLanListener({
-        port: this.config.lan?.port ?? 0,
-        bind: this.config.lan?.bind ?? "loopback",
+      const lanOptions = {
+        bind: wantsRemote ? ("all" as const) : (this.config.lan?.bind ?? ("loopback" as const)),
         host: this.config.lan?.host,
-        onConnection: (t) => this.acceptTransport(t)
+        httpHandler: this.config.lan?.httpHandler,
+        // Every address this host advertises counts as its own origin. The
+        // bootstrap page may have been fetched over the public address while
+        // the socket the phone then opens is the LAN one; that is cross-origin
+        // by the letter of the rule and entirely legitimate.
+        allowedOrigins: () => [
+          ...this.connectionEndpoints().map((e) => toHttpUrl(e.url)),
+          ...(this.config.lan?.allowedOrigins ?? [])
+        ],
+        onConnection: (t: CrosslinkTransport) => this.acceptTransport(t)
+      };
+      const preferredPort = this.config.lan?.port ?? this.stableListenPort();
+      try {
+        this.lan = await startLanListener({ ...lanOptions, port: preferredPort });
+      } catch (err) {
+        // Another process holds the port we used last time. Starting anyway on
+        // an ephemeral port is better than refusing to run: paired phones fail
+        // over to another endpoint and pick the new one up. An explicitly
+        // configured port is a different matter — the developer asked for that
+        // one, so the conflict is theirs to resolve.
+        if (this.config.lan?.port !== undefined || !isAddressInUse(err)) throw err;
+        this.log.warn("server.lan-port-taken", { port: preferredPort });
+        this.lan = await startLanListener({ ...lanOptions, port: 0 });
+      }
+      this.rememberListenPort(this.lan.port);
+    } else if (wantsRemote) {
+      throw new Error(
+        "remote access needs the LAN listener: it is the socket the router maps a public port to. " +
+          "Remove `lan.enabled: false`, or reach devices through a relay instead."
+      );
+    }
+
+    // Router port mapping (PCP / NAT-PMP / UPnP), for direct internet reach.
+    if (wantsRemote && this.lan) {
+      this.remote = await RemoteAccess.open({
+        internalPort: this.lan.port,
+        externalPort: this.config.remote?.externalPort,
+        lifetimeSeconds: this.config.remote?.lifetimeSeconds,
+        autoRenew: this.config.remote?.autoRenew,
+        description: `Crosslink ${this.config.application.name}`,
+        logger: this.log
       });
     }
 
@@ -509,6 +633,10 @@ export class CrosslinkServer extends EventEmitter {
       this.mdnsBrowser = undefined;
     }
     for (const session of [...this.sessions.keys()]) session.close("server-stopping");
+    // Release the router mapping before the socket goes away, so a restart does
+    // not accumulate stale forwards pointing at a dead port.
+    await this.remote?.close();
+    this.remote = undefined;
     await this.lan?.close();
     this.started = false;
     this.log.info("server.stopped");
@@ -583,47 +711,36 @@ export class CrosslinkServer extends EventEmitter {
       });
     }
 
-    // Build the pairing URI and QR regardless of signaling state — the URI
-    // is needed for local (in-app) pairing and for tests.
-    // Crosslink requires $0 and fully local hosting — pairing uses the local
-    // stack service (npm run stack) or direct LAN connections. No framework
-    // default public URLs exist; everything runs on the user's machine.
-    const resolved = resolveServiceUrls({
-      signalingUrl: this.config.signalingUrl,
-      relayUrl: this.config.relayUrl,
-      signalingEnv: process.env.CROSSLINK_SIGNALING_URL,
-      relayEnv: process.env.CROSSLINK_RELAY_URL,
-    });
-    // When local stack is running, resolved provides localhost URLs.
-    // When no external services are configured (local-only mode), pairing
-    // must work through LAN/direct transport. Use the LAN endpoint URL
-    // (e.g., ws://192.168.1.83:port) so the mobile client can pair directly.
-    let pairingSignalingUrl =
-      this._signalingUrl || this.config.signalingUrl || resolved?.signalingUrl || "";
-
-    // For fully local pairing with no signaling/relay services configured,
-    // fall back to the LAN WebSocket endpoint so pairing works $0 locally.
-    if (!pairingSignalingUrl && this.lan) {
-      pairingSignalingUrl = this.lan.url().replace(/^http/, "ws");
+    // The QR advertises every route this host genuinely has, in preference
+    // order, and nothing it does not. Endpoint construction lives in one place
+    // (`connectionEndpoints`) so no demo, example or app can invent its own.
+    const endpoints = this.connectionEndpoints();
+    if (this.config.networkMode === "remote" && !this.hasRemoteEndpoint(endpoints)) {
+      throw remoteUnavailableError(
+        this.remote?.diagnostics ?? {
+          protocol: "none",
+          mapped: false,
+          internalPort: this.lan?.port ?? 0,
+          externalPort: this.lan?.port ?? 0,
+          reachable: false,
+          confidence: "none",
+          lifetimeSeconds: 0,
+          cgnat: false,
+          attempts: [],
+          message: "Remote access is not enabled and no relay or signaling service is configured."
+        }
+      );
     }
 
-    // Rewrite localhost URLs to the LAN/reachable address so the mobile
-    // client (scanning from a different device) can actually reach the
-    // signaling service. Without this, ws://127.0.0.1:8081/ws refers to the
-    // phone's own loopback, not the desktop hosting Crosslink.
-    pairingSignalingUrl = pairingSignalingUrl
-      .replace(/127\.0\.0\.1/g, (this.lan?.address ?? resolveLanHost()) || "localhost")
-      .replace(/localhost/g, (this.lan?.address ?? resolveLanHost()) || "localhost");
-
-    const signalingUrl = pairingSignalingUrl || "";
     const uri = buildPairingUri({
-      signalingUrl,
+      endpoints,
       code: session.code,
       appId: this.config.application.id,
       appName: this.config.application.name,
       hostPubEdB64: bytesToBase64(this.identity.edPublicKey)
     });
     info.uri = uri;
+    info.endpoints = endpoints;
 
     // When a hosted bootstrap page is configured, the QR is an https:// link
     // so scanning it with an iPhone opens Safari (a `crosslink://` scheme has
@@ -641,6 +758,92 @@ export class CrosslinkServer extends EventEmitter {
     this.liveCodes.set(session.psid, session);
     this.emit("pairingIssued", info);
     return info;
+  }
+
+  /* ------------------------------ endpoints -------------------------- */
+
+  /**
+   * Every route a client could use to reach this host right now, in the order
+   * a client should try them.
+   *
+   * This is the single source of truth for pairing endpoints. It never invents
+   * a route: a `wan` entry appears only when the router actually confirmed an
+   * inbound mapping, and a `lan` entry only when the LAN listener is bound to a
+   * real network interface. A loopback-only listener produces no endpoint at
+   * all, because `ws://127.0.0.1:…` on a phone means the phone itself.
+   */
+  connectionEndpoints(): PairingEndpoint[] {
+    const endpoints: PairingEndpoint[] = [];
+
+    if (this.lan) {
+      const address = this.lan.address ?? resolveLanHost(this.config.lan?.host);
+      // No address means the listener is on loopback only — reachable by this
+      // machine and nothing else, so there is nothing to advertise.
+      if (address) endpoints.push({ kind: "lan", url: `ws://${address}:${this.lan.port}` });
+    }
+
+    const wan = this.remote?.endpoint();
+    if (wan) endpoints.push(wan);
+
+    // Service URLs are advertised exactly as configured. Any address rewriting
+    // belongs to whoever deploys the service, not to the pairing payload.
+    if (this._signalingUrl && this.config.networkMode !== "local-only") {
+      endpoints.push({ kind: "sig", url: toWebSocketUrl(this._signalingUrl.replace(/\/$/, "")) });
+    }
+    if (this._relayUrl && this.config.networkMode !== "local-only") {
+      endpoints.push({ kind: "relay", url: toWebSocketUrl(this._relayUrl.replace(/\/$/, "")) });
+    }
+    if (this.config.tunnelUrl) {
+      endpoints.push({ kind: "tunnel", url: toWebSocketUrl(this.config.tunnelUrl.replace(/\/$/, "")) });
+    }
+
+    return sortEndpoints(endpoints.filter((e) => isValidEndpointUrl(e.url, e.kind)));
+  }
+
+  /** True when at least one advertised route works from outside this network. */
+  private hasRemoteEndpoint(endpoints: readonly PairingEndpoint[]): boolean {
+    return endpoints.some((e) => e.kind === "wan" || e.kind === "sig" || e.kind === "relay" || e.kind === "tunnel");
+  }
+
+  /**
+   * Port the LAN listener should ask for.
+   *
+   * The port outlives this process: it is baked into the endpoint every paired
+   * phone stored, and into the router mapping when remote access is on. An
+   * ephemeral port would change on every restart, silently invalidating every
+   * saved route and forcing a re-scan — precisely the thing Crosslink promises
+   * not to do. So the port is remembered and re-requested. Falling back to
+   * ephemeral when it is taken keeps startup working; a phone then recovers
+   * through whichever other endpoint still resolves.
+   */
+  private stableListenPort(): number {
+    const remembered = this.listenPortStore().load({ port: 0 }).port;
+    return Number.isInteger(remembered) && remembered > 1024 && remembered < 65536 ? remembered : 0;
+  }
+
+  private rememberListenPort(port: number): void {
+    const store = this.listenPortStore();
+    if (store.load({ port: 0 }).port === port) return;
+    store.save({ port });
+  }
+
+  private listenPortStore(): JsonStore<{ port: number }> {
+    return new JsonStore<{ port: number }>(path.join(this.storageDir, "listen-port.json"));
+  }
+
+  private remoteRequested(): boolean {
+    if (this.config.remote?.enabled !== undefined) return this.config.remote.enabled;
+    return this.config.networkMode === "remote";
+  }
+
+  /**
+   * What the router said, verbatim, for a diagnostics panel: which protocols
+   * were tried, what each one answered, the discovered public address, and
+   * whether the ISP is using carrier-grade NAT. Null when remote access was
+   * never attempted.
+   */
+  getRemoteDiagnostics(): NatMappingResult | null {
+    return this.remote?.diagnostics ?? null;
   }
 
   listDevices(): DeviceSummary[] {
@@ -739,17 +942,34 @@ export class CrosslinkServer extends EventEmitter {
    * of polling this.
    */
   getConnectivity(): ConnectivityStatus {
-    const lan = this.lan !== undefined;
+    const endpoints = this.connectionEndpoints();
+    const lan = endpoints.some((e) => e.kind === "lan");
     const relay = this.relay?.connected === true;
     const webrtc = this.webrtcExposed;
-    const reach: ConnectivityStatus["reach"] = relay ? "relayed" : lan ? "local-only" : "offline";
-    const message = relay
-      ? webrtc
+    const direct = this.remote?.reachable === true;
+    const reach: ConnectivityStatus["reach"] =
+      direct || relay ? "relayed" : lan ? "local-only" : "offline";
+
+    // The message is what a non-technical user reads, so it describes what they
+    // can do rather than which transport is up.
+    let message: string;
+    if (direct) {
+      message = relay
+        ? "Phones can reach you from anywhere, directly or through the relay."
+        : "Phones can reach you from anywhere — your router is forwarding a port to this app.";
+    } else if (relay) {
+      message = webrtc
         ? "Relayed; devices will upgrade to direct when possible."
-        : "Phones can reach you from anywhere."
-      : lan
-        ? "Reachable on your Wi-Fi; add signaling/relay to reach phones elsewhere."
-        : "No inbound path yet — paired phones can't reach you right now.";
+        : "Phones can reach you from anywhere through the relay.";
+    } else if (lan) {
+      const remote = this.remote?.diagnostics;
+      message = remote
+        ? `Reachable on your Wi-Fi only. ${remote.message}`
+        : "Reachable on your Wi-Fi. Turn on remote access to reach phones elsewhere.";
+    } else {
+      message = "No inbound path yet — paired phones can't reach you right now.";
+    }
+
     return {
       reach,
       lan,
@@ -989,6 +1209,12 @@ export class CrosslinkServer extends EventEmitter {
       }
     }
 
+    // Pairing is offered on transports a scanned QR can actually name — the
+    // LAN listener and the router-mapped public port. A relay channel carries
+    // only devices that already paired through the signaling rendezvous, so
+    // offering pairing there would add a second, redundant pairing path.
+    const offersPairing = transport.kind === "lan" || transport.kind === "memory";
+
     new HostAcceptor(
       transport,
       {
@@ -996,9 +1222,26 @@ export class CrosslinkServer extends EventEmitter {
         appId: this.config.application.id,
         lookupDevice: (id) => this.deviceStore.get(id),
         maxFrameBytes: undefined,
-        logger: this.log
+        logger: this.log,
+        ...(offersPairing
+          ? {
+              pairing: {
+                resolveCode: (code) => this.pairing.resolveCodeForDirectPairing(code),
+                describeApp: () => ({
+                  appId: this.config.application.id,
+                  name: this.config.application.name,
+                  fingerprint: this.identity.fingerprint,
+                  pubEdB64: bytesToBase64(this.identity.edPublicKey),
+                  pubXB64: bytesToBase64(this.identity.xPublicKey)
+                }),
+                handleClaim: (claim, reply) => this.pairing.handleClaim(claim, reply),
+                handleComplete: (complete, reply) => this.pairing.handleComplete(complete, reply)
+              }
+            }
+          : {})
       },
       {
+        onPaired: (record) => super.emit("devicePaired", record),
         onMessage: (msg, session) => this.router.handleMessage(session, msg),
         onSession: (session) => this.registerSession(session, transport.kind),
         onClose: (_err, deviceId, session) => {

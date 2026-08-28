@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, unlinkS
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { HostDeviceStore, TrustedDeviceRecord } from "@crosslink/core";
-import { DeviceIdentity, noopLogger } from "@crosslink/core";
+import { DeviceIdentity, cascadeRevokeLinked, noopLogger } from "@crosslink/core";
 import { openSecretStore, type SecretStore, type SecretStoreOptions } from "./keychain.js";
 
 /** Key under which the host identity seed lives in a SecretStore. */
@@ -163,6 +163,7 @@ export class FileHostDeviceStore implements HostDeviceStore {
     const rec = this.devices.get(deviceId);
     if (!rec || rec.revokedAt !== undefined) return false;
     rec.revokedAt = atMs;
+    cascadeRevokeLinked(this.devices.values(), deviceId, atMs);
     this.persist();
     return true;
   }

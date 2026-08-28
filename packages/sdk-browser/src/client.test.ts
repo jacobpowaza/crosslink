@@ -154,6 +154,8 @@ interface Harness {
   breakRelay(): void;
   fixRelay(): void;
   fetchCalls: string[];
+  /** wires another socket to the same mock host/signaling, for a second client */
+  webSocket: (url: string) => WsLike;
 }
 
 function makeHarness(
@@ -206,7 +208,7 @@ function makeHarness(
 
   const session = host.pairing.beginSession();
   const pairingUri = buildPairingUri({
-    signalingUrl: SIGNALING_URL,
+    endpoints: [{ kind: "sig", url: SIGNALING_URL }],
     code: session.code,
     appId: APP_ID,
     appName: "Notes",
@@ -225,7 +227,8 @@ function makeHarness(
     fixRelay: () => {
       relayBroken = false;
     },
-    fetchCalls
+    fetchCalls,
+    webSocket
   };
 }
 
@@ -313,16 +316,108 @@ describe("pairing", () => {
     expect(record.grantedCaps).toEqual(["notes.read"]);
   });
 
-  it("rejects a pairing URI with no signaling URL", async () => {
+  it("refuses to build a pairing URI with no usable endpoint", () => {
     const h = makeHarness();
-    const lanOnly = buildPairingUri({
-      signalingUrl: "",
-      code: "111 222 333",
+    expect(() =>
+      buildPairingUri({
+        endpoints: [],
+        code: "111 222 333",
+        appId: APP_ID,
+        appName: "Notes",
+        hostPubEdB64: bytesToBase64(h.host.identity.edPublicKey)
+      })
+    ).toThrow(/no reachable endpoint/);
+  });
+});
+
+describe("device link", () => {
+  // Models the iOS "Add to Home Screen" handoff: a device that's already
+  // paired mints a continuation URI for itself, and a second, otherwise
+  // unpaired client (standing in for the storage-isolated installed icon)
+  // completes it with no SAS prompt and no human-typed code.
+  function beginLink(h: Harness, fromDeviceId: string) {
+    const session = h.host.pairing.beginLinkSession(fromDeviceId);
+    const uri = buildPairingUri({
+      endpoints: [{ kind: "sig", url: SIGNALING_URL }],
+      code: session.code,
       appId: APP_ID,
       appName: "Notes",
-      hostPubEdB64: bytesToBase64(h.host.identity.edPublicKey)
+      hostPubEdB64: bytesToBase64(h.host.identity.edPublicKey),
+      link: true
     });
-    await expect(h.client.pairFromQr(lanOnly)).rejects.toThrow(/signaling/i);
+    return { session, uri };
+  }
+
+  it("completes silently and inherits the linking device's granted caps", async () => {
+    const h = makeHarness();
+    await h.client.pairFromQr(h.pairingUri, ["notes.read", "notes.write"]);
+
+    const { uri } = beginLink(h, h.client.deviceId);
+    const client2 = new CrosslinkClient({
+      storage: new MemorySecureStorage(),
+      deviceName: "Installed Icon",
+      onConfirmPairing: () => {
+        throw new Error("link-mode pairing must not prompt for SAS confirmation");
+      },
+      webSocket: h.webSocket
+    });
+
+    const record = await client2.pairFromQr(uri);
+    expect(record.appId).toBe(APP_ID);
+    expect(record.grantedCaps).toEqual(["notes.read", "notes.write"]);
+    expect(record.fingerprint).toBe(h.host.identity.fingerprint);
+    expect(client2.deviceId).not.toBe(h.client.deviceId);
+  });
+
+  it("narrows granted caps to what the new device actually requests", async () => {
+    const h = makeHarness();
+    await h.client.pairFromQr(h.pairingUri, ["notes.read", "notes.write"]);
+
+    const { uri } = beginLink(h, h.client.deviceId);
+    const client2 = new CrosslinkClient({
+      storage: new MemorySecureStorage(),
+      onConfirmPairing: () => true,
+      webSocket: h.webSocket
+    });
+    const record = await client2.pairFromQr(uri, ["notes.read"]);
+    expect(record.grantedCaps).toEqual(["notes.read"]);
+  });
+
+  it("is single-use: a second completion attempt fails", async () => {
+    const h = makeHarness();
+    await h.client.pairFromQr(h.pairingUri, ["notes.read"]);
+
+    const { uri } = beginLink(h, h.client.deviceId);
+    const client2 = new CrosslinkClient({
+      storage: new MemorySecureStorage(),
+      onConfirmPairing: () => true,
+      webSocket: h.webSocket
+    });
+    await client2.pairFromQr(uri);
+
+    const client3 = new CrosslinkClient({
+      storage: new MemorySecureStorage(),
+      onConfirmPairing: () => true,
+      webSocket: h.webSocket
+    });
+    await expect(client3.pairFromQr(uri)).rejects.toThrow();
+  });
+
+  it("cascades revoke: revoking the linking device also revokes what it linked", async () => {
+    const h = makeHarness();
+    await h.client.pairFromQr(h.pairingUri, ["notes.read"]);
+
+    const { uri } = beginLink(h, h.client.deviceId);
+    const client2 = new CrosslinkClient({
+      storage: new MemorySecureStorage(),
+      onConfirmPairing: () => true,
+      webSocket: h.webSocket
+    });
+    await client2.pairFromQr(uri);
+
+    h.host.store.revoke(h.client.deviceId, Date.now());
+
+    expect(h.host.store.get(client2.deviceId)?.revokedAt).toBeDefined();
   });
 });
 

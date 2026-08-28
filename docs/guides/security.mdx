@@ -5,7 +5,7 @@ description: "How Crosslink secures remote and local connections with zero-trust
 
 # Security & Encryption Architecture
 
-Crosslink is designed under a **zero-trust model**: even when traffic traverses third-party tunnels (like Cloudflare, localtunnel, or ngrok) or public relay brokers, **no intermediary server ever has access to plaintext data**.
+Crosslink is designed under a **zero-trust model**: with no services configured at all, a phone pairs and connects directly to the host over the address in the QR code -- no signaling service, no relay, no tunnel, no account. When a signaling service, relay, or a developer-configured tunnel (ngrok, Cloudflare, etc.) does sit in the path, **no intermediary server ever has access to plaintext data**.
 
 ---
 
@@ -21,7 +21,7 @@ Crosslink is designed under a **zero-trust model**: even when traffic traverses 
 
 Every desktop host generates a persistent Ed25519 identity key.
 - The 16-character hexadecimal fingerprint is embedded in the QR code:
-  `https://.../mobile.html?pair=crosslink://pair?...&f=9a4f2e1c7b8d30e5`
+  `crosslink://pair?v=2&e=<endpoints>&c=<code>&a=<appId>&n=<name>&f=9a4f2e1c7b8d30e5`
 - When the phone camera scans the QR code, the browser client **pins the host fingerprint**.
 - If a man-in-the-middle (MITM) attacker attempts to intercept the signaling or relay server, the handshake fails immediately before any RPC payload is sent.
 
@@ -31,8 +31,8 @@ Every desktop host generates a persistent Ed25519 identity key.
 
 To guarantee that the physical device scanning the screen is the one pairing:
 - During pairing, a 9-digit pairing code with a **120-second TTL** is generated.
-- A 3-digit human-readable **Short Authentication String (SAS)** is computed from the mutual handshake exchange.
-- The user visually confirms the 3 digits displayed on their phone screen match the desktop widget before granting capability permissions.
+- A 9-digit (three groups of three) human-readable **Short Authentication String (SAS)** is derived from both devices' Ed25519 identity public keys.
+- The user visually confirms the digits displayed on their phone screen match the desktop widget before granting capability permissions.
 
 ---
 
@@ -40,4 +40,4 @@ To guarantee that the physical device scanning the screen is the one pairing:
 
 Unlike raw sockets, mobile devices in Crosslink only receive access to explicitly declared capabilities (e.g. `chat.send`, `chat.read`, `notes.sync`).
 - Capabilities can be revoked individually at any time from the desktop.
-- When a device is revoked, its session keys and authentication tokens are immediately invalidated on both local and relayed connections.
+- When a device is revoked, its session keys are invalidated and reconnection is refused -- the device's Ed25519 key no longer proves anything, since revocation is checked on every handshake. There is no separate bearer session token to invalidate.

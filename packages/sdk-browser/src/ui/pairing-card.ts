@@ -4,10 +4,14 @@
  * Provides a standardized, brand-consistent 3-column pairing card:
  * [ App Logo & Blurb ] | [ Scan QR ] | [ Pairing Code Pills ]
  *
- * Includes a Settings Cog with 3 connection modes:
- *   1. Open LAN + Relay (Remote) with security info knob & hyperlink
- *   2. Local network only (for local Wi-Fi subnet only)
- *   3. ngrok setup (with setup tooltip/guide)
+ * The settings cog exposes the host's own `networkMode` values and nothing
+ * else. There is deliberately no tunnel-provider setup here: Crosslink needs no
+ * ngrok token, no Cloudflare account, and no port forwarding, so a UI that asks
+ * for them would be advertising configuration the framework does not require.
+ *
+ * The card also shows which routes the current QR actually advertises, because
+ * "remote" either produced a public endpoint or it did not — the widget never
+ * implies reachability the host has not confirmed.
  *
  * Fully customizable via options and CSS custom properties:
  *   --cl-bg, --cl-fg, --cl-muted, --cl-divider, --cl-pill, --cl-pill-text, --cl-radius
@@ -23,7 +27,17 @@ export interface PairingCardTheme {
   radius?: string;
 }
 
-export type NetworkMode = "local" | "ngrok" | "open-lan" | "cloudflare" | "local-only" | "open-lan-remote" | "open-lan-cloudflared";
+/**
+ * The host's network mode. These are the same four values `createCrosslinkServer`
+ * accepts, so what the user picks here can be handed straight back to the host.
+ */
+export type NetworkMode = "auto" | "local-only" | "lan-and-relay" | "remote";
+
+/** Endpoint kinds as advertised in a v2 pairing URI. */
+export interface PairingCardEndpoint {
+  kind: "lan" | "wan" | "sig" | "relay" | "tunnel";
+  url: string;
+}
 
 export interface PairingCardOptions {
   /** Target DOM container element or selector to mount into */
@@ -50,15 +64,13 @@ export interface PairingCardOptions {
   securityGuideUrl?: string;
   /** LAN only guide hyperlink */
   lanGuideUrl?: string;
-  /** ngrok guide hyperlink */
-  ngrokGuideUrl?: string;
-  /** Cloudflare guide hyperlink */
-  cloudflareGuideUrl?: string;
+  /** Remote-access guide hyperlink */
+  remoteGuideUrl?: string;
   /** Custom theme color overrides */
   theme?: PairingCardTheme;
   /** Endpoint URL to fetch paired device info. Default: /api/devices */
   devicesEndpoint?: string;
-  /** Endpoint URL to revoke device access. Default: /api/devices/revoke */
+  /** Endpoint URL to revoke device access. Default: /api/revoke */
   revokeEndpoint?: string;
   /** Whether to inject default CSS styles into document head. Default true */
   injectStyles?: boolean;
@@ -71,6 +83,10 @@ export interface PairingCardState {
   error?: string | null;
   loading?: boolean;
   networkMode?: NetworkMode;
+  /** Routes the current QR advertises, straight from `PairingCodeInfo.endpoints`. */
+  endpoints?: PairingCardEndpoint[] | null;
+  /** Host-side note about remote access, e.g. why no `wan` endpoint exists. */
+  remoteNote?: string | null;
 }
 
 const DEFAULT_CROSSLINK_SVG = `
@@ -106,6 +122,19 @@ const PAIRING_CARD_STYLES = `
 }
 .cl-pair-card * {
   box-sizing: border-box;
+}
+
+/* ── Route summary in the settings popover ──────────── */
+.cl-route-summary {
+  border-top: 1px solid var(--cl-divider);
+  margin-top: 6px;
+  padding: 8px 12px 4px;
+  color: var(--cl-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cl-route-summary p {
+  margin: 0 0 4px;
 }
 
 /* ── Cog Button ─────────────────────────────────────── */
@@ -548,12 +577,13 @@ export class PairingCard {
   private codePillsEl: HTMLElement;
   private hintEl: HTMLElement;
   private settingsPopover: HTMLElement;
+  private routeSummaryEl!: HTMLElement;
   private currentMode: NetworkMode;
   private expiryTimer: any = null;
 
   constructor(options: PairingCardOptions = {}) {
     this.options = options;
-    this.currentMode = options.networkMode || "local";
+    this.currentMode = normalizeNetworkMode(options.networkMode);
 
     if (options.injectStyles !== false) {
       injectPairingCardStyles();
@@ -668,12 +698,8 @@ export class PairingCard {
     }
   }
 
-  private normalizeMode(mode: string): "local" | "ngrok" | "open-lan" | "cloudflare" {
-    if (mode === "local" || mode === "local-only") return "local";
-    if (mode === "ngrok") return "ngrok";
-    if (mode === "open-lan" || mode === "open-lan-remote" || mode === "remote") return "open-lan";
-    if (mode === "cloudflare" || mode === "open-lan-cloudflared" || mode === "cloudflared") return "cloudflare";
-    return "local";
+  private normalizeMode(mode: string): NetworkMode {
+    return normalizeNetworkMode(mode);
   }
 
   private createSettingsPopover(): HTMLElement {
@@ -681,85 +707,89 @@ export class PairingCard {
     pop.className = "cl-settings-dropdown";
     pop.hidden = true;
 
-    const cfUrl = this.options.cloudflareGuideUrl || "https://crosslink.dev/docs/connection-modes#cloudflared";
-    const secUrl = this.options.securityGuideUrl || "https://crosslink.dev/docs/connection-modes#remote";
-    const lanUrl = this.options.lanGuideUrl || "https://crosslink.dev/docs/connection-modes#local";
-    const ngrokUrl = this.options.ngrokGuideUrl || "https://crosslink.dev/docs/connection-modes#ngrok";
+    const remoteUrl = this.options.remoteGuideUrl || "https://github.com/jacobpowaza/crosslink/blob/main/docs/guides/remote-access.mdx";
+    const secUrl = this.options.securityGuideUrl || "https://github.com/jacobpowaza/crosslink/blob/main/docs/security/overview.mdx";
+    const lanUrl = this.options.lanGuideUrl || "https://github.com/jacobpowaza/crosslink/blob/main/docs/guides/connection-modes.mdx";
     const norm = this.normalizeMode(this.currentMode);
 
     pop.innerHTML = `
       <div class="cl-dropdown-header">Connection Mode</div>
-      
-      <!-- Option 1: Local (Default) -->
+
+      <!-- Automatic (default) -->
       <label class="cl-dropdown-item">
         <div class="cl-dropdown-label">
-          <input type="radio" name="cl-net-mode" value="local" ${norm === "local" ? "checked" : ""}>
-          <span>Local</span>
+          <input type="radio" name="cl-net-mode" value="auto" ${norm === "auto" ? "checked" : ""}>
+          <span>Automatic</span>
         </div>
         <div class="cl-info-knob-wrap">
-          <button type="button" class="cl-info-knob" aria-label="Info">ℹ</button>
+          <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Direct peer connection on your local Wi-Fi or LAN subnet. Zero internet dependency.<br>
-            <strong>Security:</strong> Direct local link with XChaCha20-Poly1305 E2E encryption.
+            <strong>How it works:</strong> The QR carries every route this host genuinely has, and your phone picks the first one that answers &mdash; same Wi-Fi first, then any other route the host confirmed.<br>
+            <strong>Security:</strong> End-to-end encrypted with XChaCha20-Poly1305 whichever route wins.
             <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
       </label>
 
-      <!-- Option 2: ngrok -->
+      <!-- Same network only -->
       <label class="cl-dropdown-item">
         <div class="cl-dropdown-label">
-          <input type="radio" name="cl-net-mode" value="ngrok" ${norm === "ngrok" ? "checked" : ""}>
-          <span>ngrok</span>
+          <input type="radio" name="cl-net-mode" value="local-only" ${norm === "local-only" ? "checked" : ""}>
+          <span>Same network only</span>
         </div>
         <div class="cl-info-knob-wrap">
-          <button type="button" class="cl-info-knob" aria-label="Info">ℹ</button>
+          <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Routes traffic through your personal ngrok tunnel with custom auth tokens and domains.<br>
-            <strong>Security:</strong> TLS tunnel edge with Crosslink E2E ciphertext encryption.
-            <a href="${ngrokUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+            <strong>How it works:</strong> Direct connection on this Wi-Fi or LAN. Nothing leaves the local network and no service is involved at all.<br>
+            <strong>Security:</strong> Direct local link with XChaCha20-Poly1305 end-to-end encryption.
+            <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
       </label>
 
-      <!-- Option 3: Open Lan (Remote) -->
+      <!-- LAN + relay -->
       <label class="cl-dropdown-item">
         <div class="cl-dropdown-label">
-          <input type="radio" name="cl-net-mode" value="open-lan" ${norm === "open-lan" ? "checked" : ""}>
-          <span>Open Lan (Remote)</span>
+          <input type="radio" name="cl-net-mode" value="lan-and-relay" ${norm === "lan-and-relay" ? "checked" : ""}>
+          <span>Same network + relay</span>
         </div>
         <div class="cl-info-knob-wrap">
-          <button type="button" class="cl-info-knob" aria-label="Info">ℹ</button>
+          <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Uses your public WAN IP with automatic router port mapping (UPnP / NAT-PMP / PCP). If no mapping exists, falls back to LAN. Only displays a public QR after verifying reachability.<br>
-            <strong>Security:</strong> End-to-end encrypted (XChaCha20-Poly1305). Only ciphertext travels over public internet.
+            <strong>How it works:</strong> Adds a relay service so a phone on another network can still reach this host when a direct route is unavailable.<br>
+            <strong>Security:</strong> The relay forwards ciphertext only &mdash; it cannot read or alter your data.
             <a href="${secUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
       </label>
 
-      <!-- Option 4: Open Lan (Cloudflared) -->
+      <!-- Remote -->
       <label class="cl-dropdown-item">
         <div class="cl-dropdown-label">
-          <input type="radio" name="cl-net-mode" value="cloudflare" ${norm === "cloudflare" ? "checked" : ""}>
-          <span>Open Lan (Cloudflared)</span>
+          <input type="radio" name="cl-net-mode" value="remote" ${norm === "remote" ? "checked" : ""}>
+          <span>Reachable from anywhere</span>
         </div>
         <div class="cl-info-knob-wrap">
-          <button type="button" class="cl-info-knob" aria-label="Info">ℹ</button>
+          <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> 0-cost Cloudflare Quick Tunnel. Skips "Add to Home Screen" — scan and chat immediately in mobile browser.<br>
-            <strong>Security:</strong> Cloudflare TLS edge termination with Crosslink E2E ciphertext security.
-            <a href="${cfUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
+            <strong>How it works:</strong> Asks your router for an inbound port using UPnP, NAT-PMP or PCP. Nothing to configure &mdash; but if the router refuses, or your ISP uses carrier-grade NAT, this mode reports that plainly instead of quietly falling back.<br>
+            <strong>Security:</strong> Only ciphertext crosses the public internet; the host still authenticates every device.
+            <a href="${remoteUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
       </label>
     `;
 
+    // Built as an element rather than markup because `update()` rewrites it.
+    this.routeSummaryEl = document.createElement("div");
+    this.routeSummaryEl.className = "cl-route-summary";
+    this.routeSummaryEl.hidden = true;
+    pop.appendChild(this.routeSummaryEl);
+
     const radios = pop.querySelectorAll('input[name="cl-net-mode"]');
     radios.forEach((r: any) => {
       r.addEventListener("change", (e: any) => {
-        const mode = e.target.value as NetworkMode;
-        this.setNetworkMode(mode);
+        this.setNetworkMode(normalizeNetworkMode(e.target.value));
       });
     });
 
@@ -790,11 +820,11 @@ export class PairingCard {
   }
 
   setNetworkMode(mode: NetworkMode): void {
-    this.currentMode = mode;
     const norm = this.normalizeMode(mode);
+    this.currentMode = norm;
     try {
       if (typeof localStorage !== "undefined") {
-        localStorage.setItem("crosslink.networkMode", mode);
+        localStorage.setItem("crosslink.networkMode", norm);
       }
     } catch {}
 
@@ -802,7 +832,7 @@ export class PairingCard {
     if (radio) radio.checked = true;
 
     if (this.options.onNetworkModeChange) {
-      this.options.onNetworkModeChange(mode);
+      this.options.onNetworkModeChange(norm);
     }
   }
 
@@ -826,7 +856,11 @@ export class PairingCard {
     }
 
     if (state.networkMode) {
-      this.setNetworkMode(state.networkMode);
+      this.setNetworkMode(normalizeNetworkMode(state.networkMode));
+    }
+
+    if (state.endpoints !== undefined || state.remoteNote !== undefined) {
+      this.renderRoutes(state.endpoints ?? null, state.remoteNote ?? null);
     }
 
     if (state.error) {
@@ -951,6 +985,41 @@ export class PairingCard {
     this.expiryTimer = setInterval(updateCountdown, 1000);
   }
 
+  /**
+   * Shows the routes the current QR advertises.
+   *
+   * Naming them is the honest version of a connectivity indicator: if the host
+   * asked for remote access and the router said no, there is simply no `wan`
+   * route in the list, and the note says why.
+   */
+  private renderRoutes(endpoints: PairingCardEndpoint[] | null, note: string | null): void {
+    const el = this.routeSummaryEl;
+
+    const labels: Record<PairingCardEndpoint["kind"], string> = {
+      lan: "this network",
+      wan: "the internet, directly",
+      sig: "a signaling service",
+      relay: "a relay service",
+      tunnel: "a provider tunnel"
+    };
+
+    el.replaceChildren();
+    const lines: string[] = [];
+    if (endpoints && endpoints.length > 0) {
+      lines.push(`Reachable over: ${endpoints.map((e) => labels[e.kind] ?? e.kind).join(", ")}.`);
+    } else if (endpoints) {
+      lines.push("This host currently advertises no route.");
+    }
+    if (note) lines.push(note);
+
+    el.hidden = lines.length === 0;
+    for (const line of lines) {
+      const p = document.createElement("p");
+      p.textContent = line;
+      el.appendChild(p);
+    }
+  }
+
   private async handleRefresh() {
     if (this.options.onRefresh) {
       this.refreshBtn.disabled = true;
@@ -1069,19 +1138,14 @@ export class PairingCard {
             revokeBtn.disabled = true;
             revokeBtn.textContent = "Revoking...";
             try {
-              const revokeEndpoint = this.options.revokeEndpoint || "/api/devices/revoke";
+              const revokeEndpoint = this.options.revokeEndpoint || "/api/revoke";
               const res = await fetch(revokeEndpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ deviceId: dev.deviceId })
               });
               if (!res.ok) throw new Error("Revoke failed");
-              revokeBtn.textContent = "Access Revoked";
-              revokeBtn.style.background = "#166534";
-              revokeBtn.disabled = true;
-              setTimeout(() => {
-                this.openConnectedDevicesModal();
-              }, 800);
+              card.remove();
             } catch (e: any) {
               revokeBtn.textContent = "Failed";
               revokeBtn.style.background = "#7f1d1d";
@@ -1117,6 +1181,37 @@ export class PairingCard {
   destroy(): void {
     clearInterval(this.expiryTimer);
     this.element.remove();
+  }
+}
+
+/**
+ * Maps whatever a host reports into one of the four supported modes.
+ *
+ * Older builds persisted names like `open-lan-remote` and `ngrok` in
+ * localStorage; those are folded onto their nearest current meaning so an
+ * upgraded app does not start with a broken selection.
+ */
+export function normalizeNetworkMode(mode: string | undefined | null): NetworkMode {
+  switch (mode) {
+    case "local":
+    case "local-only":
+      return "local-only";
+    case "lan-and-relay":
+    case "relay":
+      return "lan-and-relay";
+    case "remote":
+    case "open-lan":
+    case "open-lan-remote":
+      return "remote";
+    // ngrok/cloudflared were provider tunnels, which are now an opt-in host
+    // configuration rather than a mode the user picks in the browser.
+    case "ngrok":
+    case "cloudflare":
+    case "cloudflared":
+    case "open-lan-cloudflared":
+      return "auto";
+    default:
+      return "auto";
   }
 }
 

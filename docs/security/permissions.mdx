@@ -136,11 +136,11 @@ After the TTL expires, the capability is no longer granted.
 Hosts can revoke capabilities at runtime:
 
 ```js
-// Revoke a specific capability from a device
-server.revokeCapability(deviceId, "app.admin");
+// Narrow a device's granted capabilities (drops "app.admin")
+server.setDeviceCaps(deviceId, ["app.control", "app.read"]);
 
-// Revoke all capabilities from a device
-server.revoke(deviceId);
+// Revoke a device entirely (kills its active session, blocks reconnection)
+server.revokeDevice(deviceId);
 ```
 
 ## Security notes

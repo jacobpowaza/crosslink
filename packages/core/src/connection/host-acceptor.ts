@@ -28,6 +28,36 @@ export interface AcceptorDeps {
   lookupDevice(deviceId: string): TrustedDeviceRecord | undefined;
   maxFrameBytes?: number;
   logger?: Logger;
+  /**
+   * Enables pairing directly over this transport, with no rendezvous service.
+   *
+   * A phone that scanned a QR carrying a `lan` or `wan` endpoint dials the host
+   * itself: there is no third party to relay pairing blobs through, so the
+   * claim/challenge/complete exchange runs on this socket before any session
+   * exists. Security is unchanged — the pairing code still authenticates the
+   * claim and the QR fingerprint still pins the host — the only thing removed
+   * is the broker in the middle.
+   *
+   * Omit to refuse pairing on this transport (e.g. a relay channel that should
+   * only carry already-paired devices).
+   */
+  pairing?: {
+    /**
+     * Maps a scanned 9-digit code to a live pairing session id. Throws when the
+     * code is wrong, expired, or when too many wrong codes have been tried.
+     */
+    resolveCode(rawCode: string): string;
+    /** Presence the client needs before claiming: identity keys and app name. */
+    describeApp(): {
+      appId: string;
+      name: string;
+      fingerprint: string;
+      pubEdB64: string;
+      pubXB64: string;
+    };
+    handleClaim(claim: Record<string, unknown>, reply: (frame: object) => void): Promise<void>;
+    handleComplete(complete: Record<string, unknown>, reply: (frame: object) => void): TrustedDeviceRecord;
+  };
 }
 
 export interface AcceptorCallbacks {
@@ -37,6 +67,8 @@ export interface AcceptorCallbacks {
   onMessage?(msg: CrosslinkMessage, session: CrosslinkSession): void;
   /** Called after handshake failure or session end (session present when one existed). */
   onClose?(err?: unknown, deviceId?: string, session?: CrosslinkSession): void;
+  /** A device completed pairing directly over this transport. */
+  onPaired?(record: TrustedDeviceRecord): void;
   diagnostics?(event: string, data?: Record<string, unknown>): void;
 }
 
@@ -65,6 +97,54 @@ export class HostAcceptor {
     return this.transport.kind;
   }
 
+  /**
+   * Runs one pairing frame against the host pairing manager and writes its
+   * reply back on this socket.
+   *
+   * Errors are reported to the peer as `pair_error` and the connection is left
+   * open: a mistyped pairing code should cost one frame, not the whole
+   * connection, so the phone can retry without redialing.
+   */
+  private async handlePairingFrame(frame: Record<string, unknown>): Promise<void> {
+    const pairing = this.deps.pairing;
+    if (!pairing) {
+      this.failWith(ErrorCodes.UNAUTHORIZED, "pairing is not offered on this transport");
+      return;
+    }
+    const reply = (out: object): void => {
+      if (this.dead) return;
+      try {
+        this.transport.send(new TextEncoder().encode(JSON.stringify(out)));
+      } catch (err) {
+        this.log.debug("acceptor.pair-reply-failed", { error: String(err) });
+      }
+    };
+    try {
+      if (frame.kind === "pair_hello") {
+        // Direct equivalent of the signaling service's code resolution: the
+        // client knows only the digits from the QR, and needs the session id
+        // before it can build a signed claim bound to that session.
+        const psid = pairing.resolveCode(String(frame.code ?? ""));
+        reply({ kind: "pair_ready", ps: psid, app: pairing.describeApp() });
+      } else if (frame.kind === "pair_claim") {
+        await pairing.handleClaim(frame, reply);
+      } else {
+        const record = pairing.handleComplete(frame, reply);
+        this.log.info("acceptor.paired-direct", { device: record.deviceId, transport: this.transport.kind });
+        this.callbacks.onPaired?.(record);
+      }
+    } catch (err) {
+      this.log.warn("acceptor.pair-failed", { kind: String(frame.kind), error: String((err as Error)?.message ?? err) });
+      reply({
+        kind: "pair_error",
+        error: {
+          code: (err as { code?: string }).code ?? "PAIRING_INVALID",
+          message: String((err as Error)?.message ?? "pairing failed")
+        }
+      });
+    }
+  }
+
   private async handleData(data: Uint8Array): Promise<void> {
     if (this.dead) return;
     let frame: Record<string, unknown>;
@@ -72,6 +152,18 @@ export class HostAcceptor {
       frame = JSON.parse(new TextDecoder().decode(data)) as Record<string, unknown>;
     } catch {
       this.failWith(ErrorCodes.PARSE_ERROR, "unparseable first frame");
+      return;
+    }
+
+    // Pairing frames arrive on a transport that has no session yet, and the
+    // connection must survive them: the exchange is three round trips, and the
+    // client only sends `sinit` afterwards (usually on a fresh connection).
+    if (
+      frame.kind === "pair_hello" ||
+      frame.kind === "pair_claim" ||
+      frame.kind === "pair_complete"
+    ) {
+      await this.handlePairingFrame(frame);
       return;
     }
 

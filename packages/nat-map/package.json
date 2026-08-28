@@ -1,15 +1,23 @@
 {
   "name": "@crosslink/nat-map",
   "version": "0.1.0",
-  "private": true,
+  "description": "Inbound reachability for a Crosslink host: PCP, NAT-PMP, UPnP IGD port mapping and STUN address discovery",
+  "license": "Apache-2.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
   "scripts": {
-    "build": "tsc -p .",
+    "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit -p ."
   },
   "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.6",
     "typescript": "^5.6.3"
   }
 }

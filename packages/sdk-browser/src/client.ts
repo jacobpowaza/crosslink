@@ -3,14 +3,20 @@ import {
   DeviceIdentity,
   RpcClient,
   createClaim,
+  filterEndpoints,
   noopLogger,
   parsePairingUri,
   processChallenge,
   signClaim,
+  toHttpUrl,
+  toWebSocketUrl,
+  DEVICE_LINK_RPC_METHOD,
   type ClientAppStore,
   type ConnectionState,
   type Logger,
   type PairedAppRecord,
+  type PairingEndpoint,
+  type ParsedPairingUri,
   type TransportCandidate,
 } from "@crosslink/core";
 import { bytesToBase64 } from "@crosslink/protocol";
@@ -23,6 +29,12 @@ import { MemorySecureStorage, JsonStore, type SecureStorage } from "./storage.js
 import { SecureDeviceCryptoStorage, type DeviceCryptoStorage } from "./device-crypto-storage.js";
 import { createSecureStorage } from "./secure-storage.js";
 import { SignalingPeer } from "./signaling-peer.js";
+import {
+  BrokeredPairingChannel,
+  DirectPairingChannel,
+  pairErrorMessage,
+  type PairingChannel,
+} from "./pairing-channel.js";
 import { openWithTimeout, wsTransport, type WsLike } from "./ws.js";
 
 export interface PairingConfirmRequest {
@@ -95,6 +107,8 @@ export interface CrosslinkClientOptions {
 }
 
 interface StoredHints {
+  /** Endpoints from the QR, kept so reconnect works with signaling offline. */
+  endpoints?: PairingEndpoint[];
   relay?: { url: string; channel: string };
   lan?: { host: string; port: number };
   signalingUrl?: string;
@@ -134,6 +148,9 @@ export class CrosslinkClient {
   private link?: ClientLink;
   private readonly storage: SecureStorage;
   private deviceCryptoStorage?: DeviceCryptoStorage;
+  private readonly stateListeners = new Set<
+    (state: ConnectionState, detail?: Record<string, unknown>) => void
+  >();
 
   constructor(private readonly options: CrosslinkClientOptions = {}) {
     const storage = options.storage ?? new MemorySecureStorage();
@@ -225,15 +242,16 @@ export class CrosslinkClient {
     }
     const manifest = unwrapBootstrapUri(text);
     const uri = parsePairingUri(manifest);
-    const code = (codeOverride ?? uri.code).replace(/\D/g, "");
-    if (code.length !== 9) {
+    // A link-mode URI carries an opaque single-use token, not a human-typed
+    // 9-digit code — stripping non-digit characters here would mangle it.
+    const rawCode = codeOverride ?? uri.code;
+    const code = uri.link ? rawCode : rawCode.replace(/\D/g, "");
+    if (!uri.link && code.length !== 9) {
       throw new Error("A valid 9-digit pairing code is required");
     }
-    if (!uri.signalingUrl) throw new Error("pairing URI has no signaling URL (LAN-only pairing not supported by browser client)");
-    const wsUrl = `${uri.signalingUrl.replace(/^http/, "ws").replace(/\/$/, "")}/ws`;
-    const peer = await SignalingPeer.open(() => this.ws(wsUrl), this.options.dialTimeoutMs ?? 10_000);
+    const channel = await this.openPairingChannel(uri);
     try {
-      const found = await peer.resolve(code);
+      const found = await channel.resolve(code);
       // Primary MITM defense: the QR pins the first 16 hex of the host fingerprint.
       if (!found.app.fingerprint.startsWith(uri.fp16)) {
         this.log.error("client.fingerprint-mismatch", {
@@ -245,13 +263,10 @@ export class CrosslinkClient {
 
       const { claim, state } = createClaim(this.identity, uri, this.options.deviceName ?? "browser", requestedCaps);
       signClaim(this.identity, claim, found.psid);
-      peer.sendTo(found.hostConn, JSON.stringify(claim));
+      channel.send(claim);
 
-      const challengeBlob = await peer.nextBlob(found.hostConn);
-      const challenge = JSON.parse(challengeBlob) as Record<string, unknown>;
-      if (challenge.kind === "pair_error") {
-        throw new Error(`PAIRING_FAILED: ${JSON.stringify(challenge.error ?? {})}`);
-      }
+      const challenge = await channel.next();
+      if (challenge.kind === "pair_error") throw new Error(pairErrorMessage(challenge));
 
       const defaultConfirm = (req: PairingConfirmRequest): boolean => {
         if (typeof window !== "undefined" && typeof window.confirm === "function") {
@@ -261,7 +276,9 @@ export class CrosslinkClient {
         }
         return true;
       };
-      const confirm = this.options.onConfirmPairing ?? defaultConfirm;
+      // Link-mode continuation is unattended by design: the human already
+      // confirmed the SAS once, when the linking device itself paired.
+      const confirm = uri.link ? () => true : this.options.onConfirmPairing ?? defaultConfirm;
 
       const { complete, record } = await processChallenge(
         this.identity,
@@ -270,13 +287,10 @@ export class CrosslinkClient {
         challenge,
         confirm as never
       );
-      peer.sendTo(found.hostConn, JSON.stringify(complete));
+      channel.send(complete);
 
-      const doneBlob = await peer.nextBlob(found.hostConn);
-      const done = JSON.parse(doneBlob) as Record<string, unknown>;
-      if (done.kind === "pair_error") {
-        throw new Error(`PAIRING_FAILED: ${JSON.stringify(done.error ?? {})}`);
-      }
+      const done = await channel.next();
+      if (done.kind === "pair_error") throw new Error(pairErrorMessage(done));
 
       record.lastConnected = Date.now();
       this.appStore.upsert(record);
@@ -287,26 +301,73 @@ export class CrosslinkClient {
         requestedCaps: requestedCaps ?? null
       });
 
+      // Everything needed to get back to this host later, without another scan:
+      // the QR's own endpoints (which survive a signaling outage) plus whatever
+      // live presence the rendezvous added.
       const hintsAll = this.hints.load({} as never) as unknown as Record<string, StoredHints>;
       hintsAll[record.appId] = {
+        endpoints: uri.endpoints,
         relay: found.app.relay,
         lan: found.app.lan,
         signalingUrl: uri.signalingUrl
       };
       this.hints.save(hintsAll as never);
 
-      // Store session token if server provided one (trusted pairing session)
-      if (done && typeof done.sessionToken === "string") {
-        try {
-          await (this.deviceCryptoStorage as any)?.save({ sessionToken: done.sessionToken }, record.appId);
-        } catch (e) {
-          this.log.debug("client.session-token-store-failed", { error: String(e) });
-        }
-      }
+      // Deliberately nothing stored here beyond the hints above. Reconnection
+      // proves identity with the device's Ed25519 key, so there is no bearer
+      // token to keep — and the earlier code that saved one overwrote the
+      // device keypair record, destroying the credential it needed to return.
       return record;
     } finally {
-      peer.close();
+      channel.close();
     }
+  }
+
+  /**
+   * Picks how to carry out the pairing exchange.
+   *
+   * Direct endpoints are tried first and in QR order: a socket straight to the
+   * host is faster, keeps the exchange off any third party, and — crucially —
+   * needs no service to be deployed anywhere. Only when every direct endpoint
+   * refuses does this fall back to a signaling service, and if there is no
+   * signaling endpoint either, the error names every route that was tried
+   * rather than blaming a missing signaling URL.
+   */
+  private async openPairingChannel(uri: ParsedPairingUri): Promise<PairingChannel> {
+    const dialTimeoutMs = this.options.dialTimeoutMs ?? 10_000;
+    const failures: string[] = [];
+
+    for (const endpoint of filterEndpoints(uri.endpoints, ["lan", "wan", "tunnel"])) {
+      try {
+        const channel = await DirectPairingChannel.open(
+          toWebSocketUrl(endpoint.url),
+          (u) => this.ws(u),
+          dialTimeoutMs
+        );
+        this.log.info("client.pairing-channel", { kind: "direct", endpoint: endpoint.kind });
+        return channel;
+      } catch (err) {
+        failures.push(`${endpoint.kind} ${endpoint.url}: ${String((err as Error)?.message ?? err)}`);
+        this.log.debug("client.pairing-endpoint-failed", { endpoint: endpoint.kind, error: String(err) });
+      }
+    }
+
+    for (const endpoint of filterEndpoints(uri.endpoints, ["sig"])) {
+      const wsUrl = `${toWebSocketUrl(endpoint.url).replace(/\/$/, "")}/ws`;
+      try {
+        const peer = await SignalingPeer.open(() => this.ws(wsUrl), dialTimeoutMs);
+        this.log.info("client.pairing-channel", { kind: "brokered", endpoint: endpoint.kind });
+        return new BrokeredPairingChannel(peer);
+      } catch (err) {
+        failures.push(`sig ${wsUrl}: ${String((err as Error)?.message ?? err)}`);
+      }
+    }
+
+    throw new Error(
+      `cannot reach the host on any route from this QR code.\nTried:\n  ${failures.join("\n  ")}\n` +
+        "If the phone is not on the same Wi-Fi, the host needs remote access " +
+        "(networkMode: \"remote\") or a signaling service."
+    );
   }
 
   /** Connects to a previously paired app; returns the RPC client when online. */
@@ -324,7 +385,7 @@ export class CrosslinkClient {
       const doFetch = this.options.fetch ?? globalThis.fetch;
       try {
         const res = await doFetch(
-          `${hints.signalingUrl.replace(/\/$/, "")}/apps/${encodeURIComponent(record.appId)}`
+          `${toHttpUrl(hints.signalingUrl).replace(/\/$/, "")}/apps/${encodeURIComponent(record.appId)}`
         );
         if (res.ok) {
           presence = (await res.json()) as {
@@ -344,19 +405,35 @@ export class CrosslinkClient {
     const lan = presence?.lan ?? hints.lan;
 
     const candidates: TransportCandidate[] = [];
-    // Prefer the LAN/direct path when both devices are on the same Wi-Fi: it
-    // is lower latency, keeps traffic off the relay, and works even when the
-    // relay is slow. The host's presence advertises `lan` only when it is
-    // actually reachable on the local network, so this is safe to try first.
-    if (lan && lan.host) {
+    const seenUrls = new Set<string>();
+    const addDirect = (url: string, kind: "lan" | "wan"): void => {
+      if (seenUrls.has(url)) return;
+      seenUrls.add(url);
       candidates.push({
+        // Both are direct sockets to the host; `lan` is the transport kind the
+        // protocol layer understands, and the endpoint kind is only about which
+        // network the address lives on.
         kind: "lan" as const,
         connect: async () => {
-          const { ws: opened, ready } = openWs(`ws://${lan.host}:${lan.port}`, (u) => this.ws(u), this.options.dialTimeoutMs ?? 10_000);
+          const { ws: opened, ready } = openWs(url, (u) => this.ws(u), this.options.dialTimeoutMs ?? 10_000);
           await ready;
           return wsTransport(opened, "lan");
         }
       });
+      this.log.debug("client.candidate", { kind, url });
+    };
+
+    // Direct routes first: lower latency, no third party, and they keep working
+    // when the signaling service is down. `lan` before `wan` because a phone on
+    // the same Wi-Fi should not leave the network to reach a machine on it.
+    //
+    // Live presence wins over the QR's endpoints for the LAN address (a laptop
+    // gets a new DHCP lease), but the QR's `wan` endpoint is kept regardless:
+    // presence only exists while signaling is up, and remote reconnect is
+    // exactly the case where it may not be.
+    if (lan && lan.host) addDirect(`ws://${lan.host}:${lan.port}`, "lan");
+    for (const endpoint of filterEndpoints(hints.endpoints ?? [], ["lan", "wan", "tunnel"])) {
+      addDirect(toWebSocketUrl(endpoint.url), endpoint.kind === "wan" ? "wan" : "lan");
     }
     if (relay && this.options.networkMode !== "local-only") {
       candidates.push({
@@ -395,7 +472,7 @@ export class CrosslinkClient {
       candidates,
       autoReconnect: true,
       requestTimeoutMs: this.options.requestTimeoutMs,
-      onStateChange: this.options.onStateChange,
+      onStateChange: (state, detail) => this.publishState(state, detail),
       logger: this.options.logger
     });
     this.link = link;
@@ -435,6 +512,17 @@ export class CrosslinkClient {
     return this.link.rpc;
   }
 
+  /**
+   * Mints a single-use device-link continuation URI over the current
+   * connection, so this same identity can silently re-establish trust from a
+   * fresh, storage-isolated context (e.g. after "Add to Home Screen" on iOS,
+   * which does not share IndexedDB/localStorage with the Safari tab that
+   * paired). Requires an active, authorized connection.
+   */
+  async createDeviceLink(): Promise<{ uri: string; expiresAt: number }> {
+    return this.rpc().call(DEVICE_LINK_RPC_METHOD) as Promise<{ uri: string; expiresAt: number }>;
+  }
+
   /** The live connection, exposed for adapters that upgrade the transport. */
   get connection(): ClientLink | undefined {
     return this.link;
@@ -467,6 +555,32 @@ export class CrosslinkClient {
 
   get state(): ConnectionState {
     return this.link?.currentState ?? "offline";
+  }
+
+  /**
+   * Subscribes to connection-state changes; returns an unsubscribe function.
+   *
+   * Framework bindings need this. Without it the only way to observe state is
+   * the `onStateChange` constructor option — a single callback fixed at
+   * construction, which a React provider cannot use without polling.
+   */
+  onStateChange(listener: (state: ConnectionState, detail?: Record<string, unknown>) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
+  private publishState(state: ConnectionState, detail?: Record<string, unknown>): void {
+    this.options.onStateChange?.(state, detail);
+    for (const listener of [...this.stateListeners]) {
+      try {
+        listener(state, detail);
+      } catch (err) {
+        // One misbehaving subscriber must not stop the others from being told.
+        this.log.warn("client.state-listener-failed", { error: String(err) });
+      }
+    }
   }
   close(): void {
     this.link?.close();

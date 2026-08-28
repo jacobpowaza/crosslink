@@ -10,22 +10,25 @@ Crosslink automatically reconnects when a connection is lost.
 ```text
 1. Transport lost detected (WebSocket close / timeout)
 2. Client enters "reconnecting" state
-3. Backoff timer: 1s -> 2s -> 4s -> 8s -> 16s -> 30s (max)
+3. Backoff timer: 500ms -> 1s -> 2s -> 4s -> 8s -> 16s -> 30s (capped), +/-30% jitter
 4. Fresh CLX1 handshake with new ephemeral keys
 5. Subscriptions restored
 6. Queued idempotent calls replayed
-7. Client returns to "connected" state
+7. Client returns to a connected state (direct / turn-relayed / crosslink-relayed)
 ```
 
 ## Backoff strategy
 
+Delay is `min(30s, 500ms * 2^attempt)`, with random jitter of +/-30% applied on top:
+
 ```text
-Attempt 1: 1 second
-Attempt 2: 2 seconds
-Attempt 3: 4 seconds
-Attempt 4: 8 seconds
-Attempt 5: 16 seconds
-Attempt 6+: 30 seconds (capped)
+Attempt 1: ~500ms
+Attempt 2: ~1 second
+Attempt 3: ~2 seconds
+Attempt 4: ~4 seconds
+Attempt 5: ~8 seconds
+Attempt 6: ~16 seconds
+Attempt 7+: ~30 seconds (capped)
 ```
 
 The backoff resets after a successful connection.
@@ -95,7 +98,7 @@ const client = createCrosslinkClient({
       console.log("Reconnecting...", detail);
       // detail may include attempt count, backoff delay
     }
-    if (state === "connected") {
+    if (state === "direct" || state === "crosslink-relayed" || state === "turn-relayed") {
       console.log("Reconnected!");
     }
   }

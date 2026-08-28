@@ -1,0 +1,110 @@
+---
+title: "Remote Access"
+description: "Reaching a Crosslink host from another network, with no tunnel provider, no account, and no port forwarding."
+---
+
+# Remote Access
+
+`networkMode: "remote"` asks your router for an inbound port and advertises the
+resulting public address in the pairing QR. A phone that scanned at home keeps
+working on cellular, and the desktop app needs no tunnel provider, no account,
+and no manual port forwarding.
+
+```ts
+const server = createCrosslinkServer({
+  application: { id: "com.example.app", name: "My App", version: "1.0.0" },
+  networkMode: "remote",
+  lan: { enabled: true, bind: "all" }
+});
+await server.start();
+
+for (const endpoint of server.connectionEndpoints()) {
+  console.log(endpoint.kind, endpoint.url);   // lan ws://192.168.1.83:54676
+}                                             // wan ws://203.0.113.9:54676
+```
+
+## How the port is obtained
+
+The host tries three router protocols, in order, and stops at the first that
+works:
+
+| Protocol | Spec | Notes |
+|---|---|---|
+| PCP | RFC 6887 | Newer routers; supersedes NAT-PMP |
+| NAT-PMP | RFC 6886 | Common on Apple and many consumer routers |
+| UPnP IGD | UPnP Forum | Discovered over SSDP, driven over SOAP |
+
+Independently, a STUN query (RFC 5389) discovers the address the internet sees.
+When STUN and the router disagree, the router wins: a VPN or a service like
+Cloudflare WARP changes what STUN reports while the router's own view of its WAN
+interface remains the address a mapping actually lands on.
+
+Some routers accept only permanent mappings and reject a lease with UPnP error
+`725 OnlyPermanentLeasesSupported`. The host retries with a zero lease rather
+than giving up, and releases the mapping on shutdown, so "permanent" does not
+mean left behind.
+
+While the host runs, the mapping is renewed at 75% of its lease.
+
+## One port, on purpose
+
+The bootstrap page the phone installs and the transport it connects over are
+served on the **same** port. One port means one mapping: there is no second
+forwarded port to get wrong, and no page that loads over a route the socket
+cannot use.
+
+The port is also remembered across restarts (`listen-port.json` in the host's
+storage directory), so a stored endpoint on a paired phone stays valid after the
+desktop app — or the whole machine — restarts.
+
+## When it cannot work
+
+Remote access depends on your network, so it can genuinely be unavailable. The
+host reports the reason instead of silently degrading:
+
+- **Carrier-grade NAT.** If your ISP hands you an address in `100.64.0.0/10`,
+  there is no public address to map and no software can create one. Use
+  `lan-and-relay` with a relay you can reach, or a provider tunnel.
+- **Double NAT.** A private address on the router's WAN interface means another
+  router sits in front of it; the mapping would only reach that middle network.
+- **The router refuses.** Some routers ship with UPnP/NAT-PMP disabled. Enabling
+  it in the router's admin page is the only fix, and that is a decision for
+  whoever owns the network.
+
+In every case `getPairingCode()` throws with the specific reason rather than
+handing back a QR that quietly only works on the sofa. `server.getRemoteDiagnostics()`
+returns the same detail as structured data, including every protocol attempt.
+
+## Checking before you blame the SDK
+
+```bash
+npm run check:remote          # or: node scripts/check-remote-access.mjs 8100
+```
+
+It runs the same discovery the host runs at startup and prints what each
+protocol answered:
+
+```
+  local address    192.168.1.83
+  default gateway  192.168.1.1
+  public address   203.0.113.9:54321 (via stun.l.google.com:19302)
+
+  ok    upnp      mapped external port 8100 for 7200s on 203.0.113.9
+
+  Reachable at 203.0.113.9:8100 via UPNP (reported by the router)
+```
+
+### "The self-check did not succeed" is not a failure
+
+Many routers cannot route a request from inside the network back to their own
+public address — they lack NAT hairpinning. The mapping is fine; the test is
+being run from the one place that cannot see it. Confirm from a phone on
+cellular data, not from the host machine.
+
+## What this does not promise
+
+- **A stable identity forever.** Your ISP can change your public address. A PWA
+  installed against that origin would then point at the old one; set
+  `pairing.bootstrapUrl` to a stable origin you control if that matters to you.
+- **A route through a network you do not control.** Corporate and campus Wi-Fi
+  usually block inbound connections outright. That is a relay's job.

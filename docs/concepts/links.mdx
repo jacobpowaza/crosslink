@@ -11,7 +11,7 @@ A link is an established encrypted connection between a host and a client. It re
 
 ```text
 1. Pairing     -- QR scan, identity exchange, SAS verification
-2. Connection  -- E25519 key exchange, session key derivation
+2. Connection  -- X25519 key exchange, session key derivation
 3. Active      -- RPC calls, events, streaming
 4. Disconnect  -- Graceful shutdown or network loss
 5. Reconnect   -- Automatic reconnection with backoff
@@ -21,12 +21,17 @@ A link is an established encrypted connection between a host and a client. It re
 
 | State | Description |
 | --- | --- |
-| `idle` | Not connected, no active session |
+| `offline` | Not connected, no active session |
+| `discovering` | Looking for the host |
+| `pairing` | Pairing in progress |
 | `connecting` | Establishing connection |
-| `connected` | Active session, RPC available |
+| `direct` | Active session over LAN or WebRTC, RPC available |
+| `turn-relayed` | Active session over a TURN relay, RPC available |
+| `crosslink-relayed` | Active session over the relay service, RPC available |
 | `reconnecting` | Lost connection, attempting to restore |
-| `disconnected` | Intentionally disconnected |
-| `error` | Connection failed |
+| `unauthorized` | Host rejected this device |
+| `revoked` | Device access was revoked |
+| `protocol-incompatible` | Host/client protocol versions don't match |
 
 ## Creating a link
 
@@ -37,12 +42,12 @@ A link is an established encrypted connection between a host and a client. It re
 const server = createCrosslinkServer({ /* ... */ });
 
 // Listen for connections
-server.on("clientConnected", (event) => {
-  console.log(`Client ${event.deviceId} connected`);
+server.typedOn("deviceConnected", ({ deviceId, transport }) => {
+  console.log(`Client ${deviceId} connected via ${transport}`);
 });
 
-// List active links
-const links = server.getLinks();
+// List paired devices
+const devices = server.listDevices();
 ```
 
 ### From client perspective

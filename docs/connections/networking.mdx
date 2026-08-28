@@ -5,32 +5,31 @@ description: How Crosslink handles NAT, firewalls, and network topology
 
 ## Does Crosslink require port forwarding?
 
-**No.** The relay service handles NAT traversal. Hosts allocate outbound channels -- no inbound ports need to be opened.
+**No.** On the same network the phone dials the host's own address. From another
+network, `networkMode: "remote"` asks the router for an inbound port over
+NAT-PMP, PCP or UPnP — automatically, with nothing to configure. Where that is
+impossible (carrier-grade NAT, a network you do not control), a relay carries
+the connection over outbound sockets only.
 
 ## Does Crosslink require a central server?
 
-**No.** For same-network use, LAN WebSocket works without any services:
+**No.** With no services at all, a phone pairs and connects directly to the host
+over the address in the QR:
 
 ```ts
 const server = createCrosslinkServer({
+  application: { id: "com.example.app", name: "My App", version: "1.0.0" },
   lan: { enabled: true, bind: "all" }
 });
 ```
 
-Cross-network use requires signaling + relay reachable from both sides.
-You have three options, in increasing order of infrastructure:
+There is no signaling service in that path, and none is required: the whole
+claim / challenge / SAS / complete exchange runs on the host's own socket.
 
-1. **Local-only** — host on laptop, phone on same WiFi. No services, no
-   public internet. The default if you're just poking at a demo.
-2. **Tunnel** — run signaling + relay on the laptop, expose the two ports
-   with `ngrok` or `cloudflared`. Free, 5-minute setup, URLs rotate on
-   restart. Best for ad-hoc cross-network testing.
-3. **Self-host** — run signaling + relay on a VPS or behind your reverse
-   proxy with TLS. See [Self-hosting](../SELF_HOSTING.md).
-
-Your choice changes which URL the host connects to and which URL gets
-embedded in the pairing QR — nothing else. Pick in
-[Getting started](../GETTING_STARTED.md#05-pick-your-mode-local-only-or-server).
+A signaling and relay pair is an *addition*, for phones that can reach neither
+the host's LAN address nor a public one. See
+[Connection modes](/guides/connection-modes) for the four host modes and
+[Self-hosting](/guides/self-hosting) to run those services yourself.
 
 ## What happens when the host goes offline?
 
@@ -45,15 +44,25 @@ connected -> offline -> reconnecting -> connected
 
 Offline call queueing: idempotent methods are queued and replayed after reconnection.
 
-## Transport priority
+## Route priority
+
+The pairing QR lists every route the host genuinely has, tagged by kind, and the
+client tries them in this order:
 
 ```text
-1. LAN (same network, lowest latency)
-2. Relay (works everywhere, one extra hop)
-3. WebRTC (direct peer-to-peer, best throughput)
+1. lan     the host's address on this network — fastest, private, no third party
+2. wan     a public address with a confirmed router mapping — direct, no relay
+3. sig     a signaling service that brokers the connection
+4. relay   a relay service that forwards encrypted frames
+5. tunnel  a provider tunnel the developer opted into
 ```
 
-The client tries each transport in order and falls through on failure.
+A route appears in the QR only if it exists. A private address is only ever
+tagged `lan`; it is never advertised as though it were reachable from the
+internet.
+
+Once connected, [WebRTC upgrade](/guides/node) can move traffic onto a direct
+peer-to-peer DataChannel, which matters mainly for relayed sessions.
 
 ## Network topology support
 
@@ -104,13 +113,17 @@ Client automatically uses the best available transport.
 
 ## NAT traversal
 
-Crosslink doesn't use STUN/TURN for NAT traversal (except for WebRTC). Instead:
+Two independent mechanisms, used for different things:
 
-1. **Host allocates relay channel** -- outbound connection, no port forwarding
-2. **Client joins relay** -- outbound connection to relay
-3. **Relay pipes traffic** -- encrypted frames forwarded between host and client
+**Getting an inbound port** (`networkMode: "remote"`) uses NAT-PMP (RFC 6886),
+PCP (RFC 6887) and UPnP IGD, plus STUN (RFC 5389) to learn the public address.
+The router's own report wins over STUN when they disagree, since a VPN changes
+what STUN sees. Details and limits: [Remote access](/guides/remote-access).
 
-This is simpler and more reliable than hole-punching, at the cost of routing through the relay.
+**Getting through a NAT you cannot map** uses a relay: both sides make outbound
+connections and the relay forwards encrypted frames between them. This works
+through CGNAT, double NAT and restrictive firewalls, at the cost of one hop.
+The relay only ever sees ciphertext.
 
 ## Firewall considerations
 

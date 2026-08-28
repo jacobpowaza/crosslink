@@ -10,22 +10,17 @@ import QRCode from "qrcode";
 import { readFileSync } from "node:fs";
 
 const args = new Set(process.argv.slice(2));
-const signalingUrl = process.env.CROSSLINK_SIGNALING_URL;
-const relayUrl = process.env.CROSSLINK_RELAY_URL;
-
-if (!signalingUrl) {
-  console.log(`
-  No CROSSLINK_SIGNALING_URL set — using auto-discovery from npm run stack.
-  If pairing fails, ensure the stack is running:  npm run stack
-`);
-}
 
 const server = createCrosslinkServer({
   application: { id: "com.example.echo", name: "Echo Host", version: "1.0.0" },
   capabilities: [{ id: "echo.use", title: "Use echo methods", risk: "low" }],
-  signalingUrl,
-  relayUrl,
-  lan: { enabled: true, bind: args.has("--lan") ? "all" : "loopback" },
+  // Nothing to configure: the phone pairs against this process directly over
+  // the address in the QR. `--remote` additionally asks the router for an
+  // inbound port so a phone off this Wi-Fi can reach it too.
+  networkMode: args.has("--remote") ? "remote" : "auto",
+  signalingUrl: process.env.CROSSLINK_SIGNALING_URL,
+  relayUrl: process.env.CROSSLINK_RELAY_URL,
+  lan: { enabled: true, bind: "all" },
   pairing: {
     autoApprove: args.has("--yes"),
     approve: async (req) => {
@@ -63,12 +58,16 @@ await server.start();
 
 console.log("Echo Host ready.");
 console.log(`  fingerprint ${server.fingerprintHex.slice(0, 32)}…`);
-console.log(`  status      ${JSON.stringify(server.status().transports)}`);
+for (const endpoint of server.connectionEndpoints()) {
+  console.log(`  ${endpoint.kind.padEnd(7)} ${endpoint.url}`);
+}
+const remote = server.getRemoteDiagnostics();
+if (remote && !remote.reachable) console.log(`  remote      ${remote.message}`);
 
-// The startup snapshot above can lag live transports (e.g. signaling connects
-// asynchronously); print updates as they happen.
-server.on("connectivity", () => {
-  console.log(`  status      ${JSON.stringify(server.status().transports)}`);
+// The startup snapshot above can lag live transports (a relay or signaling
+// link connects asynchronously); print updates as they happen.
+server.on("connectivity", (status) => {
+  console.log(`  status      ${status.message}`);
 });
 
 async function printPairingCode(): Promise<void> {

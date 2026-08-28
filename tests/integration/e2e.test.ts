@@ -70,7 +70,7 @@ describe("crosslink end-to-end", () => {
           inputSchema: {
             type: "object",
             required: ["title"],
-            properties: { title: { type: "string", maxLength: 200 } }
+            properties: { title: { type: "string", maxLen: 200 } }
           }
         }
       )
@@ -172,7 +172,7 @@ describe("crosslink end-to-end", () => {
 
     // 2. Generate pure QR connect URI (WITHOUT pre-baked code)
     const connectUri = buildPairingUri({
-      signalingUrl: `http://127.0.0.1:${signaling.port}`,
+      endpoints: [{ kind: "sig", url: `http://127.0.0.1:${signaling.port}` }],
       appId: "com.demo.notes",
       appName: "Notes",
       hostPubEdB64: host.identity.edPublicKey ? Buffer.from(host.identity.edPublicKey).toString("base64") : ""

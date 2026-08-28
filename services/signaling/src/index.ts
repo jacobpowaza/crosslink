@@ -6,7 +6,7 @@
  * code, and presence entries are signed by host identity keys.
  *
  * State is in-memory and cheap to rebuild; horizontal scaling can add Redis
- * pub/sub behind the same interface later (see docs/SELF_HOSTING.md).
+ * pub/sub behind the same interface later (see docs/guides/self-hosting.mdx).
  */
 import http from "node:http";
 import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
@@ -18,6 +18,26 @@ const HOST_STALE_MS = 90_000;
 const SWEEP_INTERVAL_MS = 30_000;
 const MAX_MSGS_PER_WINDOW = 120;
 const WINDOW_MS = 10_000;
+// A pairing code is a live 9-digit secret with a 120s TTL; the message
+// rate limit already bounds one connection's guess throughput, but nothing
+// stopped an attacker from mass-opening connections to multiply it. This
+// cap is generous for real users - several devices/tabs behind one carrier-
+// grade NAT - while still bounding how many parallel guessers one IP can
+// run inside a code's lifetime.
+const DEFAULT_MAX_CONNECTIONS_PER_IP = 50;
+// Exceeding the per-connection rate limit only warned; an offender could
+// keep the connection open and keep sending indefinitely. This grace
+// allowance lets one legitimate burst through with a warning before the
+// connection is actually closed.
+const DEFAULT_RATE_LIMIT_VIOLATIONS_BEFORE_CLOSE = 3;
+// A host normally has at most a couple of concurrent pairing sessions in
+// flight (one QR code, maybe a retry). Without a cap, host_hello/pair_open
+// let a single connection's `pairs` map grow without bound between sweeps.
+const DEFAULT_MAX_PAIRS_PER_HOST = 20;
+// Signaling is meant to double as a public directory, so this is generous,
+// but an unbounded `conns`/`byApp` map from repeated host_hello calls is
+// still unbounded memory growth between sweeps.
+const DEFAULT_MAX_HOSTS = 5_000;
 
 interface PresenceInfo {
   appId: string;
@@ -67,6 +87,15 @@ export interface SignalingOptions {
    * code itself, and a browser cannot hold a shared secret safely.
    */
   authToken?: string;
+  /** Concurrent WebSocket connections one IP may hold open. Default 50. */
+  maxConnectionsPerIp?: number;
+  /** Rate-limit warnings a connection gets before it's disconnected. Default 3. */
+  rateLimitViolationsBeforeClose?: number;
+  /** Concurrent pairing sessions (`pair_open` calls) one host connection may
+   *  register at once. Default 20. */
+  maxPairsPerHost?: number;
+  /** Total distinct hosts (by appId) this instance will register at once. Default 5000. */
+  maxHosts?: number;
 }
 
 export interface SignalingServer {
@@ -80,8 +109,16 @@ function sha256Hex(input: string): string {
 
 export function createSignalingServer(options: SignalingOptions = {}): Promise<SignalingServer> {
   return new Promise((resolve) => {
+    const limits = {
+      maxConnectionsPerIp: options.maxConnectionsPerIp ?? DEFAULT_MAX_CONNECTIONS_PER_IP,
+      rateLimitViolationsBeforeClose:
+        options.rateLimitViolationsBeforeClose ?? DEFAULT_RATE_LIMIT_VIOLATIONS_BEFORE_CLOSE,
+      maxPairsPerHost: options.maxPairsPerHost ?? DEFAULT_MAX_PAIRS_PER_HOST,
+      maxHosts: options.maxHosts ?? DEFAULT_MAX_HOSTS
+    };
     const conns = new Map<string, Conn>();
     const byApp = new Map<string, string>();
+    const connsByIp = new Map<string, number>();
 
     const hostAuthOk = (presented: string): boolean => {
       if (!options.authToken) return true;
@@ -134,6 +171,26 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
     const wss = new WebSocketServer({ server, maxPayload: MAX_BLOB_BYTES * 2 });
 
     wss.on("connection", (ws, req) => {
+      const ip = req.socket.remoteAddress ?? "unknown";
+      // Per-IP concurrent-connection cap: message-rate limiting is per
+      // *connection*, so without this an attacker multiplies pair_resolve
+      // throughput - and thus brute-force speed against a live pairing
+      // code - simply by opening more sockets.
+      const ipCount = (connsByIp.get(ip) ?? 0) + 1;
+      if (ipCount > limits.maxConnectionsPerIp) {
+        ws.close(4429, "too-many-connections");
+        return;
+      }
+      connsByIp.set(ip, ipCount);
+      let ipCounted = true;
+      const releaseIp = (): void => {
+        if (!ipCounted) return;
+        ipCounted = false;
+        const remaining = (connsByIp.get(ip) ?? 1) - 1;
+        if (remaining <= 0) connsByIp.delete(ip);
+        else connsByIp.set(ip, remaining);
+      };
+
       const connId = randomUUID();
       const presentedAuth =
         bearerFrom(req.headers.authorization) ??
@@ -143,6 +200,7 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
       conns.set(connId, conn);
       let windowStart = Date.now();
       let windowCount = 0;
+      let rateViolations = 0;
 
       const send = (obj: unknown): boolean => {
         if (ws.readyState !== WebSocket.OPEN) return false;
@@ -151,8 +209,11 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
       };
 
       // As on the relay: a receiver-level failure must cost this connection,
-      // not the process.
+      // not the process. Must also release the per-IP slot, or a peer that
+      // errors out (rather than closing cleanly) permanently eats into its
+      // IP's cap.
       ws.on("error", () => {
+        releaseIp();
         try {
           ws.terminate();
         } catch {
@@ -173,7 +234,14 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
       ws.on("message", (raw: RawData) => {
         conn.lastSeen = Date.now();
         if (tooFast()) {
+          rateViolations += 1;
           send({ op: "error", error: { code: "rate_limited", message: "slow down" } });
+          // A legitimate client gets a few warnings for one burst; past
+          // that it's either broken or hostile, and staying connected only
+          // keeps costing us a message budget and (previously) nothing else.
+          if (rateViolations > limits.rateLimitViolationsBeforeClose) {
+            ws.close(4429, "rate_limited");
+          }
           return;
         }
         let msg: Record<string, unknown>;
@@ -207,6 +275,12 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
               if (old && old.kind === "host") {
                 old.ws.close(4000, "superseded");
               }
+            } else if (!byApp.has(app.appId) && byApp.size >= limits.maxHosts) {
+              // Only a genuinely new appId consumes a slot; re-registering
+              // (or superseding) an existing one does not, so this can't be
+              // used to lock out the app that's already at capacity.
+              send({ op: "error", error: { code: "capacity_exceeded", message: "too many registered hosts" } });
+              return;
             }
             const host: HostConn = {
               kind: "host",
@@ -240,6 +314,10 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
             const codeHash = String(msg.code_hash ?? "");
             if (!psid || !codeHash) {
               send({ op: "error", error: { code: "invalid_message", message: "missing psid/code_hash" } });
+              return;
+            }
+            if (!host.pairs.has(psid) && host.pairs.size >= limits.maxPairsPerHost) {
+              send({ op: "error", error: { code: "capacity_exceeded", message: "too many pairing sessions" } });
               return;
             }
             host.pairs.set(psid, {
@@ -312,6 +390,7 @@ export function createSignalingServer(options: SignalingOptions = {}): Promise<S
       });
 
       ws.on("close", () => {
+        releaseIp();
         const conn0 = conns.get(connId);
         conns.delete(connId);
         if (conn0?.kind === "host") {

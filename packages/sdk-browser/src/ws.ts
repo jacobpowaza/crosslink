@@ -74,11 +74,12 @@ export function openWithTimeout(ws: WsLike, timeoutMs: number): Promise<void> {
       ws.removeEventListener?.("error", onError as never);
       resolve();
     };
-    const onError = (): void => {
+    const onError = (ev?: unknown): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new Error("connection failed"));
+      const detail = (ev as { message?: string; error?: { message?: string } } | undefined);
+      reject(new Error(`connection failed: ${detail?.error?.message ?? detail?.message ?? "unknown"}`));
     };
     ws.addEventListener("open", onOpen);
     ws.addEventListener("error", onError);

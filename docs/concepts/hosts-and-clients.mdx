@@ -47,7 +47,8 @@ const host = createCrosslinkServer({
 | `host.expose(method, handler, options)` | Register an RPC method |
 | `host.declareEvent(name)` | Declare an event that can be emitted |
 | `host.emit(name, payload)` | Send an event to all connected clients |
-| `host.revoke(deviceId)` | Revoke a client's access |
+| `host.listDevices()` | List all paired devices |
+| `host.revokeDevice(deviceId)` | Revoke a client's access |
 
 ## Client
 
@@ -100,7 +101,7 @@ The host stores its identity key and paired-device records:
 
 | Backend | Encrypted | Requires |
 | --- | --- | --- |
-| keytar | Yes (OS keychain) | `keytar` npm package + libsecret (Linux) |
+| keytar | Yes (OS keychain) | The host app installing the optional `keytar` npm package (not a Crosslink dependency) |
 | Electron safeStorage | Yes (OS vault) | Electron runtime |
 | Encrypted file | Yes (AES-256-GCM) | `CROSSLINK_SECRET_KEY` or machine-bound key |
 | Plaintext file | No | Explicit opt-in |

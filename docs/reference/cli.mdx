@@ -3,6 +3,8 @@ title: CLI Reference
 description: Command-line interface for Crosslink
 ---
 
+Crosslink has no installed CLI binary — these are `npm` scripts run from the root of the monorepo (or, for demos, from an example package).
+
 ## Services
 
 ### Start signaling and relay
@@ -13,25 +15,7 @@ npm run stack
 
 Starts both services on localhost.
 
-### Start only signaling
-
-```bash
-npm run signaling
-```
-
-### Start only relay
-
-```bash
-npm run relay
-```
-
 ## Development
-
-### Run in development mode
-
-```bash
-npm run dev
-```
 
 ### Build all packages
 
@@ -43,12 +27,6 @@ npm run build
 
 ```bash
 npm test
-```
-
-### Lint
-
-```bash
-npm run lint
 ```
 
 ## Examples
@@ -74,39 +52,32 @@ cd examples/todo-host
 npm run dev
 ```
 
+### Run an example with remote access
+
+Several root-level scripts start a demo with `networkMode: "remote"` already configured — see [Remote Access](/guides/remote-access):
+
+```bash
+npm run demo:echo:remote
+npm run demo:chat:remote
+npm run demo:todo:remote
+```
+
+### Check remote-access readiness
+
+```bash
+npm run check:remote
+```
+
 ## Environment variables
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `PORT` | Service port | `8081` / `8082` |
-| `HOST` | Bind address | `0.0.0.0` |
-| `CROSSLINK_SIGNALING_URL` | Signaling URL | `http://127.0.0.1:8081` |
-| `CROSSLINK_RELAY_URL` | Relay URL | `http://127.0.0.1:8082` |
+| `PORT` | Signaling/relay service port | `8081` / `8082` |
+| `HOST` | Signaling/relay bind address | `0.0.0.0` |
+| `CROSSLINK_SIGNALING_URL` | Signaling URL (host SDK) | _(auto-discovered)_ |
+| `CROSSLINK_RELAY_URL` | Relay URL (host SDK) | _(auto-discovered)_ |
 | `CROSSLINK_SECRET_KEY` | Passphrase for encrypted storage | _(none)_ |
-| `CROSSLINK_STORAGE_DIR` | Storage directory | `.crosslink-data` |
-| `NODE_ENV` | Environment | `development` |
-
-## Docker
-
-### Build images
-
-```bash
-docker build -t crosslink/signaling -f services/signaling/Dockerfile .
-docker build -t crosslink/relay -f services/relay/Dockerfile .
-```
-
-### Run with Docker Compose
-
-```bash
-docker compose up -d
-```
-
-### Check logs
-
-```bash
-docker compose logs -f signaling
-docker compose logs -f relay
-```
+| `CROSSLINK_DATA_DIR` | Where the dev-token/stack config lives (`@crosslink/dev-tokens`). A host's own `storageDir` is a config field, not this. | `.crosslink-data` |
 
 ## Troubleshooting
 

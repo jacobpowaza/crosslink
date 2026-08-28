@@ -21,45 +21,54 @@ const server = createCrosslinkServer(options);
 | --- | --- | --- | --- |
 | `application.id` | `string` | Yes | Unique application identifier |
 | `application.name` | `string` | Yes | Human-readable name |
-| `application.version` | `string` | Yes | Semantic version |
-| `capabilities` | `Capability[]` | No | Declared capabilities |
+| `application.version` | `string` | No | Semantic version |
+| `capabilities` | `CapabilityDef[]` | No | Declared capabilities |
 | `signalingUrl` | `string` | No | Signaling server URL |
 | `relayUrl` | `string` | No | Relay server URL |
-| `lan` | `{ bind: string }` | No | LAN binding options |
-| `pairing` | `PairingOptions` | No | Pairing configuration |
+| `lan` | `{ enabled?, port?, bind?, host?, httpHandler? }` | No | LAN binding options — see [Configuration](/reference/configuration) |
+| `pairing` | `{ ttlMs?, autoApprove?, approve?, bootstrapUrl? }` | No | Pairing configuration |
+| `networkMode` | `"auto" \| "local-only" \| "lan-and-relay" \| "remote"` | No | Which transports the host offers |
+| `remote` | `{ enabled?, externalPort?, lifetimeSeconds?, autoRenew? }` | No | Direct inbound access via router port mapping (PCP/NAT-PMP/UPnP) |
+| `security` | `{ maxDevices?, maxActivePairingSessions?, pairingRateLimitMs?, localNetworkOnly? }` | No | Security hardening |
+| `permissions` | `PermissionPolicy` | No | Host-authored capability policy applied before pairing approval |
 | `logger` | `Logger` | No | Custom logger |
 
-#### Capability
+#### CapabilityDef
 
 ```ts
-interface Capability {
+interface CapabilityDef {
   id: string;           // e.g., "app.control"
   title: string;        // e.g., "Control the app"
   risk: "low" | "medium" | "high";
   description?: string;
-  ttlMs?: number;       // Optional time-to-live in ms
+  defaultGranted?: boolean; // granted by default at pairing when requested
+  confirmEachUse?: boolean; // require a fresh prompt on every use
 }
 ```
 
-#### PairingOptions
+#### pairing
 
 ```ts
-interface PairingOptions {
-  approve: (req: PairingRequest) => Promise<boolean>;
-  autoApprove?: boolean;
-  codeLength?: number;    // Default: 9
-  codeTtlMs?: number;     // Default: 120000 (2 minutes)
+{
+  ttlMs?: number;
+  autoApprove?: boolean; // dev convenience; never for production
+  approve?(request: PairingApprovalRequest): PairingApproval | Promise<PairingApproval>;
+  bootstrapUrl?: string; // hosted install page for the iOS "Add to Home Screen" flow
 }
 ```
 
-#### PairingRequest
+`PairingApproval` is `boolean | string[] | { approved: boolean; caps?: string[] }` — `true` grants everything requested, `false` refuses, and an array or `{ caps }` grants only that subset.
+
+#### PairingApprovalRequest
 
 ```ts
-interface PairingRequest {
+interface PairingApprovalRequest {
+  sas: string;
   deviceName: string;
   deviceId: string;
   requestedCaps: string[];
-  sas: string;
+  requiresExplicitApproval: string[];
+  deniedCaps: Array<{ id: string; reason: string }>;
 }
 ```
 
@@ -88,9 +97,12 @@ Generate a new pairing code.
 ```js
 const code = await server.getPairingCode();
 // code = {
+//   psid: "...",
 //   code: "123456789",
-//   uri: "crosslink://pair?v=1&s=...",
-//   expires: 1699999999999
+//   uri: "crosslink://pair?v=2&e=lan~ws%3A%2F%2F...&c=123456789&a=...&n=...&f=...",
+//   expiresAt: 1699999999999,
+//   qrSvg: "<svg>...</svg>",
+//   endpoints: [{ kind: "lan", url: "ws://192.168.1.5:51820" }]
 // }
 ```
 
@@ -104,9 +116,11 @@ server.expose("app.status", () => ({ ok: true }), {
 });
 ```
 
-#### `server.declareEvent(name)`
+`options` also accepts `inputSchema` (a `MiniSchema`), `validate` (a custom validator function), `idempotent` (safe to auto-retry across reconnects), and `timeoutMs`.
 
-Declare an event that can be emitted.
+#### `server.declareEvent(name, options?)`
+
+Declare an event that can be emitted. `options.capability` gates who may subscribe.
 
 ```js
 server.declareEvent("app.tick");
@@ -120,54 +134,64 @@ Send an event to all connected clients.
 server.emit("app.tick", { t: Date.now() });
 ```
 
-#### `server.revoke(deviceId)`
+#### `server.listDevices()`
 
-Revoke a client's access.
-
-```js
-server.revoke(deviceId);
-```
-
-#### `server.revokeCapability(deviceId, capId)`
-
-Revoke a specific capability.
+List all paired devices (not only currently connected ones).
 
 ```js
-server.revokeCapability(deviceId, "app.admin");
+const devices = server.listDevices();
+// [{ deviceId, name, caps, addedAt, lastSeen, revokedAt }]
 ```
 
-#### `server.getLinks()`
+#### `server.revokeDevice(deviceId)`
 
-List all active connections.
+Revoke a paired device's access and close any of its active sessions. Returns `true` if the device existed.
 
 ```js
-const links = server.getLinks();
+server.revokeDevice(deviceId);
 ```
 
-#### `server.disconnect(deviceId)`
+#### `server.revokeAllDevices()`
 
-Disconnect a specific client.
+Revoke every currently-paired device.
 
 ```js
-server.disconnect(deviceId);
+server.revokeAllDevices();
 ```
 
-#### `server.disconnectAll()`
+#### `server.setDeviceCaps(deviceId, caps)`
 
-Disconnect all clients.
+Replace a paired device's granted capability set.
 
 ```js
-server.disconnectAll();
+server.setDeviceCaps(deviceId, ["app.control"]);
 ```
+
+#### `server.getConnectivity()`
+
+A moment-in-time snapshot of how reachable the host is, with a human-readable `message`.
+
+```js
+const status = server.getConnectivity();
+// { reach: "local-only" | "relayed" | "offline", lan, relay, signaling, webrtc, message, transports }
+```
+
+#### `server.getRemoteDiagnostics()`
+
+What the router said about the last port-mapping attempt (protocol tried, public address, CGNAT detection), or `null` if remote access was never attempted.
 
 ### Server events
 
+Subscribe with `server.typedOn(event, callback)` or the inherited `EventEmitter#on`.
+
 | Event | Payload | Description |
 | --- | --- | --- |
-| `clientConnected` | `{ deviceId }` | Client connected |
-| `clientDisconnected` | `{ deviceId }` | Client disconnected |
-| `error` | `Error` | Server error |
-| `clientError` | `{ deviceId, error }` | Client error |
+| `devicePaired` | `TrustedDeviceRecord` | A device completed pairing |
+| `deviceRevoked` | `deviceId: string` | A device's access was revoked |
+| `deviceConnected` | `{ deviceId, transport }` | A paired device opened a session |
+| `deviceDisconnected` | `{ deviceId, transport }` | A paired device's session closed |
+| `pairingIssued` | `PairingCodeInfo` | A new pairing code was generated |
+| `connectivity` | `ConnectivityStatus` | Host reachability changed |
 
 ---
 
@@ -175,7 +199,7 @@ server.disconnectAll();
 
 ### `CrosslinkClient.create(options?)`
 
-Factory method to create a client with encrypted storage.
+Factory method to create a client whose identity is encrypted at rest with WebCrypto/IndexedDB when available.
 
 ```js
 import { CrosslinkClient } from "@crosslink/sdk-browser";
@@ -183,9 +207,11 @@ import { CrosslinkClient } from "@crosslink/sdk-browser";
 const client = await CrosslinkClient.create(options);
 ```
 
+`create()` additionally accepts `allowPlaintextFallback` (boolean), which lets it fall back to unencrypted storage when WebCrypto/IndexedDB is unavailable.
+
 ### `new CrosslinkClient(options?)`
 
-Constructor (stores identity in plaintext -- avoid in production).
+Synchronous constructor for embedders that supply their own storage. Without an explicit `storage`, identity lives only in memory for the process lifetime — prefer `CrosslinkClient.create()` in browsers.
 
 ```js
 const client = new CrosslinkClient(options);
@@ -197,36 +223,37 @@ const client = new CrosslinkClient(options);
 | --- | --- | --- | --- |
 | `deviceName` | `string` | No | Device name shown to host |
 | `storage` | `SecureStorage` | No | Custom storage backend |
-| `onStateChange` | `(state) => void` | No | State change callback |
-| `onConfirmPairing` | `(req) => Promise<boolean>` | No | Pairing confirmation |
+| `onStateChange` | `(state, detail?) => void` | No | State change callback |
+| `onConfirmPairing` | `(req) => boolean \| Promise<boolean>` | No | Pairing confirmation |
 | `logger` | `Logger` | No | Custom logger |
 | `dialTimeoutMs` | `number` | No | Connection timeout (default: 10000) |
-| `allowPlaintextFallback` | `boolean` | No | Allow plaintext storage |
+| `relayToken` | `string` | No | Shared secret for a private relay |
+| `networkMode` | `"auto" \| "local-only" \| "lan-and-relay"` | No | Connection candidate preference |
 
 ### Client methods
 
-#### `client.pairFromQr(text, requestedCaps?)`
+#### `client.pairFromQr(text, requestedCaps?, codeOverride?)`
 
-Pair with a host via QR/URI.
+Pair with a host via a scanned QR/URI (or a hosted bootstrap link).
 
 ```js
 const record = await client.pairFromQr(uri, ["app.control"]);
 ```
 
-#### `client.connect(requestedCaps?)`
+#### `client.connect(appId?)`
 
-Connect to a paired host.
+Connect to a previously paired host. Without `appId`, connects to the first paired app on record. Returns the `RpcClient` once connected.
 
 ```js
-const rpc = await client.connect(["app.control"]);
+const rpc = await client.connect();
 ```
 
-#### `client.disconnect()`
+#### `client.close()`
 
-Disconnect from the host.
+Close the current connection.
 
 ```js
-client.disconnect();
+client.close();
 ```
 
 #### `client.forget(appId)`
@@ -245,22 +272,25 @@ List all paired hosts.
 const apps = client.listApps();
 ```
 
-### Client events
+#### `client.onStateChange(listener)`
 
-| Event | Payload | Description |
-| --- | --- | --- |
-| `stateChange` | `string` | State changed |
-| `connected` | `{ deviceId }` | Connected to host |
-| `disconnected` | `{ deviceId }` | Disconnected from host |
-| `error` | `Error` | Client error |
+Subscribe to connection-state changes; returns an unsubscribe function. This is the only way the client reports connection lifecycle — it is not an event emitter.
+
+```js
+const unsubscribe = client.onStateChange((state, detail) => {
+  console.log("state:", state, detail);
+});
+```
+
+`state` is one of: `"offline"`, `"discovering"`, `"pairing"`, `"connecting"`, `"direct"`, `"turn-relayed"`, `"crosslink-relayed"`, `"reconnecting"`, `"unauthorized"`, `"revoked"`, `"protocol-incompatible"`.
 
 ---
 
 ## RPC interface
 
-### `rpc.call(method, args?)`
+### `rpc.call(method, args?, options?)`
 
-Call an RPC method.
+Call an RPC method. `options.timeoutMs` overrides the default request timeout.
 
 ```js
 const result = await rpc.call("app.status", { detail: true });
@@ -268,7 +298,7 @@ const result = await rpc.call("app.status", { detail: true });
 
 ### `rpc.subscribe(event, callback)`
 
-Subscribe to an event.
+Subscribe to an event. Returns an unsubscribe function.
 
 ```js
 const unsubscribe = rpc.subscribe("app.tick", (payload) => {
@@ -276,20 +306,8 @@ const unsubscribe = rpc.subscribe("app.tick", (payload) => {
 });
 ```
 
-### `rpc.hasCapability(capId)`
+### `rpc.cancel(requestId)`
 
-Check if a capability is granted.
+Cancel an in-flight request by id.
 
-```js
-if (rpc.hasCapability("app.control")) {
-  // Proceed
-}
-```
-
-### RPC events
-
-| Event | Payload | Description |
-| --- | --- | --- |
-| `connected` | `{ deviceId }` | Connected |
-| `disconnected` | `{ deviceId }` | Disconnected |
-| `error` | `Error` | Error |
+`RpcClient` has no built-in "connected" / "disconnected" / "error" events, and no `hasCapability` method — capability enforcement happens on the host, and a denied call rejects with a `capability_denied` error (see [Error Codes](/reference/errors)).

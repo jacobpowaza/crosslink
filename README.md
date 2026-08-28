@@ -48,11 +48,12 @@ crypto, brittle sockets. Crosslink packages the hard parts once:
 | **Crypto** | X25519 + HKDF handshake ("CLX1"), XChaCha20-Poly1305 session frames |
 | **Authorization** | Capability grants per device, host-authored policy, per-use consent |
 | **RPC** | Typed request/response, streaming progress chunks, event subscriptions |
-| **Transports** | LAN WebSocket → crosslink relay → WebRTC DataChannel, auto-fallback |
+| **Transports** | Direct WebSocket (same network or a router-mapped public address) → relay → WebRTC DataChannel |
 | **Reconnect** | Exponential backoff, offline call queueing, subscription restore |
 | **Secrets** | Host seed in the OS keychain; browser seed under a non-extractable WebCrypto key |
 | **Observability** | Structured, redacting `Logger` threaded through every layer |
-| **Bootstrap** | Hosted HTTPS QR for iOS Add to Home Screen; tunnel-ready for cross-network |
+| **Bootstrap** | An installable page served on the host's own port, so one QR covers pairing and the PWA |
+| **Remote access** | Router port mapping over NAT-PMP / PCP / UPnP — no account, no tunnel provider, no port forwarding |
 
 Services are dumb by design: **signaling never sees keys or plaintext**, and the
 relay forwards only opaque ciphertext.
@@ -60,45 +61,46 @@ relay forwards only opaque ciphertext.
 ## Quickstart
 
 ```bash
-# Clone and install
 git clone git@github.com:jacobpowaza/crosslink.git
 cd crosslink
 npm install
 
-# Start the local services
-npm run stack          # signaling :8081 + relay :8082
-
-# Terminal A — run a host app
+# Terminal A — run a host app. Nothing else to start.
 npm run demo:echo      # prints a pairing code + QR
 
 # Terminal B — serve the browser client
 npm run demo:pwa       # http://localhost:8090
 ```
 
-Scan the host QR with the PWA (or paste `crosslink://pair?…`), confirm the SAS
-digits, and start calling RPC methods over the encrypted channel.
+Scan the QR with a phone on the same Wi-Fi, confirm the SAS digits, and start
+calling RPC methods over the encrypted channel. There is no service in that
+path: the QR carries the host's own address and the whole pairing exchange runs
+on the host's socket.
 
-### Cross-network (phone on different WiFi)
-
-You need a tunnel. See [docs/TUNNELING.md](docs/TUNNELING.md) for the full
-guide. Quick version:
+### From another network
 
 ```bash
-# In separate terminals
-npm run stack
-ngrok tcp 8081    # copy the wss://… URL
-ngrok tcp 8082    # copy the second wss://… URL
-
-# Start the host with the tunnel URLs
-CROSSLINK_SIGNALING_URL=<wss-from-ngrok-8081> \
-CROSSLINK_RELAY_URL=<wss-from-ngrok-8082> \
-npm run demo:echo
+npm run demo:echo -- --remote
 ```
 
-Or use the built-in tunnel support in the chat app:
+The host asks your router for an inbound port (NAT-PMP, PCP or UPnP) and adds
+the resulting public address to the QR. No ngrok, no Cloudflare, no account, no
+manual port forwarding.
+
+Where that is impossible — carrier-grade NAT, a network you do not control — the
+host says so instead of quietly handing back a LAN-only QR. Check first:
 
 ```bash
-npm run demo:chat     # web UI has ngrok/Cloudflare tunnel buttons
+npm run check:remote
+```
+
+A relay is the fallback for those cases:
+
+```bash
+npm run stack          # signaling :8081 + relay :8082
+CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
+CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
+npm run demo:echo
 ```
 
 ## Host App (~20 lines)
@@ -163,7 +165,7 @@ Crosslink automatically selects the best transport:
 | Priority | Transport | When it works | Setup needed |
 |---|---|---|---|
 | 1 | **LAN WebSocket** | Phone + laptop on same WiFi | None — host binds automatically |
-| 2 | **Crosslink relay** | Any network topology | `npm run stack` or tunnel |
+| 2 | **Crosslink relay** | Any network topology | `npm run stack`, or a relay you host |
 | 3 | **WebRTC DataChannel** | Post-connection upgrade | WebRTC adapter in browser |
 
 The client SDK tries each in order, falling through on failure. Sessions
@@ -227,7 +229,8 @@ Crosslink uses audited cryptographic primitives from `@noble/curves` and
 - **Revocation** — immediate at enforcement point; live sessions killed, grants
   dropped
 
-See [docs/SECURITY.md](docs/SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the full analysis.
+See [docs/security/overview.mdx](docs/security/overview.mdx) and
+[docs/security/threat-model.mdx](docs/security/threat-model.mdx) for the full analysis.
 
 ## Packages
 
@@ -245,7 +248,7 @@ See [docs/SECURITY.md](docs/SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_
 
 | App | What it does |
 | --- | --- |
-| `apps/chat` | Full chat app — web host + mobile client, tunnel support built in |
+| `apps/chat` | Full chat app — web host + installable mobile client on one port |
 | `apps/demo-pwa` | Installable PWA reference client |
 | `examples/echo` | Minimal host — exposes `echo.ping`, pairs in 20 lines |
 | `examples/notes` | Notes sync host |
@@ -254,20 +257,23 @@ See [docs/SECURITY.md](docs/SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_
 
 ## Documentation
 
-- [Getting started](docs/GETTING_STARTED.md) — build your first pair of apps
-- [Tunneling guide](docs/TUNNELING.md) — ngrok, Cloudflare, VPS setup
-- [Architecture](docs/ARCHITECTURE.md) — how the pieces fit
-- [Protocol spec](docs/PROTOCOL.md) — bytes on the wire
-- [Networking](docs/NETWORKING.md) — transport decisions, fallback hierarchy
-- [Self-hosting](docs/SELF_HOSTING.md) — run your own signaling/relay
-- [Security](docs/SECURITY.md) — crypto choices and invariants
-- [Threat model](docs/THREAT_MODEL.md) — what we defend against, what we don't
-- [Roadmap](docs/ROADMAP.md) — what's next
+The full documentation site lives in `docs/` (Mintlify). Start here:
+
+- [Quickstart](docs/quickstart.mdx) — build your first pair of apps
+- [Connection modes](docs/guides/connection-modes.mdx) — the four host network modes
+- [Remote access](docs/guides/remote-access.mdx) — router port mapping, and its real limits
+- [Architecture](docs/concepts/architecture.mdx) — how the pieces fit
+- [Pairing](docs/concepts/pairing.mdx) — the v2 pairing URI and the direct exchange
+- [Protocol spec](docs/reference/protocol.mdx) — bytes on the wire
+- [Networking](docs/connections/networking.mdx) — routes, fallback, firewalls
+- [Self-hosting](docs/guides/self-hosting.mdx) — run your own signaling/relay
+- [Security](docs/security/overview.mdx) — crypto choices and invariants
+- [Threat model](docs/security/threat-model.mdx) — what we defend against, what we don't
 
 ## Development
 
 ```bash
-npm test          # 283 tests: unit, both SDKs, full-stack integration
+npm test          # 423 tests: unit, both SDKs, full-stack integration
 npm run typecheck # strict TS across every workspace
 npm run build     # 18 build targets
 ```
@@ -279,8 +285,6 @@ and revocation can be driven against a real `HostPairingManager` and
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan. Highlights:
-
 - **M6** — Hardening: OS keychain adapters, pairing approval push, rate-limit
   tuning, structured logging
 - **M7** — Scale-out: Redis-backed signaling, relay quotas, multi-region relay
@@ -288,6 +292,26 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the full plan. Highlights:
 - **M9** — Group sessions: star topology with capability-gated peer introductions
 - **M10** — Ecosystem: protocol conformance suite, Swift/Kotlin/Rust SDKs,
   hybrid PQ key exchange
+
+## Remote access, without a tunnel provider
+
+`networkMode: "remote"` reaches a host from another network with nothing to sign
+up for and nothing to configure:
+
+- The router is asked for an inbound port over UPnP, NAT-PMP or PCP
+  (`packages/nat-map`), and the mapping is renewed while the host runs and
+  released on shutdown.
+- A `wan` route is added to the pairing QR **only** when a mapping actually
+  succeeded. A private address is never advertised as a public one, and there is
+  no silent fall back to LAN when remote was requested — the host reports why it
+  could not, including carrier-grade NAT and double NAT.
+- The bootstrap page and the transport share one port, so one mapping is enough
+  and the installed PWA loads over a route its socket can also use.
+- The listen port is remembered across restarts, so a paired phone reconnects
+  without a second scan after the desktop app or the machine restarts.
+
+Diagnose any of it with `npm run check:remote`. Details and limits:
+[docs/guides/remote-access.mdx](docs/guides/remote-access.mdx).
 
 ## License
 
@@ -301,14 +325,3 @@ Apache 2.0 — see [LICENSE](LICENSE).
     <img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?style=for-the-badge&logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" />
   </a>
 </p>
-
----
-
-## Open LAN Remote (Direct WAN)
-
-Crosslink supports direct remote access without tunnels or paid hosting:
-- Router port mapping attempted automatically (UPnP / NAT-PMP / PCP via `packages/nat-map`)
-- Public endpoint verified before being advertised (no dead IP in pairing QR)
-- Pairing persistent: PWA stores device identity independently of endpoint URL
-- Graceful fallback to local tunnel (`localtunnel`) or LAN when WAN unreachable
-- Security: pairing rate-limited, external reachability verified, endpoint identity validated

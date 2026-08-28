@@ -139,12 +139,17 @@ const rpc = await client.connect();
 The PWA should reflect the connection state in the UI:
 
 ```text
-Ready         -- waiting for pairing code or URI
-Connecting    -- establishing session
-Connected     -- active session, RPC available
-Offline       -- disconnected, attempting reconnect
-Expired       -- pairing code expired, need new scan
-Error         -- connection failed
+offline        -- waiting for pairing code or URI
+discovering    -- looking for the host
+pairing        -- pairing in progress
+connecting     -- establishing session
+direct         -- connected, LAN or WebRTC (RPC available)
+turn-relayed   -- connected via TURN relay (RPC available)
+crosslink-relayed -- connected via the relay service (RPC available)
+reconnecting   -- lost connection, attempting to restore
+unauthorized   -- host rejected this device
+revoked        -- device access was revoked
+protocol-incompatible -- host/client protocol versions don't match
 ```
 
 ```js

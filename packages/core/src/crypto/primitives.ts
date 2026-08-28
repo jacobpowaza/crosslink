@@ -1,7 +1,7 @@
 /**
  * Thin wrappers over audited noble libraries so the rest of the codebase never
  * touches raw crypto APIs. No custom cryptography lives here — composition of
- * standard primitives only (see docs/SECURITY.md).
+ * standard primitives only (see docs/security/overview.mdx).
  */
 import { xchacha20poly1305 } from "@noble/ciphers/chacha";
 import { ed25519, x25519 } from "@noble/curves/ed25519";

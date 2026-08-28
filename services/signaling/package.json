@@ -4,7 +4,6 @@
   "description": "Crosslink signaling service: presence directory and pairing-code routing",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

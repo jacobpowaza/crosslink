@@ -3,104 +3,176 @@ title: React Integration
 description: Using Crosslink in React applications
 ---
 
+`@crosslink/react` provides thin bindings over `@crosslink/sdk-browser`. The hooks add no state machine of their own -- the client already owns pairing, reconnection, and transport selection; the hooks just subscribe to it with `useSyncExternalStore`, so a connection change is reflected on the same render tick.
+
 ## Setup
 
 ```bash
-npm install @crosslink/sdk-browser
+npm install @crosslink/sdk-browser @crosslink/react
 ```
 
-## Basic usage
+## Provider
+
+Wrap your app in `CrosslinkProvider`. It creates a client from `options` (or accepts an existing `client`) and exposes connection state through context.
 
 ```jsx
-import { useEffect, useState } from "react";
-import { CrosslinkClient } from "@crosslink/sdk-browser";
+import { CrosslinkProvider } from "@crosslink/react";
 
 function App() {
-  const [client, setClient] = useState(null);
-  const [status, setStatus] = useState("disconnected");
+  return (
+    <CrosslinkProvider
+      options={{ deviceName: "React App" }}
+      onAuthorized={(rpc, client) => console.log("Connected, RPC ready")}
+      onUnauthorized={(state) => console.log("Not authorized:", state)}
+    >
+      <RemoteControl />
+    </CrosslinkProvider>
+  );
+}
+```
 
-  useEffect(() => {
-    const init = async () => {
-      const c = await CrosslinkClient.create({
-        deviceName: "React App",
-        onStateChange: setStatus
-      });
-      setClient(c);
-    };
-    init();
-  }, []);
+## Hooks
 
-  const pair = async (uri) => {
-    await client.pairFromQr(uri, ["app.control"]);
-    const rpc = await client.connect(["app.control"]);
-    // Use rpc...
+### `useCrosslink()`
+
+Returns the full context value: `{ client, state, rpc, pairedApps, connected }`.
+
+```jsx
+import { useCrosslink } from "@crosslink/react";
+
+function StatusBar() {
+  const { state, connected } = useCrosslink();
+  return <p>{connected ? "Connected" : `State: ${state}`}</p>;
+}
+```
+
+### `useCrosslinkState()`
+
+Just the current `ConnectionState` (`"offline"`, `"discovering"`, `"pairing"`, `"connecting"`, `"direct"`, `"turn-relayed"`, `"crosslink-relayed"`, `"reconnecting"`, `"unauthorized"`, `"revoked"`, `"protocol-incompatible"`).
+
+```jsx
+import { useCrosslinkState } from "@crosslink/react";
+
+function StateLabel() {
+  const state = useCrosslinkState();
+  return <span>{state}</span>;
+}
+```
+
+### `useCrosslinkRpc()`
+
+The `RpcClient` while a connected state exists, or `null` otherwise.
+
+```jsx
+import { useCrosslinkRpc } from "@crosslink/react";
+
+function DataViewer() {
+  const rpc = useCrosslinkRpc();
+  const [data, setData] = useState(null);
+
+  const fetchData = async () => {
+    if (!rpc) return;
+    setData(await rpc.call("data.get"));
   };
-
-  return <div>Status: {status}</div>;
-}
-```
-
-## Custom hook
-
-```jsx
-import { useState, useEffect, useCallback } from "react";
-import { CrosslinkClient } from "@crosslink/sdk-browser";
-
-export function useCrosslink(options = {}) {
-  const [client, setClient] = useState(null);
-  const [state, setState] = useState("idle");
-  const [rpc, setRpc] = useState(null);
-
-  useEffect(() => {
-    const init = async () => {
-      const c = await CrosslinkClient.create({
-        deviceName: options.deviceName ?? "Browser",
-        onStateChange: setState,
-        ...options
-      });
-      setClient(c);
-    };
-    init();
-  }, []);
-
-  const pair = useCallback(async (uri, caps) => {
-    if (!client) return;
-    await client.pairFromQr(uri, caps);
-    const r = await client.connect(caps);
-    setRpc(r);
-  }, [client]);
-
-  const call = useCallback(async (method, args) => {
-    if (!rpc) throw new Error("Not connected");
-    return rpc.call(method, args);
-  }, [rpc]);
-
-  const disconnect = useCallback(() => {
-    client?.disconnect();
-    setRpc(null);
-  }, [client]);
-
-  return { client, state, rpc, pair, call, disconnect };
-}
-```
-
-### Usage
-
-```jsx
-function RemoteControl() {
-  const { state, pair, call } = useCrosslink({
-    deviceName: "Phone Remote"
-  });
 
   return (
     <div>
-      <p>State: {state}</p>
-      <button onClick={() => pair(uri, ["app.control"])}>
-        Connect
-      </button>
-      <button onClick={() => call("app.next")} disabled={state !== "connected"}>
-        Next Track
-      </button>
+      <button onClick={fetchData} disabled={!rpc}>Refresh</button>
+      <pre>{JSON.stringify(data, null, 2)}</pre>
+    </div>
+  );
+}
+```
+
+### `useCrosslinkCall()`
+
+Calls a method and tracks `pending`/`error`. A call started before the connection is up throws immediately rather than queueing -- the client already queues idempotent calls across a reconnect, and a second queue here would reorder them.
+
+```jsx
+import { useCrosslinkCall } from "@crosslink/react";
+
+function NextTrackButton() {
+  const { call, pending, error } = useCrosslinkCall();
+  return (
+    <button onClick={() => call("app.next")} disabled={pending}>
+      {pending ? "..." : "Next Track"}
+    </button>
+  );
+}
+```
+
+### `useCrosslinkEvent(eventName, onEvent)`
+
+Subscribes to a host event for as long as the component is mounted and a connection exists. Resubscribes automatically after a reconnect.
+
+```jsx
+import { useCrosslinkEvent } from "@crosslink/react";
+
+function EventLog() {
+  const [events, setEvents] = useState([]);
+  useCrosslinkEvent("data.changed", (payload) => {
+    setEvents((prev) => [...prev, { time: Date.now(), payload }]);
+  });
+
+  return (
+    <ul>
+      {events.map((e, i) => <li key={i}>{JSON.stringify(e.payload)}</li>)}
+    </ul>
+  );
+}
+```
+
+### `useCrosslinkClientState(client)`
+
+Subscribes to a specific client's state without needing a `CrosslinkProvider`. Useful outside the provider tree, e.g. during pairing.
+
+```jsx
+import { useCrosslinkClientState } from "@crosslink/react";
+
+function StandaloneStatus({ client }) {
+  const state = useCrosslinkClientState(client);
+  return <p>State: {state}</p>;
+}
+```
+
+### `isConnected(state)`
+
+A plain helper -- `true` for `"direct"`, `"crosslink-relayed"`, and `"turn-relayed"`.
+
+```jsx
+import { isConnected } from "@crosslink/react";
+
+isConnected("direct"); // true
+isConnected("connecting"); // false
+```
+
+## Pairing
+
+Pairing itself isn't wrapped in a hook -- call the client directly, then let the provider/hooks reflect the resulting state:
+
+```jsx
+function PairingScreen({ client }) {
+  const [uri, setUri] = useState("");
+  const [error, setError] = useState(null);
+
+  const handlePair = async () => {
+    try {
+      await client.pairFromQr(uri, ["app.control"]);
+      await client.connect(["app.control"]);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div>
+      <input
+        value={uri}
+        onChange={(e) => setUri(e.target.value)}
+        placeholder="Paste crosslink://pair?... URI"
+      />
+      <button onClick={handlePair}>Pair</button>
+      {error && <p className="error">{error}</p>}
     </div>
   );
 }
@@ -136,7 +208,7 @@ export function QRScanner({ onScan }) {
 function CrosslinkApp() {
   const [error, setError] = useState(null);
 
-  const pair = async (uri) => {
+  const pair = async (client, uri) => {
     try {
       await client.pairFromQr(uri, ["app.control"]);
     } catch (err) {
@@ -158,25 +230,10 @@ function CrosslinkApp() {
 }
 ```
 
-## Event subscriptions
-
-```jsx
-useEffect(() => {
-  if (!rpc) return;
-
-  const unsub = rpc.subscribe("app.update", (payload) => {
-    setData(payload);
-  });
-
-  return () => unsub();
-}, [rpc]);
-```
-
 ## Best practices
 
-- Always use `CrosslinkClient.create()` (not `new CrosslinkClient()`)
-- Handle connection state changes
+- Use `CrosslinkProvider` at the root of the tree that needs Crosslink state
+- Use `isConnected(state)` rather than comparing against a single `"connected"` string -- a connected session can be `direct`, `crosslink-relayed`, or `turn-relayed`
 - Show SAS to the user during pairing
 - Review capabilities before approving
-- Unsubscribe from events on unmount
-- Clean up connections on unmount
+- `useCrosslinkEvent` and `useCrosslinkCall` clean up subscriptions and mounted-state tracking automatically on unmount

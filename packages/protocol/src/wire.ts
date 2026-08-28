@@ -4,7 +4,7 @@
  * envelope itself, and the signaling/relay service protocols.
  *
  * All base64 fields are standard base64 unless suffixed `b64u` (base64url).
- * See docs/PROTOCOL.md for byte-level details.
+ * See docs/reference/protocol.mdx for byte-level details.
  */
 
 /* ------------------------------------------------------------------ */

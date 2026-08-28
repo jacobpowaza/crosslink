@@ -1,86 +1,108 @@
-import React, { useState, useCallback } from "react";
-import { CrosslinkProvider, useCrosslink, useCrosslinkStatus } from "@crosslink/react";
-import type { CrosslinkClientOptions } from "@crosslink/sdk-browser";
+/**
+ * Crosslink in React + TSX.
+ *
+ * The whole integration is `<CrosslinkProvider>` plus hooks: no pairing code,
+ * no transport selection, no reconnect handling. Paste the pairing URI from the
+ * desktop app's QR (or scan it with the phone camera, which opens the same
+ * bootstrap page) and the rest is the developer's own UI.
+ */
+import { useCallback, useState } from "react";
+import {
+  CrosslinkProvider,
+  useCrosslink,
+  useCrosslinkCall,
+  useCrosslinkEvent,
+  useCrosslinkState
+} from "@crosslink/react";
 
-function PairButton() {
-  const { client, status } = useCrosslink();
+function ConnectionBadge(): JSX.Element {
+  const state = useCrosslinkState();
+  return (
+    <p>
+      Status: <strong>{state}</strong>
+    </p>
+  );
+}
+
+function PairForm(): JSX.Element {
+  const { client, connected } = useCrosslink();
   const [uri, setUri] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const handlePair = useCallback(async () => {
+  const pair = useCallback(async () => {
+    setError(null);
+    setBusy(true);
     try {
-      await client.pairFromQr(uri || prompt("Enter pairing URI:") || "");
-      alert("Paired!");
-    } catch (e: any) {
-      alert("Pairing failed: " + (e?.message ?? String(e)));
+      await client.pairFromQr(uri.trim());
+      await client.connect();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
     }
   }, [client, uri]);
+
+  if (connected) return <p>Paired and connected.</p>;
 
   return (
     <div>
       <input
         type="text"
-        placeholder="Pairing URI or code..."
+        placeholder="crosslink://pair?…"
         value={uri}
         onChange={(e) => setUri(e.target.value)}
+        style={{ width: 420 }}
       />
-      <button onClick={handlePair}>Pair</button>
-    </div>
-  );
-}
-
-function StatusDisplay() {
-  const status = useCrosslinkStatus();
-  return <p>Status: <strong>{status}</strong></p>;
-}
-
-function AppContent() {
-  const { client, status, rpc } = useCrosslink();
-  const [message, setMessage] = useState("");
-
-  const sendHello = useCallback(async () => {
-    if (!rpc) {
-      setMessage("Not connected yet.");
-      return;
-    }
-    try {
-      // Example call — real host must expose this method
-      const result = await rpc.call("hello.ping", { message: "hello" });
-      setMessage("Response: " + JSON.stringify(result));
-    } catch (e: any) {
-      setMessage("Call failed: " + (e?.message ?? String(e)));
-    }
-  }, [rpc]);
-
-  return (
-    <div style={{ padding: 24 }}>
-      <h1>Crosslink — React + TypeScript</h1>
-      <StatusDisplay />
-      <PairButton />
-      <button
-        disabled={status !== "direct" && status !== "crosslink-relayed" && status !== "lan"}
-        onClick={sendHello}
-      >
-        Send "hello"
+      <button onClick={() => void pair()} disabled={busy || uri.trim().length === 0}>
+        {busy ? "Pairing…" : "Pair"}
       </button>
-      <pre>{message}</pre>
+      {error ? <pre style={{ color: "crimson", whiteSpace: "pre-wrap" }}>{error}</pre> : null}
     </div>
   );
 }
 
-const options: CrosslinkClientOptions = {
-  deviceName: "react-browser",
-  onStateChange(state) {
-    console.log("Crosslink state:", state);
-  },
-  onConfirmPairing(req) {
-    return confirm(`Confirm pairing with ${req.hostName}? SAS: ${req.sas}`);
-  },
-};
+function Chat(): JSX.Element {
+  const { connected } = useCrosslink();
+  const { call, pending, error } = useCrosslinkCall<{ ok: boolean }>();
+  const [draft, setDraft] = useState("");
+  const [log, setLog] = useState<string[]>([]);
 
-export default function App() {
+  // Resubscribes by itself after a reconnect.
+  useCrosslinkEvent<{ sender: string; text: string }>("chat.new_message", (msg) => {
+    setLog((prev) => [...prev, `${msg.sender}: ${msg.text}`]);
+  });
+
   return (
-    <CrosslinkProvider options={options}>
-      <AppContent />
+    <div>
+      <input value={draft} onChange={(e) => setDraft(e.target.value)} disabled={!connected} />
+      <button
+        disabled={!connected || pending || draft.length === 0}
+        onClick={() => {
+          void call("chat.send", { text: draft }).then(() => setDraft(""));
+        }}
+      >
+        Send
+      </button>
+      {error ? <p style={{ color: "crimson" }}>{error.message}</p> : null}
+      <ul>
+        {log.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export default function App(): JSX.Element {
+  return (
+    <CrosslinkProvider options={{ deviceName: "React example" }}>
+      <div style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1>Crosslink — React + TypeScript</h1>
+        <ConnectionBadge />
+        <PairForm />
+        <Chat />
+      </div>
     </CrosslinkProvider>
   );
 }

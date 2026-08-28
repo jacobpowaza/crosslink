@@ -11,6 +11,10 @@ import { createCrosslinkServer, type DeviceSummary } from "@crosslink/sdk-node";
 import QRCode from "qrcode";
 import { randomUUID } from "node:crypto";
 
+const args = new Set(process.argv.slice(2));
+
+// Optional. Nothing here is needed to pair or connect: with no services at all
+// the phone dials this process directly over the address in the QR.
 const signalingUrl = process.env.CROSSLINK_SIGNALING_URL;
 const relayUrl = process.env.CROSSLINK_RELAY_URL;
 
@@ -33,9 +37,14 @@ const server = createCrosslinkServer({
   ],
   signalingUrl,
   relayUrl,
-  lan: { enabled: true, bind: "loopback" },
+  // `--remote` additionally asks the router for an inbound port so a phone off
+  // this Wi-Fi can reach the host too.
+  networkMode: args.has("--remote") ? "remote" : "auto",
+  // Bound to every interface, not loopback: a phone has to be able to dial the
+  // address the QR advertises, and loopback on the phone is the phone.
+  lan: { enabled: true, bind: "all" },
   pairing: {
-    autoApprove: process.argv.includes("--yes"),
+    autoApprove: args.has("--yes"),
     approve: async (req) => {
       console.log(`\nPairing request from "${req.deviceName}" — SAS ${req.sas}`);
       console.log(`  caps: ${req.requestedCaps.join(", ") || "(none)"}`);
@@ -91,7 +100,12 @@ server
 
 await server.start();
 
-console.log("Notes host ready:", JSON.stringify(server.status().transports));
+console.log("Notes host ready.");
+for (const endpoint of server.connectionEndpoints()) {
+  console.log(`  ${endpoint.kind.padEnd(7)} ${endpoint.url}`);
+}
+const remote = server.getRemoteDiagnostics();
+if (remote && !remote.reachable) console.log(`  remote  ${remote.message}`);
 console.log("Commands: code | devices | cap <deviceId> <caps|-> | revoke <deviceId> | quit\n");
 
 const rl = createInterface({ input: process.stdin, terminal: false });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { PairingCard, createPairingCard } from "./pairing-card.js";
+import { PairingCard, createPairingCard, normalizeNetworkMode } from "./pairing-card.js";
 
 // Mock minimal document & HTMLElement for node test environment
 class MockClassList {
@@ -229,25 +229,58 @@ describe("PairingCard UI Component", () => {
   it("switches network mode and invokes onNetworkModeChange callback", () => {
     const modeSpy = vi.fn();
     const card = new PairingCard({
-      networkMode: "open-lan",
+      networkMode: "remote",
       onNetworkModeChange: modeSpy,
       injectStyles: false,
     });
 
-    expect(card.getNetworkMode()).toBe("open-lan");
-
-    card.setNetworkMode("cloudflare");
-    expect(card.getNetworkMode()).toBe("cloudflare");
-    expect(modeSpy).toHaveBeenCalledWith("cloudflare");
+    expect(card.getNetworkMode()).toBe("remote");
 
     card.setNetworkMode("local-only");
     expect(card.getNetworkMode()).toBe("local-only");
     expect(modeSpy).toHaveBeenCalledWith("local-only");
 
-    card.setNetworkMode("ngrok");
-    expect(card.getNetworkMode()).toBe("ngrok");
-    expect(modeSpy).toHaveBeenCalledWith("ngrok");
+    card.setNetworkMode("lan-and-relay");
+    expect(card.getNetworkMode()).toBe("lan-and-relay");
+    expect(modeSpy).toHaveBeenCalledWith("lan-and-relay");
 
+    card.destroy();
+  });
+
+  it("folds a mode name persisted by an older build onto a current one", () => {
+    // An upgraded app finds "open-lan-remote" or "ngrok" in localStorage; the
+    // card must start on a mode that still exists rather than on nothing.
+    expect(normalizeNetworkMode("open-lan-remote")).toBe("remote");
+    expect(normalizeNetworkMode("local")).toBe("local-only");
+    expect(normalizeNetworkMode("ngrok")).toBe("auto");
+    expect(normalizeNetworkMode(undefined)).toBe("auto");
+
+    const card = new PairingCard({ networkMode: "open-lan-remote" as never, injectStyles: false });
+    expect(card.getNetworkMode()).toBe("remote");
+    card.destroy();
+  });
+
+  it("names the routes the current QR advertises, and says nothing more", () => {
+    const card = new PairingCard({ injectStyles: false });
+    card.update({
+      endpoints: [
+        { kind: "lan", url: "ws://192.168.1.50:8100" },
+        { kind: "wan", url: "ws://203.0.113.7:8100" },
+      ],
+    });
+    const summary = card.element.querySelector(".cl-route-summary") as HTMLElement;
+    const text = () => Array.from(summary.children).map((c) => c.textContent).join(" ");
+    expect(summary.hidden).toBe(false);
+    expect(text()).toContain("this network");
+    expect(text()).toContain("the internet, directly");
+
+    // Remote asked for and refused: no wan route, and the reason is shown.
+    card.update({
+      endpoints: [{ kind: "lan", url: "ws://192.168.1.50:8100" }],
+      remoteNote: "the router refused a port mapping",
+    });
+    expect(text()).not.toContain("the internet, directly");
+    expect(text()).toContain("the router refused a port mapping");
     card.destroy();
   });
 });

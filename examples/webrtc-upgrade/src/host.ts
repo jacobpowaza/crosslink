@@ -4,15 +4,14 @@
  *
  * Demonstrates the full arc a real product wants:
  *
- *   1. A phone or laptop on any network pairs over signaling and connects
- *      through the relay. That always works, and every byte pays a round trip
- *      through someone else's server.
+ *   1. A phone or laptop pairs and connects over whatever route the QR
+ *      advertises — the host's own address on this network, a router-mapped
+ *      public address, or a relay when neither is available.
  *   2. The client offers to upgrade. The SDP exchange travels over the session
  *      that is already up — encrypted, authenticated, capability-gated — so no
  *      separate signaling channel exists to secure or to keep alive.
- *   3. If a direct path exists, traffic moves onto a DataChannel and the relay
- *      goes idle. If it does not, nothing happens and the relayed session
- *      carries on.
+ *   3. If a direct path exists, traffic moves onto a DataChannel. If it does
+ *      not, nothing happens and the existing session carries on.
  *
  * It also shows the permission model doing real work: `files.read` is granted
  * at pairing, while `shell.exec` is high-risk and `confirmEachUse`, so every
@@ -20,7 +19,11 @@
  * device was granted.
  *
  * Usage:
- *   npm run stack                       # signaling on :8081, relay on :8082
+ *   node examples/webrtc-upgrade/src/host.ts            # same Wi-Fi
+ *   node examples/webrtc-upgrade/src/host.ts --remote   # ask the router for a port
+ *
+ * A relay is optional, for clients that can reach neither:
+ *   npm run stack
  *   CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
  *   CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
  *   node examples/webrtc-upgrade/src/host.ts
@@ -30,8 +33,8 @@
  * WebRTC in Node needs a native implementation. Install one of:
  *   npm i @roamhq/wrtc          # or
  *   npm i node-datachannel
- * Without it the host still runs and still works over the relay; it just
- * declines upgrade requests, which is exactly how it should degrade.
+ * Without it the host still runs and still works over its existing session; it
+ * just declines upgrade requests, which is exactly how it should degrade.
  */
 import { createInterface } from "node:readline";
 import { readdir, readFile } from "node:fs/promises";
@@ -41,25 +44,11 @@ import { createCrosslinkServer, type CrosslinkServer } from "@crosslink/sdk-node
 import { consoleLogger, type ConsentRequest } from "@crosslink/core";
 import { exposeWebrtcOffer } from "@crosslink/webrtc-adapter";
 
+// Optional. With neither set the client connects to this host directly over
+// the address in the QR; a relay only adds a route for clients that cannot.
 const signalingUrl = process.env.CROSSLINK_SIGNALING_URL;
 const relayUrl = process.env.CROSSLINK_RELAY_URL;
-
-if (!signalingUrl || !relayUrl) {
-  console.error(
-    [
-      "",
-      "  This example is about connecting from another network, so it needs",
-      "  signaling and relay services:",
-      "",
-      "    npm run stack",
-      "    CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \\",
-      "    CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \\",
-      "    node examples/webrtc-upgrade/src/host.ts",
-      ""
-    ].join("\n")
-  );
-  process.exit(1);
-}
+const remote = process.argv.includes("--remote");
 
 /* ------------------------------------------------------------------ */
 /* WebRTC implementation discovery                                     */
@@ -136,8 +125,8 @@ const server: CrosslinkServer = createCrosslinkServer({
   relayUrl,
   relayToken: process.env.CROSSLINK_RELAY_TOKEN,
   signalingToken: process.env.CROSSLINK_SIGNALING_TOKEN,
-  // Cross-network is the point of the demo, so there is no LAN shortcut.
-  lan: { enabled: false },
+  networkMode: remote ? "remote" : "auto",
+  lan: { enabled: true, bind: "all" },
   logger: consoleLogger({ level: process.env.CROSSLINK_LOG_LEVEL === "debug" ? "debug" : "info" }),
 
   // A host-authored policy, applied before the user is ever asked. A client
@@ -274,8 +263,15 @@ server.typedOn("deviceDisconnected", ({ deviceId, transport }) => {
 console.log("\nWebRTC Upgrade Demo");
 console.log(`  fingerprint  ${server.fingerprintHex.slice(0, 32)}…`);
 console.log(
-  `  webrtc       ${webrtc ? `available via ${webrtc.via}` : "unavailable — relay only (install @roamhq/wrtc to enable)"}`
+  `  webrtc       ${webrtc ? `available via ${webrtc.via}` : "unavailable — no upgrade (install @roamhq/wrtc to enable)"}`
 );
+for (const endpoint of server.connectionEndpoints()) {
+  console.log(`  ${endpoint.kind.padEnd(12)} ${endpoint.url}`);
+}
+const remoteDiagnostics = server.getRemoteDiagnostics();
+if (remoteDiagnostics && !remoteDiagnostics.reachable) {
+  console.log(`  remote       ${remoteDiagnostics.message}`);
+}
 console.log("  commands     code | devices | revoke <id> | consent | status | quit\n");
 
 await printPairingCode();

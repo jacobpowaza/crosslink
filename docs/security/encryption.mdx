@@ -35,7 +35,7 @@ Client identity: Ed25519 key pair, persisted under WebCrypto key
 ```js
 // Host (Node.js)
 // Identity is generated automatically by createCrosslinkServer()
-// Stored in .crosslink-data/<appId>/ via keytar or encrypted file
+// Stored in .crosslink-data/<appId>/ via OS keychain (if available) or encrypted file
 
 // Client (Browser)
 // Identity is generated automatically by CrosslinkClient.create()
@@ -47,11 +47,14 @@ Client identity: Ed25519 key pair, persisted under WebCrypto key
 The CLX1 handshake authenticates both parties and establishes a shared secret:
 
 ```text
-1. Host generates ephemeral X25519 key pair
-2. Client generates ephemeral X25519 key pair
-3. Both exchange ephemeral public keys (signed with identity keys)
-4. Both compute shared secret via X25519(ECDH)
-5. Both derive session keys via HKDF-SHA256(shared_secret, salt, info)
+1. Client sends `sinit`: its static X25519 key, a fresh ephemeral X25519 key,
+   a nonce, and an Ed25519 signature over the canonical transcript T0
+2. Host looks the device up by id and verifies that signature against the key in
+   its own stored record -- never against a key offered on the wire
+3. Host replies `sack`: its ephemeral key, a nonce, and a signature over T1
+4. Client verifies that signature against the host key it pinned at pairing
+5. Both compute ikm = X25519(eph, eph_peer) || X25519(static_x, static_x_peer)
+6. Both derive two directional keys from ikm via HKDF-SHA256
 ```
 
 ### Handshake security properties
@@ -91,12 +94,19 @@ The 192-bit nonce makes random nonce generation safe without worrying about coll
 Session keys are derived using HKDF-SHA256:
 
 ```text
-IKM = X25519(ephemeral_private, peer_ephemeral_public)
-salt = SHA-256(host_identity || client_identity)
-info = "crosslink-session-v1"
+ikm  = X25519(eph, eph_peer) || X25519(static_x, static_x_peer)
+salt = ncC || nh                        (both sides' handshake nonces)
+info = "crosslink-session-keys-v1"
 
-session_key = HKDF-SHA256(IKM, salt, info)
+okm  = HKDF-SHA256(ikm, salt, info, 64)
+kC   = okm[0..32]     client -> host traffic key
+kH   = okm[32..64]    host -> client traffic key
 ```
+
+The ephemeral term gives forward secrecy; the static-static term binds the
+session to the two paired identities, so a stolen ephemeral alone proves
+nothing. Each direction gets its own key, so a frame cannot be reflected back at
+its sender. See [Protocol](/reference/protocol) for the full transcript.
 
 ## Secret storage encryption
 

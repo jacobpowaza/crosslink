@@ -21,7 +21,24 @@ export interface TrustedDeviceRecord {
   addedAt: number;
   lastSeen?: number;
   revokedAt?: number;
+  /**
+   * deviceId of the already-trusted device whose session minted the device-link
+   * token this device completed with — e.g. a browser tab handing off to the
+   * same app installed to the home screen. Revoking the parent cascades to
+   * every device linked from it, since to the user it's one continuous trust
+   * relationship wearing two keypairs.
+   */
+  linkedFrom?: string;
 }
+
+/**
+ * RPC method every host auto-registers so an already-trusted, connected
+ * device can mint a single-use continuation token for itself — used to
+ * silently re-establish trust from a fresh, storage-isolated context (e.g. an
+ * iOS "Add to Home Screen" install, which does not share IndexedDB/localStorage
+ * with the Safari tab that originally paired).
+ */
+export const DEVICE_LINK_RPC_METHOD = "crosslink.system.deviceLink.create";
 
 export interface PairedAppRecord {
   appId: string;
@@ -50,6 +67,29 @@ export interface ClientAppStore {
   remove(appId: string): void;
 }
 
+/**
+ * Revokes every device transitively linked from `rootDeviceId` (breadth-first,
+ * so a chain of hand-offs is fully covered, not just the direct child).
+ * Mutates records in place; callers persist afterward.
+ */
+export function cascadeRevokeLinked(
+  all: Iterable<TrustedDeviceRecord>,
+  rootDeviceId: string,
+  atMs: number
+): void {
+  const records = [...all];
+  const queue = [rootDeviceId];
+  while (queue.length > 0) {
+    const parent = queue.shift()!;
+    for (const rec of records) {
+      if (rec.linkedFrom === parent && rec.revokedAt === undefined) {
+        rec.revokedAt = atMs;
+        queue.push(rec.deviceId);
+      }
+    }
+  }
+}
+
 export class InMemoryHostDeviceStore implements HostDeviceStore {
   private records = new Map<string, TrustedDeviceRecord>();
   list(): TrustedDeviceRecord[] {
@@ -65,6 +105,7 @@ export class InMemoryHostDeviceStore implements HostDeviceStore {
     const rec = this.records.get(deviceId);
     if (!rec || rec.revokedAt !== undefined) return false;
     rec.revokedAt = atMs;
+    cascadeRevokeLinked(this.records.values(), deviceId, atMs);
     return true;
   }
   setCaps(deviceId: string, caps: string[]): void {

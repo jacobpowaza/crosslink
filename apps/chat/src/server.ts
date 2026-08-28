@@ -1,290 +1,70 @@
 #!/usr/bin/env node
 /**
- * Crosslink Chat Demo — Web App (Host) + Mobile Client
+ * Crosslink Chat Demo — desktop host + mobile PWA client.
  *
- * Architecture:
- *   Web app (this server) runs the Crosslink host, serves a chat UI + QR code.
- *   Mobile client (opened by scanning QR) runs the Crosslink browser SDK,
- *   auto-pairs, and chats with the web app through encrypted RPC.
+ * The point of this demo is to show what a developer actually writes. Every
+ * piece of pairing, QR, connectivity and transport logic lives in the SDK; this
+ * file configures a host, exposes three RPC methods, and serves two pages.
  *
- *   Both directions flow through Crosslink:
- *     Mobile  → RPC chat.send → Server → SSE broadcast → Web UI
- *     Web UI  → POST /api/send → Server → RPC chat.new_message → Mobile
+ * Two HTTP surfaces, deliberately separated:
+ *
+ *   Control (127.0.0.1 only)  the desktop UI and its /api routes. These read
+ *                             and mutate host state — pairing codes, the paired
+ *                             device list, revocation — so they must not be
+ *                             reachable from the network. Binding to loopback
+ *                             is what enforces that; there is no token to leak.
+ *   Bootstrap                 the mobile page, the SDK bundle, the service
+ *                             worker and icons — served by the SDK on the very
+ *                             same port as the Crosslink transport. One port
+ *                             means one router mapping, so the installable page
+ *                             is reachable from wherever the transport is.
+ *                             Static files only, no host state.
+ *
+ * The phone never talks to the control surface at all: it pairs over the
+ * Crosslink WebSocket endpoint carried in the QR code.
  *
  * Usage:
- *   npm run stack        # start signaling + relay
- *   npm run demo:chat    # start this server (port 8100)
+ *   npm run demo:chat                      # LAN
+ *   CROSSLINK_NETWORK_MODE=remote npm run demo:chat   # LAN + router port mapping
  */
 import http from "node:http";
-import os from "node:os";
 import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCrosslinkServer } from "@crosslink/sdk-node";
-import { buildPairingUri, parsePairingUri } from "@crosslink/core";
-import { bytesToBase64 } from "@crosslink/protocol";
+import { createCrosslinkServer, type CrosslinkServerConfig } from "@crosslink/sdk-node";
 import QRCode from "qrcode";
 
-import { startTunnel } from "untun";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, "..", "public");
-const port = Number(process.env.PORT ?? 8100);
+const publicDir = path.resolve(__dirname, "..", "public");
 
-function isPrivateOrLocal(ip: string): boolean {
-  if (ip === "127.0.0.1" || ip === "::1" || ip === "localhost") return true;
-  if (ip.startsWith("10.")) return true;
-  if (ip.startsWith("192.168.")) return true;
-  if (ip.startsWith("172.")) {
-    const second = parseInt(ip.split(".")[1] ?? "0", 10);
-    if (second >= 16 && second <= 31) return true;
-  }
-  return false;
-}
+const controlPort = Number(process.env.PORT ?? 8100);
 
-function getLanAddress(): string {
-  const interfaces = Object.values(os.networkInterfaces());
-  // Prefer private/local interfaces (Wi-Fi / Ethernet) over VPN/public ones.
-  for (const list of interfaces) {
-    for (const nic of list ?? []) {
-      if (nic.family === "IPv4" && !nic.internal && isPrivateOrLocal(nic.address)) {
-        return nic.address;
-      }
-    }
-  }
-  // Fallback: any non-internal IPv4
-  for (const list of interfaces) {
-    for (const nic of list ?? []) {
-      if (nic.family === "IPv4" && !nic.internal) return nic.address;
-    }
-  }
-  return "127.0.0.1";
-}
-
-const signalingUrl = process.env.CROSSLINK_SIGNALING_URL;
-const relayUrl = process.env.CROSSLINK_RELAY_URL;
-
-let activePublicUrl: string | null = process.env.CROSSLINK_PUBLIC_URL?.replace(/\/+$/, "") ?? null;
-let cachedWanIp: string | null = process.env.CROSSLINK_PUBLIC_IP ?? null;
-
-let activeCloudflareTunnel: { getURL: () => Promise<string>; close: () => Promise<void> } | null = null;
-let activeCloudflareUrl: string | null = null;
-
-let activeNgrokProcess: any = null;
-let activeNgrokUrl: string | null = null;
-
-let activeLocaltunnelProcess: any = null;
-let activeLocaltunnelUrl: string | null = null;
-
-async function stopCloudflareTunnel(): Promise<void> {
-  if (activeCloudflareTunnel) {
-    try {
-      await activeCloudflareTunnel.close();
-    } catch {}
-    activeCloudflareTunnel = null;
-    activeCloudflareUrl = null;
-    console.log("  [tunnel] Cloudflare tunnel stopped.");
-  }
-}
-
-async function stopNgrokTunnel(): Promise<void> {
-  if (activeNgrokProcess) {
-    try {
-      activeNgrokProcess.kill("SIGTERM");
-    } catch {}
-    activeNgrokProcess = null;
-    activeNgrokUrl = null;
-    console.log("  [tunnel] ngrok tunnel stopped.");
-  }
-}
-
-async function ensureCloudflareTunnel(localPort: number): Promise<string | null> {
-  if (activeCloudflareUrl) return activeCloudflareUrl;
-  await stopNgrokTunnel();
-  console.log(`\n  [tunnel] Starting zero-cost Cloudflare Quick Tunnel on port ${localPort}...`);
-  try {
-    // Suppress interactive binary-download prompt and prevent untun's signal
-    // handlers from killing our server when tunnel switches/stops.
-    const originalExit = process.exit;
-    const originalOff = process.off.bind(process);
-    const suppressExit = (code?: number) => {
-      console.log(`  [tunnel] Suppressed exit(${code ?? ""}) from tunnel library.`);
-    };
-    (process as any).exit = suppressExit;
-    const tunnel = await startTunnel({ port: localPort, acceptCloudflareNotice: true });
-    (process as any).exit = originalExit;
-    if (tunnel) {
-      // Remove the destructive signal handlers that untun installs.
-      const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-      for (const sig of signals) {
-        try {
-          // untun registers with process.once; getEventListeners isn't standard,
-          // so we just rely on the cleanup function in tunnel.close() below.
-        } catch {}
-      }
-      activeCloudflareTunnel = tunnel;
-      const url = await tunnel.getURL();
-      if (url) {
-        activeCloudflareUrl = url.replace(/\/+$/, "");
-        console.log(`  \x1b[32m✔ Cloudflare Quick Tunnel Active:\x1b[0m ${activeCloudflareUrl}`);
-        console.log(`  \x1b[32m✔ Direct Mobile Access: "Add to Home Screen" screen is SKIPPED\x1b[0m\n`);
-        return activeCloudflareUrl;
-      }
-    }
-  } catch (err) {
-    console.warn(`  [tunnel] Cloudflare tunnel failed: ${(err as Error).message}`);
-  }
-  return null;
-}
-
-async function ensureNgrokTunnel(localPort: number): Promise<string | null> {
-  if (activeNgrokUrl) return activeNgrokUrl;
-  await stopCloudflareTunnel();
-
-  // Check if ngrok is already running and exposing a tunnel
-  try {
-    const res = await fetch("http://127.0.0.1:4040/api/tunnels", { signal: AbortSignal.timeout(1000) });
-    if (res.ok) {
-      const data = await res.json();
-      const t = data.tunnels?.find((x: any) => x.proto === "https") || data.tunnels?.[0];
-      if (t?.public_url) {
-        activeNgrokUrl = t.public_url.replace(/\/+$/, "");
-        console.log(`\n  \x1b[32m✔ Connected to active ngrok tunnel:\x1b[0m ${activeNgrokUrl}\n`);
-        return activeNgrokUrl;
-      }
-    }
-  } catch {}
-
-  console.log(`\n  [tunnel] Spawning ngrok http ${localPort}...`);
-  try {
-    activeNgrokProcess = spawn("ngrok", ["http", String(localPort), "--log=stdout", "--log-format=json"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    activeNgrokProcess.on("exit", () => {
-      activeNgrokProcess = null;
-      activeNgrokUrl = null;
-    });
-
-    const deadline = Date.now() + 8000;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 400));
-      try {
-        const res = await fetch("http://127.0.0.1:4040/api/tunnels", { signal: AbortSignal.timeout(800) });
-        if (res.ok) {
-          const data = await res.json();
-          const t = data.tunnels?.find((x: any) => x.proto === "https") || data.tunnels?.[0];
-          if (t?.public_url) {
-            activeNgrokUrl = t.public_url.replace(/\/+$/, "");
-            console.log(`  \x1b[32m✔ ngrok Tunnel Active:\x1b[0m ${activeNgrokUrl}\n`);
-            return activeNgrokUrl;
-          }
-        }
-      } catch {}
-    }
-  } catch (err) {
-    console.warn(`  [tunnel] ngrok spawn failed: ${(err as Error).message}`);
-  }
-  return null;
-}
-
-async function ensureLocaltunnel(localPort: number): Promise<string | null> {
-  if (activeLocaltunnelUrl) return activeLocaltunnelUrl;
-  await stopCloudflareTunnel();
-  await stopNgrokTunnel();
-
-  console.log(`\n  [tunnel] Starting localtunnel on port ${localPort}...`);
-  try {
-    // Use localtunnel's CLI via npx; try fixed subdomain for persistence
-    const subdomain = `crosslink-chat-${port}`;
-    activeLocaltunnelProcess = spawn("npx", ["--yes", "localtunnel", "--port", String(localPort), "--subdomain", subdomain], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 400));
-      try {
-        const res = await fetch(`https://loca.lt/`, { signal: AbortSignal.timeout(800) });
-        // We don't read localtunnel status this way; instead we parse stdout
-        // For simplicity, assume success after timeout or stdout match
-      } catch {}
-    }
-    // If we reach here without an explicit URL match, construct the likely URL
-    const url = `https://${subdomain}.loca.lt`;
-    activeLocaltunnelUrl = url.replace(/\/+$/, "");
-    console.log(`  [tunnel] localtunnel active (subdomain fixed): ${activeLocaltunnelUrl}`);
-    return activeLocaltunnelUrl;
-  } catch (err) {
-    console.warn(`  [tunnel] localtunnel spawn failed: ${(err as Error).message}`);
-  }
-  return null;
-}
-
-async function stopLocaltunnel(): Promise<void> {
-  if (activeLocaltunnelProcess) {
-    try {
-      activeLocaltunnelProcess.kill("SIGTERM");
-    } catch {}
-    activeLocaltunnelProcess = null;
-    activeLocaltunnelUrl = null;
-    console.log("  [tunnel] localtunnel stopped.");
-  }
-}
-
-async function getPublicWanIp(): Promise<string | null> {
-  if (cachedWanIp) return cachedWanIp;
-  try {
-    const res = await fetch("https://api.ipify.org?format=json", { signal: AbortSignal.timeout(2500) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.ip) {
-        cachedWanIp = data.ip;
-        return cachedWanIp;
-      }
-    }
-  } catch {}
-  try {
-    const res = await fetch("https://icanhazip.com", { signal: AbortSignal.timeout(2500) });
-    if (res.ok) {
-      const text = (await res.text()).trim();
-      if (text) {
-        cachedWanIp = text;
-        return cachedWanIp;
-      }
-    }
-  } catch {}
-  return null;
-}
-
-function getPublicOrLanUrl(): string {
-  if (activePublicUrl) return activePublicUrl;
-  if (activeCloudflareUrl) return activeCloudflareUrl;
-  if (activeNgrokUrl) return activeNgrokUrl;
-  if (activeLocaltunnelUrl) return activeLocaltunnelUrl;
-  return `http://${getLanAddress()}:${port}`;
-}
+/**
+ * `remote` asks the SDK to make this machine reachable from outside the local
+ * network, and to fail loudly if it cannot — rather than handing out a QR that
+ * silently only works on this Wi-Fi.
+ */
+const networkMode = (process.env.CROSSLINK_NETWORK_MODE ?? "auto") as
+  NonNullable<CrosslinkServerConfig["networkMode"]>;
 
 // ─── state ──────────────────────────────────────────────────────────────
+
 interface ChatMsg {
   id: string;
   sender: string;
   text: string;
   at: number;
 }
+
 const messages: ChatMsg[] = [];
 const sseClients = new Set<http.ServerResponse>();
 
-function broadcast(event: string, data: unknown) {
+function broadcast(event: string, data: unknown): void {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const res of sseClients) {
-    res.write(payload);
-  }
+  for (const res of sseClients) res.write(payload);
 }
 
 // ─── crosslink host ─────────────────────────────────────────────────────
-let latestPairingUri: string | null = null;
-let latestPairingCode: string | null = null;
 
 const host = createCrosslinkServer({
   application: {
@@ -293,11 +73,14 @@ const host = createCrosslinkServer({
     version: "1.0.0",
     pwaConfig: {
       shortName: "Chat",
-      icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png" }, { src: "/icon-512.png", sizes: "512x512", type: "image/png" }],
+      icons: [
+        { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+        { src: "/icon-512.png", sizes: "512x512", type: "image/png" }
+      ],
       themeColor: "#0f172a",
       bgColor: "#0f172a",
       display: "standalone",
-      startUrl: "/mobile.html",
+      startUrl: "/mobile.html"
     },
     offline: {
       title: "Crosslink Chat is offline",
@@ -310,62 +93,74 @@ const host = createCrosslinkServer({
   },
   capabilities: [
     { id: "chat.send", title: "Send messages", risk: "low" },
-    { id: "chat.read", title: "Read messages", risk: "low" },
+    { id: "chat.read", title: "Read messages", risk: "low" }
   ],
-  signalingUrl,
-  relayUrl,
-  lan: { enabled: true, bind: "all" },
-  pairing: { autoApprove: true, ttlMs: 120_000 },
-  security: { pairingRateLimitMs: 0 },
-  resolvePresenceUrl: (url, _ctx) => {
-    // Rewrite 127.0.0.1 / localhost to the LAN IP so phone clients can reach
-    // the relay as a fallback when the direct LAN transport doesn't work.
-    return url
-      .replace(/127\.0\.0\.1/g, getLanAddress())
-      .replace(/localhost/g, getLanAddress());
-  },
+  // Optional. Unset means pairing and transport run directly against this
+  // machine — no service to deploy, nothing to pay for.
+  signalingUrl: process.env.CROSSLINK_SIGNALING_URL,
+  relayUrl: process.env.CROSSLINK_RELAY_URL,
+  networkMode,
+  lan: { enabled: true, bind: "all", httpHandler: serveBootstrap },
+  // A demo pairs unattended; a real app should leave this off so a human sees
+  // and confirms the SAS before a device is trusted.
+  pairing: { autoApprove: true, ttlMs: 120_000 }
 });
 
 host
-  .expose("chat.send", (input) => {
-    const { sender = "mobile", text = "" } = (input ?? {}) as { sender?: string; text?: string };
-    if (!text || typeof text !== "string") throw new Error("text is required");
-    const msg: ChatMsg = {
-      id: crypto.randomUUID().slice(0, 8),
-      sender,
-      text: text.slice(0, 2000),
-      at: Date.now(),
-    };
-    messages.push(msg);
-    broadcast("chat.update", { messages });
-    return { ok: true, id: msg.id };
-  }, { capability: "chat.send" })
+  .expose(
+    "chat.send",
+    (input) => {
+      const { sender = "mobile", text = "" } = (input ?? {}) as { sender?: string; text?: string };
+      if (!text || typeof text !== "string") throw new Error("text is required");
+      const msg = addMessage(sender, text);
+      return { ok: true, id: msg.id };
+    },
+    {
+      capability: "chat.send",
+      inputSchema: {
+        type: "object",
+        required: ["text"],
+        properties: {
+          text: { type: "string", minLen: 1, maxLen: 2000 },
+          sender: { type: "string", maxLen: 64 }
+        }
+      }
+    }
+  )
   .expose("chat.history", () => ({ messages }), { capability: "chat.read" })
-  .expose("chat.info", () => ({
-    name: "Crosslink Chat",
-    appId: "com.crosslink.chat",
-    messages: messages.length,
-  }));
+  .expose(
+    "chat.info",
+    () => ({ name: "Crosslink Chat", appId: "com.crosslink.chat", messages: messages.length }),
+    // Even a read-only method is gated: an ungated method is callable by any
+    // paired device regardless of what the user granted it.
+    { capability: "chat.read" }
+  );
 
-host.on("deviceConnected", (info) => {
-  broadcast("status", { mobile: true, deviceId: info.deviceId });
-});
-host.on("deviceDisconnected", (info) => {
-  broadcast("status", { mobile: false, deviceId: info.deviceId });
-});
+host.declareEvent("chat.new_message");
 
-try {
-  await host.start();
-} catch (err) {
-  console.warn(`\n  \x1b[33m[Crosslink Host]\x1b[0m Failed to connect to local signaling/relay: ${(err as Error).message}`);
-  console.warn(`  Ensure \`npm run stack\` is active.\n`);
+host.on("deviceConnected", (info) => broadcast("status", { mobile: true, deviceId: info.deviceId }));
+host.on("deviceDisconnected", (info) => broadcast("status", { mobile: false, deviceId: info.deviceId }));
+
+function addMessage(sender: string, text: string): ChatMsg {
+  const msg: ChatMsg = {
+    id: crypto.randomUUID().slice(0, 8),
+    sender: sender.slice(0, 64),
+    text: text.slice(0, 2000),
+    at: Date.now()
+  };
+  messages.push(msg);
+  broadcast("chat.update", { messages });
+  return msg;
 }
 
-// ─── http server ────────────────────────────────────────────────────────
+await host.start();
+
+// ─── http plumbing ──────────────────────────────────────────────────────
+
 const securityHeaders: Record<string, string> = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
-  "cross-origin-opener-policy": "same-origin",
+  "cross-origin-opener-policy": "same-origin"
 };
 
 const MIME: Record<string, string> = {
@@ -375,197 +170,138 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
   ".svg": "image/svg+xml",
   ".png": "image/png",
-  ".webmanifest": "application/manifest+json",
+  ".webmanifest": "application/manifest+json"
 };
 
-function respond(res: http.ServerResponse, status: number, ct: string, body: string | Buffer) {
+function respond(res: http.ServerResponse, status: number, ct: string, body: string | Buffer): void {
   for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
   res.writeHead(status, { "content-type": ct });
   res.end(body);
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+const json = (res: http.ServerResponse, status: number, body: unknown): void =>
+  respond(res, status, "application/json", JSON.stringify(body));
+
+async function readJsonBody(req: http.IncomingMessage, maxBytes = 64 * 1024): Promise<unknown> {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    // Bounded so a slow oversized upload cannot grow the process heap.
+    if (body.length > maxBytes) throw new Error("request body too large");
+  }
+  return body ? JSON.parse(body) : {};
+}
+
+/**
+ * Serves a file from `public/`, refusing anything that escapes it.
+ *
+ * The boundary check includes the separator: without it, a sibling directory
+ * whose name merely starts with the public directory's name would pass.
+ */
+async function serveStatic(res: http.ServerResponse, pathname: string): Promise<void> {
+  const requested = pathname === "/" ? "/index.html" : pathname;
+  const resolved = path.resolve(path.join(publicDir, requested));
+  if (resolved !== publicDir && !resolved.startsWith(publicDir + path.sep)) {
+    respond(res, 403, "text/plain", "forbidden");
+    return;
+  }
+  try {
+    const data = await readFile(resolved);
+    for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
+    res.writeHead(200, {
+      "content-type": MIME[path.extname(resolved)] ?? "application/octet-stream",
+      "cache-control": "no-cache, no-store, must-revalidate"
+    });
+    res.end(data);
+  } catch {
+    respond(res, 404, "text/plain", "not found");
+  }
+}
+
+function pwaManifest(): unknown {
+  const app = host.config.application;
+  const cfg = app.pwaConfig ?? {};
+  return {
+    name: app.name,
+    short_name: cfg.shortName ?? app.name,
+    start_url: cfg.startUrl ?? "/mobile.html",
+    display: cfg.display ?? "standalone",
+    theme_color: cfg.themeColor ?? "#0f172a",
+    background_color: cfg.bgColor ?? "#0f172a",
+    icons: cfg.icons ?? [{ src: "/icon-192.png", sizes: "192x192" }]
+  };
+}
+
+/** Why there is no `wan` endpoint, when the host asked for one. */
+function remoteNote(): string | null {
+  const diagnostics = host.getRemoteDiagnostics();
+  if (!diagnostics || diagnostics.reachable) return null;
+  return diagnostics.message;
+}
+
+// ─── control surface (loopback only) ────────────────────────────────────
+
+const control = http.createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", `http://127.0.0.1:${controlPort}`);
   const pathname = url.pathname;
 
-  // ── API: pairing QR ──
+  // The pairing QR. Endpoints, transport choice and the QR itself all come
+  // from the SDK — this demo does not construct a pairing URL.
   if (pathname === "/api/pair" && req.method === "GET") {
     try {
-      const modeParam = (url.searchParams.get("mode") || "local").toLowerCase();
-
-      // Ensure host is ready before generating pairing codes.
-      let st = host.status() as Record<string, any>;
-      if (!st.started) {
-        try {
-          await host.start();
-          st = host.status() as Record<string, any>;
-        } catch (startErr) {
-          throw new Error("Crosslink host has not finished starting: " + (startErr as Error).message);
-        }
-      }
-
-      const code = await host.getPairingCode();
-      latestPairingUri = code.uri;
-      latestPairingCode = String(code.code ?? "").replace(/\D/g, "");
-
-      let baseUrl = `http://${getLanAddress()}:${port}`;
-      let skipParam = "";
-      let effectiveMode = "local";
-
-      if (modeParam === "cloudflare" || modeParam === "open-lan-cloudflared" || modeParam === "cloudflared") {
-        effectiveMode = "cloudflare";
-        const cfUrl = await ensureCloudflareTunnel(port);
-        if (cfUrl) {
-          baseUrl = cfUrl;
-          skipParam = "";
-        }
-      } else if (modeParam === "ngrok") {
-        effectiveMode = "ngrok";
-        const ngUrl = await ensureNgrokTunnel(port);
-        if (ngUrl) {
-          baseUrl = ngUrl;
-        }
-      } else if (modeParam === "open-lan" || modeParam === "open-lan-remote" || modeParam === "remote") {
-        effectiveMode = "open-lan";
-        await stopCloudflareTunnel();
-        await stopNgrokTunnel();
-        const wanIp = await getPublicWanIp();
-
-        // Attempt automatic router NAT mapping (UPnP / NAT-PMP / PCP)
-        let natResult: { mapped?: boolean; protocol?: string; message?: string } = {};
-        try {
-          const { tryNatMapping } = await import("@crosslink/nat-map");
-          const nat = await tryNatMapping({ internalPort: port, externalPort: port, protocol: "auto" });
-          natResult = {
-            mapped: nat.protocol !== "manual",
-            protocol: nat.protocol,
-            message: nat.protocol !== "manual" ? `Router mapping via ${nat.protocol}` : "No automatic router mapping available",
-          };
-        } catch {
-          natResult = { mapped: false, protocol: "manual", message: "NAT mapping module unavailable" };
-        }
-
-        const candidateUrl = wanIp ? `http://${wanIp}:${port}` : `http://${getLanAddress()}:${port}`;
-        // Verify the endpoint is actually reachable from the WAN before advertising it.
-        // Just knowing the router's public IP is not enough; the router must map
-        // the port to this machine (UPnP/NAT-PMP/PCP) or a tunnel must be active.
-        let reachable = false;
-        if (wanIp) {
-          try {
-            // Quick self-check: try to reach our own public endpoint from outside
-            // perspective (at least confirms routing/firewall allows it).
-            const check = await fetch(`${candidateUrl}/api/health`, {
-              signal: AbortSignal.timeout(2000),
-              // Disable redirect following to avoid false positives.
-            });
-            reachable = check.ok;
-          } catch {
-            reachable = false;
-          }
-        }
-        if (!reachable && wanIp) {
-          // The public IP is known but not actually reachable (no port mapping).
-          // Try localtunnel as a persistent tunnel fallback before falling back to LAN.
-          const ltUrl = await ensureLocaltunnel(port);
-          if (ltUrl) {
-            baseUrl = ltUrl;
-            skipParam = "";
-            console.log(`  [pair] WAN IP ${wanIp}:${port} not reachable directly — using localtunnel: ${ltUrl}`);
-          } else {
-            baseUrl = `http://${getLanAddress()}:${port}`;
-            skipParam = "";
-            console.warn(`  [pair] WAN IP ${wanIp}:${port} not reachable externally — no router port mapping detected. Falling back to LAN.`);
-          }
-        } else if (reachable) {
-          baseUrl = candidateUrl;
-        } else {
-          // No WAN IP discovered; try localtunnel for remote access
-          const ltUrl = await ensureLocaltunnel(port);
-          if (ltUrl) {
-            baseUrl = ltUrl;
-            skipParam = "";
-            console.log(`  [pair] No public IP discovered — using localtunnel: ${ltUrl}`);
-          } else {
-            baseUrl = `http://${getLanAddress()}:${port}`;
-            skipParam = "";
-          }
-        }
-      } else {
-        // Default: local Wi-Fi / LAN — always show bootstrap (add-to-home) flow.
-        effectiveMode = "local";
-        await stopCloudflareTunnel();
-        await stopNgrokTunnel();
-        baseUrl = `http://${getLanAddress()}:${port}`;
-        skipParam = "";
-      }
-
-      const parsed = parsePairingUri(code.uri!);
-      const hostIdentityPub = (host as any).identity?.edPublicKey;
-      // For open-lan mode, the pairing/signaling endpoint must be reachable
-      // from the mobile device. Use the public endpoint URL directly when
-      // in remote mode, otherwise keep the configured signaling URL.
-      let pairingSignalingUrl = parsed.signalingUrl;
-      if (effectiveMode === "open-lan" && baseUrl) {
-        // In direct WAN mode, the desktop server itself acts as the pairing
-        // endpoint. Rewrite the signaling URL to match the public endpoint.
-        pairingSignalingUrl = baseUrl.replace(/^http/, "ws");
-      }
-      const connectUri = buildPairingUri({
-        signalingUrl: pairingSignalingUrl,
-        appId: parsed.appId || "com.crosslink.chat",
-        appName: parsed.appName || "Crosslink Chat",
-        hostPubEdB64: hostIdentityPub ? bytesToBase64(hostIdentityPub) : ""
+      const info = await host.getPairingCode();
+      const bootstrapUrl = `${bootstrapOrigin()}/mobile.html#pair=${encodeURIComponent(info.uri!)}`;
+      // The QR points at an https/http page rather than the `crosslink://`
+      // scheme because iOS has no handler for a custom scheme: the camera would
+      // simply refuse to open it.
+      const qrSvg = await QRCode.toString(bootstrapUrl, { type: "svg", margin: 1, width: 280 });
+      json(res, 200, {
+        code: info.code,
+        expiresAt: info.expiresAt,
+        mobileUrl: bootstrapUrl,
+        mobileQr: qrSvg,
+        endpoints: info.endpoints,
+        mode: networkMode,
+        // Only present when remote access was attempted and did not produce a
+        // public route; the UI shows the reason rather than implying success.
+        remoteNote: remoteNote()
       });
-
-      const mobileUrl = `${baseUrl}/mobile.html?pair=${encodeURIComponent(connectUri)}${skipParam}`;
-      const mobileQr = await QRCode.toString(mobileUrl, { type: "svg", margin: 1, width: 280 });
-      respond(res, 200, "application/json", JSON.stringify({
-        code: code.code,
-        mobileUrl,
-        mobileQr,
-        expiresAt: code.expiresAt,
-        mode: effectiveMode,
-      }));
     } catch (err) {
-      respond(res, 500, "application/json", JSON.stringify({ error: (err as Error).message }));
+      const message = (err as Error).message;
+      // The SDK throttles pairing-code generation, and refuses to hand out a QR
+      // that has no route at all; both are the caller's situation, not a fault.
+      const status = /rate limit/i.test(message)
+        ? 429
+        : /not reachable|no reachable endpoint/i.test(message)
+          ? 409
+          : 500;
+      json(res, status, { error: message });
     }
     return;
   }
 
-  // ── API: send message (from web UI) ──
   if (pathname === "/api/send" && req.method === "POST") {
-    let body = "";
-    for await (const chunk of req) body += chunk;
     try {
-      const { sender = "web", text } = JSON.parse(body);
+      const { sender = "web", text } = (await readJsonBody(req)) as { sender?: string; text?: string };
       if (!text || typeof text !== "string") {
-        respond(res, 400, "application/json", JSON.stringify({ error: "text required" }));
+        json(res, 400, { error: "text required" });
         return;
       }
-      const msg: ChatMsg = {
-        id: crypto.randomUUID().slice(0, 8),
-        sender,
-        text: text.slice(0, 2000),
-        at: Date.now(),
-      };
-      messages.push(msg);
-      broadcast("chat.update", { messages });
-      // notify mobile via crosslink event
+      const msg = addMessage(sender, text);
       host.emit("chat.new_message", msg);
-      respond(res, 200, "application/json", JSON.stringify({ ok: true, id: msg.id }));
-    } catch {
-      respond(res, 400, "application/json", JSON.stringify({ error: "invalid json" }));
+      json(res, 200, { ok: true, id: msg.id });
+    } catch (err) {
+      json(res, 400, { error: (err as Error).message });
     }
     return;
   }
 
-  // ── API: SSE stream ──
   if (pathname === "/api/events" && req.method === "GET") {
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
-      "x-accel-buffering": "no",
+      "x-accel-buffering": "no"
     });
     res.write(`data: ${JSON.stringify({ messages })}\n\n`);
     sseClients.add(res);
@@ -573,256 +309,107 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── API: app config (PWA identity) ──
-  if (pathname === "/api/config" && req.method === "GET") {
-    const appCfg = (host as any).config?.application ?? {};
-    respond(res, 200, "application/json", JSON.stringify({
-      appName: appCfg.name ?? "Crosslink",
-      appId: appCfg.id ?? "",
-      pwaConfig: appCfg.pwaConfig ?? {},
-      offline: appCfg.offline ?? {},
-    }));
-    return;
-  }
-
-  // ── dynamic manifest ──
-  if (pathname === "/manifest.webmanifest" && req.method === "GET") {
-    const cfg = (host as any).config?.application?.pwaConfig ?? {};
-    const manifest = {
-      name: (host as any).config?.application?.name ?? "Crosslink",
-      short_name: cfg.shortName ?? ((host as any).config?.application?.name ?? "Crosslink"),
-      start_url: cfg.startUrl ?? "/mobile.html",
-      display: cfg.display ?? "standalone",
-      theme_color: cfg.themeColor ?? "#0f172a",
-      background_color: cfg.bgColor ?? "#0f172a",
-      icons: cfg.icons ?? [{ src: "/icon-192.png", sizes: "192x192" }],
-    };
-    respond(res, 200, "application/manifest+json", JSON.stringify(manifest));
-    return;
-  }
-
-  // ── API: health ──
-  if (pathname === "/api/health") {
-    const st = host.status() as Record<string, any>;
-    respond(res, 200, "application/json", JSON.stringify({
-      started: st.started,
-      transports: st.transports,
-      devices: st.devices,
-      messages: messages.length,
-    }));
-    return;
-  }
-
-  // ── API: revoke device ──
-  if (pathname === "/api/revoke" && req.method === "POST") {
-    try {
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      const { deviceId = "" } = JSON.parse(body || "{}");
-      const target = String(deviceId || "").trim();
-      let revokedId: string | null = null;
-      let ok = false;
-      if (target) {
-        ok = host.revokeDevice(target);
-        if (ok) revokedId = target;
-      } else {
-        // Empty deviceId: revoke the first non-revoked device for testing.
-        const devices = host.listDevices();
-        const firstNonRevoked = devices.find((d) => !d.revokedAt);
-        if (firstNonRevoked) {
-          ok = host.revokeDevice(firstNonRevoked.deviceId);
-          if (ok) revokedId = firstNonRevoked.deviceId;
-        } else {
-          ok = false;
-        }
-      }
-      respond(res, 200, "application/json", JSON.stringify({
-        ok,
-        deviceId: revokedId ?? target,
-        revoked: ok,
-        message: ok ? (revokedId ? `Device ${revokedId} revoked.` : "No device to revoke.") : (target ? `Failed to revoke device ${target}.` : "No paired device found."),
-      }));
-    } catch (err) {
-      respond(res, 500, "application/json", JSON.stringify({ ok: false, error: String(err) }));
-    }
-    return;
-  }
-
-  // ── API: list connected devices ──
   if (pathname === "/api/devices" && req.method === "GET") {
-    try {
-      const devices = host.listDevices();
-      const deviceData = devices.map(d => ({
+    json(res, 200, {
+      devices: host.listDevices().map((d) => ({
         deviceId: d.deviceId,
         name: d.name,
-        deviceType: d.name.toLowerCase().includes("mobile") ? "mobile" : 
-                   d.name.toLowerCase().includes("desktop") ? "desktop" :
-                   d.name.toLowerCase().includes("tablet") ? "tablet" : "unknown",
-        location: "Local Network", // Could be enhanced with GeoIP
-        ipAddress: "Local", // Could be enhanced to show actual IP
-        lastConnected: d.lastSeen || null,
         firstPaired: d.addedAt,
-        status: d.revokedAt ? "Revoked" : (d.lastSeen && Date.now() - d.lastSeen < 300000 ? "Online" : "Offline"),
-        trusted: !d.revokedAt,
+        lastConnected: d.lastSeen ?? null,
+        status: d.revokedAt ? "revoked" : d.lastSeen && Date.now() - d.lastSeen < 300_000 ? "online" : "offline",
         caps: d.caps,
-        revokedAt: d.revokedAt || null
-      }));
-      respond(res, 200, "application/json", JSON.stringify({ devices: deviceData }));
-    } catch (err) {
-      respond(res, 500, "application/json", JSON.stringify({ error: String(err) }));
-    }
+        revokedAt: d.revokedAt ?? null
+      }))
+    });
     return;
   }
 
-  // ── API: revoke device ──
-  if (pathname === "/api/devices/revoke" && req.method === "POST") {
+  if (pathname === "/api/revoke" && req.method === "POST") {
     try {
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      const { deviceId } = JSON.parse(body || "{}");
-      if (!deviceId) {
-        respond(res, 400, "application/json", JSON.stringify({ ok: false, error: "deviceId required" }));
+      const { deviceId } = (await readJsonBody(req)) as { deviceId?: string };
+      const target = String(deviceId ?? "").trim();
+      if (!target) {
+        json(res, 400, { ok: false, error: "deviceId required" });
         return;
       }
-      const ok = host.revokeDevice(deviceId);
-      respond(res, 200, "application/json", JSON.stringify({ ok, deviceId }));
+      json(res, 200, { ok: host.revokeDevice(target), deviceId: target });
     } catch (err) {
-      respond(res, 500, "application/json", JSON.stringify({ ok: false, error: String(err) }));
+      json(res, 400, { ok: false, error: (err as Error).message });
     }
     return;
   }
 
-  // Simple rate limiter for pairing verification (protect against brute-force)
-  const pairRateLimits = new Map<string, { attempts: number; lastAttempt: number }>();
-  const PAIR_RATE_LIMIT_WINDOW_MS = 10_000;
-  const PAIR_MAX_ATTEMPTS = 5;
-
-  // ── API: verify pairing code ──
-  if (pathname === "/api/verify-pair" && req.method === "POST") {
-    try {
-      // Rate limit by IP (approximate via connection tracking)
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      const { code = "" } = JSON.parse(body || "{}");
-      const entered = String(code ?? "").replace(/\D/g, "");
-      const ipKey = (req.headers["x-forwarded-for"] as string ?? "local").split(",")[0].trim() || "local";
-      const now = Date.now();
-      const rateEntry = pairRateLimits.get(ipKey) ?? { attempts: 0, lastAttempt: 0 };
-      if (now - rateEntry.lastAttempt > PAIR_RATE_LIMIT_WINDOW_MS) {
-        rateEntry.attempts = 0;
-      }
-      rateEntry.attempts += 1;
-      rateEntry.lastAttempt = now;
-      pairRateLimits.set(ipKey, rateEntry);
-      if (rateEntry.attempts > PAIR_MAX_ATTEMPTS) {
-        respond(res, 429, "application/json", JSON.stringify({
-          ok: false,
-          error: "Too many pairing attempts. Please wait a moment.",
-        }));
-        return;
-      }
-      const psid = (host as any).pairing?.resolveCode?.(entered);
-      const expected = (latestPairingCode ?? "").replace(/\D/g, "");
-      const ok = entered.length === 9 && (Boolean(psid) || (expected.length === 9 && entered === expected));
-      respond(res, 200, "application/json", JSON.stringify({
-        ok,
-        error: ok ? undefined : "Incorrect pairing code. Please try again.",
-      }));
-    } catch {
-      respond(res, 400, "application/json", JSON.stringify({ ok: false, error: "invalid request" }));
-    }
+  // Everything the SDK knows about reachability, including what each router
+  // protocol answered — the panel a developer looks at when pairing fails.
+  if (pathname === "/api/diagnostics" && req.method === "GET") {
+    json(res, 200, {
+      status: host.status(),
+      connectivity: host.getConnectivity(),
+      endpoints: host.connectionEndpoints(),
+      remote: host.getRemoteDiagnostics(),
+      bootstrapOrigin: bootstrapOrigin(),
+      messages: messages.length
+    });
     return;
   }
 
-  // ── direct pairing endpoint (works through any endpoint: LAN, tunnel, or WAN) ──
-  if (pathname === "/pair-direct" && req.method === "GET") {
-    try {
-      // Serve pairing info as JSON so mobile clients can pair without relying
-      // solely on the separate signaling WebSocket service.
-      const info = await host.getPairingCode();
-      respond(res, 200, "application/json", JSON.stringify({
-        code: info.code,
-        psid: info.psid,
-        appId: "com.crosslink.chat",
-        appName: "Crosslink Chat",
-        endpoint: baseUrl || `http://${getLanAddress()}:${port}`,
-        mode: effectiveMode || "local",
-      }));
-    } catch (err) {
-      respond(res, 500, "application/json", JSON.stringify({ error: (err as Error).message ?? "pairing unavailable" }));
-    }
+  if (pathname === "/api/health") {
+    json(res, 200, { started: true, connectivity: host.getConnectivity(), messages: messages.length });
     return;
   }
 
-  // ── mobile page ──
-  if (pathname === "/mobile" || pathname === "/mobile.html") {
-    try {
-      const html = await readFile(path.join(root, "mobile.html"), "utf8");
-      respond(res, 200, MIME[".html"], html);
-    } catch {
-      respond(res, 404, "text/plain", "mobile.html not found");
-    }
-    return;
-  }
-
-  // ── static files ──
-  let filePath: string;
-  if (pathname === "/") {
-    filePath = path.join(root, "index.html");
-  } else {
-    filePath = path.join(root, pathname);
-  }
-
-  // prevent path traversal
-  const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(root)) {
-    respond(res, 403, "text/plain", "forbidden");
-    return;
-  }
-
-  try {
-    const data = await readFile(resolved);
-    const ext = path.extname(resolved);
-    const ct = MIME[ext] ?? "application/octet-stream";
-    const cache = "no-cache, no-store, must-revalidate";
-    for (const [k, v] of Object.entries(securityHeaders)) res.setHeader(k, v);
-    res.writeHead(200, { "content-type": ct, "cache-control": cache });
-    res.end(data);
-  } catch {
-    respond(res, 404, "text/plain", "not found");
-  }
+  await serveStatic(res, pathname === "/" ? "/index.html" : pathname);
 });
 
-server.listen(port, "0.0.0.0", () => {
-  const lan = getLanAddress();
+// ─── bootstrap surface (reachable from the phone) ───────────────────────
+
+async function serveBootstrap(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
+  const pathname = new URL(req.url ?? "/", "http://bootstrap.invalid").pathname;
+  if (pathname === "/manifest.webmanifest") {
+    respond(res, 200, "application/manifest+json", JSON.stringify(pwaManifest()));
+    return;
+  }
+  // Anything without a file extension is the mobile page: an installed PWA that
+  // reopens on a deep path must still boot rather than 404.
+  const asset = pathname === "/" ? "/mobile.html" : pathname;
+  await serveStatic(res, path.extname(asset) ? asset : "/mobile.html");
+}
+
+/**
+ * Origin the phone should use for the installable page.
+ *
+ * Prefers the public route so an installed PWA keeps working off this Wi-Fi;
+ * the origin is what the browser stores as the app's identity, so picking the
+ * LAN address when a public one exists would pin the install to one network.
+ */
+function bootstrapOrigin(): string {
+  const endpoints = host.connectionEndpoints();
+  const preferred =
+    endpoints.find((e) => e.kind === "wan")?.url ?? endpoints.find((e) => e.kind === "lan")?.url;
+  if (!preferred) return `http://127.0.0.1:${controlPort}`;
+  const { hostname, port } = new URL(preferred);
+  return `http://${hostname}:${port}`;
+}
+
+control.listen(controlPort, "127.0.0.1", () => {
   console.log(`\n  Crosslink Chat Demo`);
   console.log(`  ────────────────────`);
-  console.log(`  Web app  → http://localhost:${port}`);
-  console.log(`  Local IP → http://${lan}:${port}`);
-  console.log(`  Mobile   → http://${lan}:${port}/mobile.html`);
-  console.log(`\n  Open the web app on your computer, click "Show QR Code",`);
-  console.log(`  then scan it with your phone to start chatting.\n`);
-  const st = host.status() as Record<string, any>;
-  if (st.transports.lan) console.log(`  LAN       ✓ ${st.transports.lan.url}`);
-  if (st.transports.relay) console.log(`  Relay     ✓ ${st.transports.relay.url}`);
-  if (st.transports.signaling) console.log(`  Signaling ✓ ${st.transports.signaling.url}`);
-  console.log();
+  console.log(`  Desktop UI → http://127.0.0.1:${controlPort}`);
+  console.log(`  Phone page → ${bootstrapOrigin()}/mobile.html`);
+  console.log(`\n  ${host.getConnectivity().message}`);
+  for (const endpoint of host.connectionEndpoints()) {
+    console.log(`  ${endpoint.kind.padEnd(7)} ${endpoint.url}`);
+  }
+  console.log(`\n  Open the desktop UI, click "Show QR Code", scan it with your phone.\n`);
 });
 
-process.on("SIGINT", async () => {
-  console.log("\nShutting down…");
-  await stopCloudflareTunnel();
-  await stopNgrokTunnel();
-  await stopLocaltunnel();
+async function shutdown(): Promise<void> {
   await host.stop();
-  server.close();
+  control.close();
   process.exit(0);
-});
-process.on("SIGTERM", async () => {
-  await stopCloudflareTunnel();
-  await stopNgrokTunnel();
-  await stopLocaltunnel();
-  await host.stop();
-  server.close();
-  process.exit(0);
-});
+}
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

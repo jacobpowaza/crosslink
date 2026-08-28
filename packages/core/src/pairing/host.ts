@@ -14,13 +14,17 @@ import {
   bytesToBase64,
 } from "@crosslink/protocol";
 import type { CapabilityRegistry, DeviceGrants } from "../capabilities.js";
+
+/** Incorrect direct-pairing code guesses tolerated inside the window. */
+const MAX_FAILED_RESOLVES = 8;
+const FAILED_RESOLVE_WINDOW_MS = 60_000;
+
 import { randomBytes, verifySignature } from "../crypto/primitives.js";
 import type { DeviceIdentity } from "../identity.js";
 import { noopLogger, type Logger } from "../logger.js";
 import { PermissionEngine, type PermissionPolicy, type PolicyDecision } from "../permissions.js";
 import { shortAuthString } from "../sas.js";
 import { deviceIdFromPublicKey } from "./device-id.js";
-import { createSessionToken } from "./session-token.js";
 import {
   createPairingSession,
   normalizePairingCode,
@@ -88,6 +92,28 @@ interface LiveSession extends PairingSessionState {
     claimPubX: string;
     grantedCaps: string[];
   };
+  /**
+   * Set when this session was minted for silent device-link continuation
+   * (see `beginLinkSession`) rather than a human-witnessed pairing: the
+   * claim is auto-approved with `caps` and the resulting device record is
+   * tagged `linkedFrom`, so revoking `fromDeviceId` cascades to it.
+   */
+  linkOf?: { fromDeviceId: string; caps: string[] };
+}
+
+/**
+ * Compares two strings without an early exit.
+ *
+ * Length is not secret here — a pairing code's length is fixed and public — so
+ * only the contents are protected.
+ */
+function timingSafeEqualStrings(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 export class HostPairingManager {
@@ -108,25 +134,93 @@ export class HostPairingManager {
     return this.permissions;
   }
 
+  private failedResolves: number[] = [];
+
   beginSession(): PairingSessionState {
     const session = createPairingSession(this.options.ttlMs ?? Limits.PAIRING_CODE_TTL_MS);
     this.sessions.set(session.psid, { ...session });
     return session;
   }
 
-  /** Maps a raw user-entered code to a live session id, or null. */
+  /**
+   * Mints a single-use device-link continuation session for a device that is
+   * already trusted and currently connected. `code` here is an opaque token
+   * standing in for the 9-digit human code — no one ever reads or types it,
+   * it just has to round-trip through `resolveCode`/`pair_claim` unchanged.
+   *
+   * The claim is auto-granted exactly the caps `fromDeviceId` currently holds
+   * (intersected with whatever the new device actually requests), with no
+   * approval hook consulted — the human already approved once, when
+   * `fromDeviceId` paired.
+   */
+  beginLinkSession(fromDeviceId: string, ttlMs = 5 * 60_000): PairingSessionState {
+    const fromRecord = this.options.store.get(fromDeviceId);
+    if (!fromRecord || fromRecord.revokedAt !== undefined) {
+      throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "device is not currently trusted");
+    }
+    const token = bytesToBase64(randomBytes(24));
+    const session: PairingSessionState = {
+      psid: bytesToBase64(randomBytes(16)),
+      code: token,
+      expiresAt: Date.now() + ttlMs,
+      used: false
+    };
+    this.sessions.set(session.psid, {
+      ...session,
+      linkOf: { fromDeviceId, caps: [...fromRecord.caps] }
+    });
+    return session;
+  }
+
+  /**
+   * Maps a raw user-entered code to a live session id, or null.
+   *
+   * The comparison is constant-time and every live session is examined even
+   * after a match. `===` on strings stops at the first differing character, so
+   * timing it leaks the code prefix by prefix — which turns a ~30-bit secret
+   * into nine one-digit guesses.
+   */
   resolveCode(rawCode: string): string | null {
     const wanted = normalizePairingCode(rawCode);
+    const trimmed = rawCode.trim();
+    const now = Date.now();
+    let found: string | null = null;
     for (const [psid, session] of this.sessions) {
-      if (
-        (session.code === wanted || session.code === rawCode.trim()) &&
-        !session.used &&
-        session.expiresAt > Date.now()
-      ) {
-        return psid;
+      const codeMatches = timingSafeEqualStrings(session.code, wanted) ||
+        timingSafeEqualStrings(session.code, trimmed);
+      if (codeMatches && !session.used && session.expiresAt > now && found === null) {
+        found = psid;
       }
     }
-    return null;
+    return found;
+  }
+
+  /**
+   * Resolves a user-entered code for pairing directly over a host socket, with
+   * global brute-force throttling.
+   *
+   * The brokered path is protected by the signaling service, which never sees a
+   * code in the clear (it matches a hash) and rate-limits resolution. A direct
+   * socket has nothing in front of it, and a 9-digit code is only ~30 bits — so
+   * the throttle lives here, counting failures across every connection rather
+   * than per connection, since opening more sockets is free for an attacker.
+   */
+  resolveCodeForDirectPairing(rawCode: string): string {
+    const now = Date.now();
+    this.failedResolves = this.failedResolves.filter((t) => now - t < FAILED_RESOLVE_WINDOW_MS);
+    if (this.failedResolves.length >= MAX_FAILED_RESOLVES) {
+      throw new CrosslinkError(
+        ErrorCodes.PAIRING_INVALID,
+        "too many incorrect pairing codes; generate a new code and try again"
+      );
+    }
+    const psid = this.resolveCode(rawCode);
+    if (!psid) {
+      this.failedResolves.push(now);
+      this.log.warn("pairing.direct-resolve-failed", { failures: this.failedResolves.length });
+      throw new CrosslinkError(ErrorCodes.PAIRING_EXPIRED, "pairing code not found or expired");
+    }
+    return psid;
   }
 
   get activeSessionCount(): number {
@@ -186,26 +280,41 @@ export class HostPairingManager {
       throw new CrosslinkError(ErrorCodes.UNAUTHORIZED, "claim signature invalid");
     }
 
-    const decision = this.evaluatePolicy(capsReq, devId, name);
-    const offered = [...decision.granted, ...decision.needsApproval];
+    let grantedCaps: string[];
+    if (live.linkOf) {
+      // Silent continuation of an already-trusted device: no policy prompt,
+      // no human approval — just narrow to whatever the new device asked for.
+      const requestedSet = capsReq ? new Set(capsReq) : null;
+      grantedCaps = requestedSet
+        ? live.linkOf.caps.filter((c) => requestedSet.has(c))
+        : [...live.linkOf.caps];
+      this.log.info("pairing.link-approved", {
+        device: devId,
+        from: live.linkOf.fromDeviceId,
+        granted: grantedCaps
+      });
+    } else {
+      const decision = this.evaluatePolicy(capsReq, devId, name);
+      const offered = [...decision.granted, ...decision.needsApproval];
 
-    const sas = shortAuthString(this.options.appId, this.options.identity.edPublicKey, pubEdBytes);
-    const grantedCaps = await this.decideGrant(decision, offered, {
-      sas,
-      deviceName: name,
-      deviceId: devId,
-      requestedCaps: offered,
-      requiresExplicitApproval: decision.needsApproval,
-      deniedCaps: decision.denied.map((d) => ({ id: d.id, reason: d.reason }))
-    });
+      const sas = shortAuthString(this.options.appId, this.options.identity.edPublicKey, pubEdBytes);
+      grantedCaps = await this.decideGrant(decision, offered, {
+        sas,
+        deviceName: name,
+        deviceId: devId,
+        requestedCaps: offered,
+        requiresExplicitApproval: decision.needsApproval,
+        deniedCaps: decision.denied.map((d) => ({ id: d.id, reason: d.reason }))
+      });
 
-    this.log.info("pairing.approved", {
-      device: devId,
-      name,
-      requested: capsReq ?? null,
-      granted: grantedCaps,
-      denied: decision.denied
-    });
+      this.log.info("pairing.approved", {
+        device: devId,
+        name,
+        requested: capsReq ?? null,
+        granted: grantedCaps,
+        denied: decision.denied
+      });
+    }
 
     const challengeNonce = bytesToBase64(randomBytes(32));
     live.pending = {
@@ -297,7 +406,8 @@ export class HostPairingManager {
       pubEd: pending.claimPubEd,
       pubX: pending.claimPubX,
       caps: [...pending.grantedCaps],
-      addedAt: Date.now()
+      addedAt: Date.now(),
+      ...(live.linkOf ? { linkedFrom: live.linkOf.fromDeviceId } : {})
     };
     this.options.store.upsert(record);
     this.options.grants.drop(record.deviceId);
@@ -310,17 +420,6 @@ export class HostPairingManager {
       caps: record.caps,
       expiresAt: this.permissions.grantExpiryFrom(record.addedAt)
     });
-
-    // Issue a short-lived session token binding host fingerprint + app + device
-    const sessionPayload = {
-      hostFp: this.options.identity.fingerprint,
-      appId: this.options.appId,
-      deviceId: record.deviceId,
-      exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7-day session
-      nonce: bytesToBase64(randomBytes(16))
-    };
-    const sessionTokenStr = createSessionToken(sessionPayload, this.options.identity.edPrivateKey);
-    (record as TrustedDeviceRecord & { sessionToken?: string }).sessionToken = sessionTokenStr;
 
     return record;
   }

@@ -4,7 +4,6 @@
   "description": "Crosslink relay service: dumb encrypted-pipe fallback transport",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/index.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

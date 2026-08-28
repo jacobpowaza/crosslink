@@ -5,172 +5,145 @@ description: Wire protocol specification
 
 ## Overview
 
-Crosslink's wire protocol ("CLX1") defines the message format and handshake sequence for establishing encrypted sessions.
+Crosslink's wire protocol defines three layers, all JSON-encoded and sent as WebSocket text/binary messages:
 
-## Message format
+1. **Pairing frames** — exchanged before any trust exists, to enroll a new device.
+2. **The CLX1 handshake** — an authenticated ephemeral key exchange that establishes a fresh session between an already-paired device and the host.
+3. **Session frames** — encrypted application messages (RPC calls, responses, events) once a session is established.
 
-All messages are JSON-encoded and sent over WebSocket.
+## Pairing frames
+
+Frames are plain JSON objects with a `kind` discriminator (no envelope version field at this layer).
+
+### `pair_hello` / `pair_ready`
+
+Sent when pairing happens directly over a socket to the host (no signaling broker) — resolves the scanned 9-digit code to a live session id.
+
+```json
+{ "kind": "pair_hello", "code": "483921004" }
+```
+
+```json
+{ "kind": "pair_ready", "ps": "<psid>", "app": { "appId": "...", "name": "...", "fingerprint": "...", "pubEdB64": "...", "pubXB64": "..." } }
+```
+
+### `pair_claim`
+
+Client sends a signed identity claim.
 
 ```json
 {
-  "kind": "message_type",
-  "data": { ... }
+  "kind": "pair_claim",
+  "ps": "<psid>",
+  "dev": "cd1_...",
+  "name": "My Phone",
+  "pub_ed": "base64-ed25519-public-key",
+  "pub_x": "base64-x25519-public-key",
+  "nonce": "base64-32-byte-nonce",
+  "caps_req": ["app.control"],
+  "sig": "base64-signature"
 }
 ```
 
-## Handshake messages
+### `pair_challenge`
 
-### `claim`
-
-Client sends identity claim during pairing.
+Host replies with its own identity and the capabilities it is willing to grant, signed.
 
 ```json
 {
-  "kind": "claim",
-  "deviceId": "a1b2c3d4e5f6g7h8",
-  "publicKey": "base64-encoded-ed25519-public-key",
-  "deviceName": "My Phone",
-  "requestedCaps": ["app.control", "app.read"],
-  "signature": "base64-encoded-signature"
+  "kind": "pair_challenge",
+  "ps": "<psid>",
+  "claim_nonce": "...",
+  "host_pub_ed": "...",
+  "host_pub_x": "...",
+  "nonce": "base64-32-byte-nonce",
+  "granted_caps": ["app.control"],
+  "sig": "..."
 }
 ```
 
-### `challenge`
+### `pair_complete` / `pair_done`
 
-Host sends challenge to client.
+Client confirms the Short Authentication String (SAS) with the user and sends the completion frame; host acknowledges.
 
 ```json
-{
-  "kind": "challenge",
-  "nonce": "base64-encoded-random-nonce"
-}
+{ "kind": "pair_complete", "ps": "<psid>", "claim_nonce": "...", "challenge_nonce": "...", "sig": "..." }
 ```
 
-### `challenge_response`
-
-Client responds with signed nonce.
-
 ```json
-{
-  "kind": "challenge_response",
-  "signature": "base64-encoded-signature"
-}
-```
-
-### `pair_complete`
-
-Pairing completed successfully.
-
-```json
-{
-  "kind": "pair_complete",
-  "record": {
-    "deviceId": "a1b2c3d4e5f6g7h8",
-    "publicKey": "base64-encoded-public-key",
-    "capabilities": ["app.control", "app.read"],
-    "pairedAt": 1699999999999
-  }
-}
+{ "kind": "pair_done", "ps": "<psid>" }
 ```
 
 ### `pair_error`
 
-Pairing failed.
-
 ```json
 {
   "kind": "pair_error",
-  "error": {
-    "code": "PAIRING_FAILED",
-    "message": "Host rejected pairing"
-  }
+  "error": { "code": "pairing_invalid", "message": "..." }
 }
 ```
 
-## Session frames
+## The CLX1 handshake
 
-Once paired, all communication uses encrypted frames.
+Once a device is paired, every reconnect runs a fresh authenticated key exchange ("CLX1"):
 
-### Frame format
-
-```text
-+--------+--------+----------------+
-| Nonce  |  Tag   |   Ciphertext   |
-| 12 B   | 16 B   |  variable      |
-+--------+--------+----------------+
+```
+client                                          host
+------                                          ----
+sinit{app, dev, sx, epk, nc, ts, sig}    ->
+                                                 look up device record by dev,
+                                                 verify sig under the RECORD's
+                                                 pinned key (never the wire)
+                                          <-     sack{epk, nh, sig}
+verify sig under the TRUSTED host key
 ```
 
-### Encryption
-
-- Algorithm: XChaCha20-Poly1305
-- Nonce: 12 bytes (random, unique per frame)
-- Key: Derived from ECDH shared secret via HKDF-SHA256
-
-### Frame sequence
-
-```text
-Host                          Client
-  |                              |
-  |--- frame (seq=1) --------->|
-  |<-- frame (seq=1) -----------|
-  |--- frame (seq=2) --------->|
-  |<-- frame (seq=2) -----------|
-```
-
-## Key exchange
-
-### Ephemeral keys
-
-```text
-1. Host generates ephemeral X25519 key pair
-2. Client generates ephemeral X25519 key pair
-3. Both exchange ephemeral public keys (signed)
-4. Both compute shared secret: X25519(ephemeral_private, peer_public)
-5. Both derive session key: HKDF-SHA256(shared_secret, salt, info)
-```
+`sinit` carries the client's static X25519 key (`sx`), a fresh ephemeral X25519 key (`epk`), a 32-byte nonce (`nc`), a timestamp, and an Ed25519 signature over the transcript. `sack` carries the host's ephemeral key (`epk`), its own 32-byte nonce (`nh`), and its signature. A `srej { kind: "srej", code, message }` frame rejects a handshake outright.
 
 ### Key derivation
 
-```text
-IKM = X25519(ephemeral_private, peer_ephemeral_public)
-salt = SHA-256(host_identity || client_identity)
-info = "crosslink-session-v1"
-session_key = HKDF-SHA256(IKM, salt, info)
+```
+sharedE = X25519(ephemeral_private, peer_ephemeral_public)
+sharedS = X25519(static_private,    peer_static_public)
+okm     = HKDF-SHA256(sharedE || sharedS, salt = nc || nh, info = "crosslink-session-keys-v1", 64 bytes)
+kC (c2h)= okm[0..32]   (client -> host traffic key)
+kH (h2c)= okm[32..64]  (host -> client traffic key)
 ```
 
-## Capability binding
+Fresh ephemeral keys on every reconnect give forward secrecy; the static-static term binds the session to the paired identities; signatures over the canonical transcript prevent MITM, cross-application relay, and replay.
 
-Capabilities are bound during pairing and included in session context:
+## Session frames
+
+Once a session's traffic keys are derived, every application message is sealed independently with XChaCha20-Poly1305.
 
 ```json
-{
-  "capabilities": ["app.control", "app.read"],
-  "grantedAt": 1699999999999,
-  "ttlMs": 3600000
-}
+{ "kind": "enc", "n": 1, "iv": "base64-24-byte-nonce", "ct": "base64-ciphertext+tag" }
 ```
+
+- Algorithm: XChaCha20-Poly1305 (AEAD; the 16-byte Poly1305 tag is appended to `ct`)
+- Nonce (`iv`): 24 bytes, random per frame
+- `n`: a strictly monotonic per-direction counter, starting at 1 — used as part of the AAD, so replay, reordering, and cross-direction substitution all fail authentication
+
+## Application messages
+
+The plaintext inside each session frame is one application message, sharing a common envelope: `v` (protocol version, e.g. `"1.0"`) and `t` (message type).
+
+| `t` | Purpose |
+| --- | --- |
+| `hello` / `hello_ok` | Post-handshake capability/version exchange |
+| `req` | RPC request: `{ v, t: "req", i, m, p?, idem?, ts? }` |
+| `res` | RPC response: `{ v, t: "res", i, p? }` |
+| `err` | RPC error: `{ v, t: "err", i, e: { code, message, data? } }` |
+| `chunk` | Streaming progress chunk: `{ v, t: "chunk", i, n, d }` |
+| `end` | Stream completion: `{ v, t: "end", i, p? }` |
+| `evt` | Event delivery: `{ v, t: "evt", s, e, p? }` |
+| `sub` / `unsub` | Subscribe/unsubscribe to an event: `{ v, t: "sub", s, e }` |
+| `cancel` | Cancel an in-flight request: `{ v, t: "cancel", i }` |
+| `ping` / `pong` | Heartbeat |
+| `bye` | Graceful close: `{ v, t: "bye", code?, reason? }` |
+
+`i` is the request id, `m` the method name, `p` the payload, `s` a subscription id, `e` an event/method name depending on context. See [Error Codes](/reference/errors) for the values `err.e.code` may take.
 
 ## Version negotiation
 
-```json
-{
-  "kind": "version",
-  "version": 1,
-  "features": ["webrtc", "relay"]
-}
-```
-
-Current protocol version: **1**
-
-## Error frames
-
-```json
-{
-  "kind": "error",
-  "code": "METHOD_NOT_FOUND",
-  "message": "Method not found",
-  "details": {
-    "method": "app.unknown"
-  }
-}
-```
+Current protocol version: **1.0** (`PROTOCOL_VERSION`). A `hello` message carries the sender's supported versions (highest last); the negotiated version is the highest one both sides support. There is no floor below which a connection silently downgrades.

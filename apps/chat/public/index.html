@@ -243,7 +243,10 @@
   <script>
     const $ = id => document.getElementById(id);
     let mobileConnected = false;
-    let currentMode = localStorage.getItem("crosslink.networkMode") || "local";
+    // The network mode belongs to the host process (CROSSLINK_NETWORK_MODE),
+    // not to this page: the browser cannot open a router port. The card shows
+    // whatever the server reports.
+    let currentMode = "auto";
 
     async function revokeDevice() {
       try {
@@ -275,11 +278,7 @@
       appName: "Crosslink Chat",
       blurb: "<strong>Connect your phone</strong> to chat from another device. The link is end-to-end encrypted &mdash; this server and any relay in between only ever see ciphertext.",
       networkMode: currentMode,
-      onRefresh: () => generatePair(currentMode),
-      onNetworkModeChange: (mode) => {
-        currentMode = mode;
-        generatePair(mode);
-      }
+      onRefresh: () => generatePair()
     });
 
     // ── SSE ─────────────────────────────────────────────
@@ -300,30 +299,33 @@
       if (mobile) $("emptyChat").classList.add("hidden");
     });
     sse.addEventListener("pair.refresh", () => {
-      generatePair(currentMode);
+      generatePair();
     });
 
     // ── pairing ─────────────────────────────────────────
-    async function generatePair(mode) {
+    async function generatePair() {
       pairingCard.update({ loading: true });
       try {
-        const queryMode = mode || currentMode;
-        const res = await fetch(`/api/pair?mode=${encodeURIComponent(queryMode)}`);
+        const res = await fetch("/api/pair");
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
+        currentMode = data.mode || currentMode;
 
         pairingCard.update({
           qr: data.mobileQr,
           code: data.code,
           expiresAt: data.expiresAt ?? (Date.now() + 120_000),
+          networkMode: currentMode,
+          endpoints: data.endpoints ?? null,
+          remoteNote: data.remoteNote ?? null,
           loading: false
         });
 
         // codes expire after 2 minutes; fetch a fresh one just before then
         clearTimeout(generatePair._timer);
-        generatePair._timer = setTimeout(() => generatePair(currentMode), 105_000);
+        generatePair._timer = setTimeout(() => generatePair(), 105_000);
       } catch (err) {
-        let msg = 'Failed to generate pairing QR.<br><code style="font-size:11px">npm run stack</code>';
+        let msg = "Failed to generate a pairing QR.";
         try {
           const raw = (err && err.message) ? err.message : String(err);
           const parsed = JSON.parse(raw);
@@ -338,7 +340,7 @@
         });
       }
     }
-    generatePair(currentMode);
+    generatePair();
 
     // ── messages ────────────────────────────────────────
     function renderMessages(msgs) {

@@ -12,34 +12,6 @@
     "light": "#818cf8",
     "dark": "#4f46e5"
   },
-  "topbarLinks": [
-    {
-      "name": "GitHub",
-      "url": "https://github.com/jacobpowaza/crosslink"
-    }
-  ],
-  "topbarCtaButton": {
-    "name": "Get Started",
-    "url": "/quickstart"
-  },
-  "tabs": [
-    {
-      "name": "API Reference",
-      "url": "https://api.crosslink.dev"
-    }
-  ],
-  "anchors": [
-    {
-      "name": "Community",
-      "icon": "discord",
-      "url": "https://discord.gg/crosslink"
-    },
-    {
-      "name": "GitHub",
-      "icon": "github",
-      "url": "https://github.com/jacobpowaza/crosslink"
-    }
-  ],
   "navigation": {
     "languages": [
       {
@@ -97,9 +69,9 @@
               "guides/electron",
               "guides/tauri",
               "guides/node",
-              "guides/tunnels",
               "guides/self-hosting",
               "guides/connection-modes",
+              "guides/remote-access",
               "guides/security"
             ]
           },
@@ -126,5 +98,22 @@
       }
     ]
   },
-  "backgroundImage": "/crosslink.svg"
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/jacobpowaza/crosslink"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get Started",
+      "href": "/quickstart"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/jacobpowaza/crosslink"
+    }
+  }
 }

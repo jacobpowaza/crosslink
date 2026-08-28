@@ -3,75 +3,53 @@ title: Error Codes
 description: All Crosslink error codes and how to handle them
 ---
 
-## Error classes
+## Error class
 
-All Crosslink errors extend from the base `CrosslinkError` class.
+All Crosslink protocol errors are instances of `CrosslinkError`.
 
 ```ts
 class CrosslinkError extends Error {
-  code: string;
-  details?: Record<string, unknown>;
+  readonly code: string;
+  readonly data?: unknown;
+  toWire(): { code: string; message: string; data?: unknown };
 }
 ```
 
----
-
-## Pairing errors
-
-| Code | Description | Resolution |
-| --- | --- | --- |
-| `PAIRING_CODE_EXPIRED` | Pairing code has expired (2-minute TTL) | Generate a new code |
-| `PAIRING_CODE_USED` | Pairing code already used | Generate a new code |
-| `PAIRING_CODE_INVALID` | Invalid pairing code format | Check the code (9 digits) |
-| `PAIRING_FAILED` | Pairing rejected by host | Check host approval callback |
-| `PAIRING_TIMEOUT` | Pairing timed out | Check network, try again |
-| `FINGERPRINT_MISMATCH` | Host fingerprint doesn't match QR | Security warning -- likely MITM |
-| `SIGNATURE_INVALID` | Invalid signature during pairing | Key corruption -- regenerate identity |
+`code` is one of the values below. These travel on the wire as lowercase, underscore-separated strings and are stable — new codes may be added, existing ones are never repurposed.
 
 ---
 
-## Connection errors
+## Error codes
 
-| Code | Description | Resolution |
+| `ErrorCodes` key | Wire value | Description |
 | --- | --- | --- |
-| `CONNECTION_FAILED` | Could not establish connection | Check signaling/relay URLs |
-| `CONNECTION_TIMEOUT` | Connection timed out | Check network, increase `dialTimeoutMs` |
-| `CONNECTION_CLOSED` | Connection closed unexpectedly | Check host is running |
-| `RELAY_UNAVAILABLE` | Relay server unreachable | Check relay URL and availability |
-| `SIGNALING_UNAVAILABLE` | Signaling server unreachable | Check signaling URL and availability |
+| `PARSE_ERROR` | `parse_error` | Payload was not valid UTF-8 / JSON |
+| `INVALID_MESSAGE` | `invalid_message` | Message failed structural validation |
+| `VERSION_UNSUPPORTED` | `version_unsupported` | No mutually supported protocol version |
+| `UNAUTHORIZED` | `unauthorized` | Signature or trust check failed |
+| `CAPABILITY_DENIED` | `capability_denied` | Device lacks the required capability |
+| `METHOD_NOT_FOUND` | `method_not_found` | RPC method doesn't exist |
+| `VALIDATION_FAILED` | `validation_failed` | Input failed schema/custom validation |
+| `PAYLOAD_TOO_LARGE` | `payload_too_large` | Message exceeds the session frame limit |
+| `RATE_LIMITED` | `rate_limited` | Too many requests |
+| `DEVICE_REVOKED` | `device_revoked` | This device's access was revoked |
+| `SESSION_EXPIRED` | `session_expired` | Handshake timestamp outside the allowed clock skew |
+| `PAIRING_EXPIRED` | `pairing_expired` | Pairing code/session expired |
+| `PAIRING_INVALID` | `pairing_invalid` | Pairing frame rejected (wrong code, cancelled, mismatched nonce) |
+| `HOST_OFFLINE` | `host_offline` | Host not reachable |
+| `TIMEOUT` | `timeout` | RPC call timed out |
+| `CANCELLED` | `cancelled` | Request was cancelled |
+| `INTERNAL` | `internal` | Unclassified internal error |
+| `NOT_CONNECTED` | `not_connected` | No live session to send on |
+| `PEER_LOST` | `peer_lost` | Transport died while a request was in flight |
+| `GRANT_EXPIRED` | `grant_expired` | Capability grant lapsed and must be renewed |
+| `CONSENT_DENIED` | `consent_denied` | Host user declined a per-use confirmation prompt |
+| `CONSENT_TIMEOUT` | `consent_timeout` | Host could not obtain per-use confirmation in time |
+| `POLICY_DENIED` | `policy_denied` | Host permission policy forbids this, independent of the grant |
 
----
+`CrosslinkError.isInternal(code)` is `true` for `internal`, `parse_error`, and `invalid_message` — codes that must never leak raw detail across the wire.
 
-## RPC errors
-
-| Code | Description | Resolution |
-| --- | --- | --- |
-| `METHOD_NOT_FOUND` | RPC method doesn't exist | Check method name and host exposure |
-| `CAPABILITY_DENIED` | Missing required capability | Request capability during pairing |
-| `TIMEOUT` | RPC call timed out | Increase timeout or check host |
-| `STREAM_ERROR` | Streaming RPC error | Check stream implementation |
-| `INVALID_ARGS` | Invalid RPC arguments | Validate arguments before calling |
-
----
-
-## Identity errors
-
-| Code | Description | Resolution |
-| --- | --- | --- |
-| `IDENTITY_NOT_FOUND` | No identity key found | Re-pair or check storage |
-| `IDENTITY_CORRUPTED` | Identity key corrupted | Re-pair with host |
-| `STORAGE_ERROR` | Secret storage error | Check OS keychain availability |
-
----
-
-## Protocol errors
-
-| Code | Description | Resolution |
-| --- | --- | --- |
-| `PROTOCOL_VERSION_MISMATCH` | Incompatible protocol versions | Update SDK |
-| `HANDSHAKE_FAILED` | CLX1 handshake failed | Check key material |
-| `DECRYPTION_FAILED` | Frame decryption failed | Session key mismatch |
-| `FRAME_TOO_LARGE` | Frame exceeds max size | Reduce payload size |
+Fingerprint mismatches during pairing (`client.pairFromQr`) and a few pairing-flow guard checks throw a plain `Error` rather than a `CrosslinkError`, so they have no `code` property — check the message text instead.
 
 ---
 
@@ -83,11 +61,7 @@ class CrosslinkError extends Error {
 try {
   await server.start();
 } catch (err) {
-  if (err.code === "SIGNALING_UNAVAILABLE") {
-    console.error("Signaling server is down");
-  } else {
-    console.error("Failed to start:", err);
-  }
+  console.error("Failed to start:", err);
 }
 ```
 
@@ -97,10 +71,10 @@ try {
 try {
   await client.pairFromQr(uri, ["app.control"]);
 } catch (err) {
-  if (err.code === "FINGERPRINT_MISMATCH") {
-    console.error("SECURITY: Host fingerprint mismatch -- possible MITM");
-  } else if (err.code === "PAIRING_FAILED") {
-    console.error("Pairing rejected by host");
+  if (err.message?.includes("fingerprint")) {
+    console.error("SECURITY: host fingerprint mismatch -- possible MITM");
+  } else if (err.code === "pairing_invalid") {
+    console.error("Pairing rejected or cancelled");
   } else {
     console.error("Pairing error:", err);
   }
@@ -113,9 +87,9 @@ try {
 try {
   await rpc.call("app.status");
 } catch (err) {
-  if (err.code === "CAPABILITY_DENIED") {
+  if (err.code === "capability_denied") {
     console.error("Missing capability");
-  } else if (err.code === "METHOD_NOT_FOUND") {
+  } else if (err.code === "method_not_found") {
     console.error("Method not exposed by host");
   } else {
     console.error("RPC error:", err);
@@ -127,16 +101,14 @@ try {
 
 ## Debug logging
 
-Enable debug logging to trace errors:
+Enable debug logging to trace errors. A logger must implement the full `Logger` interface (`trace`, `debug`, `info`, `warn`, `error`, `child`, `isEnabled`) — use `consoleLogger()` from `@crosslink/core` rather than a partial object literal:
 
 ```js
+import { consoleLogger } from "@crosslink/core";
+import { createCrosslinkServer } from "@crosslink/sdk-node";
+
 const server = createCrosslinkServer({
   // ...
-  logger: {
-    debug: (msg, data) => console.debug(`[DEBUG] ${msg}`, data),
-    info: (msg, data) => console.info(`[INFO] ${msg}`, data),
-    warn: (msg, data) => console.warn(`[WARN] ${msg}`, data),
-    error: (msg, data) => console.error(`[ERROR] ${msg}`, data)
-  }
+  logger: consoleLogger()
 });
 ```

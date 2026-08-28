@@ -300,7 +300,7 @@ function makeHarness() {
 
   const session = host.pairing.beginSession();
   const pairingUri = buildPairingUri({
-    signalingUrl: SIGNALING_URL,
+    endpoints: [{ kind: "sig", url: SIGNALING_URL }],
     code: session.code,
     appId: APP_ID,
     appName: "TestApp",
@@ -775,7 +775,7 @@ describe("CrosslinkMobileBootstrap State Machine & Security Flow", () => {
     // Pair Phone 1
     const session1 = host.pairing.beginSession();
     const uri1 = buildPairingUri({
-      signalingUrl: SIGNALING_URL,
+      endpoints: [{ kind: "sig", url: SIGNALING_URL }],
       code: session1.code,
       appId: APP_ID,
       appName: "TestApp",
@@ -786,7 +786,7 @@ describe("CrosslinkMobileBootstrap State Machine & Security Flow", () => {
     // Pair Phone 2
     const session2 = host.pairing.beginSession();
     const uri2 = buildPairingUri({
-      signalingUrl: SIGNALING_URL,
+      endpoints: [{ kind: "sig", url: SIGNALING_URL }],
       code: session2.code,
       appId: APP_ID,
       appName: "TestApp",

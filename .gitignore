@@ -9,9 +9,9 @@ coverage/
 # ── Crosslink runtime data (identity seeds, device records, tokens) ──
 .crosslink-data/
 
-# ── Tunnels / dev servers ─────────────────────────────────────
-.tunnel-urls.json
-.tunnel/
+# ── Generated browser bundles (rebuilt by each app's `bundle` script) ──
+apps/*/public/bundle.js
+examples/*/public/main.js
 
 # ── OS / editor ───────────────────────────────────────────────
 .DS_Store

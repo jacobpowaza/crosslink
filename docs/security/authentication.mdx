@@ -84,14 +84,15 @@ Client -> Host: { kind: "challenge_response", signature: Ed25519_sign(clientPriv
 
 ### Step 6: SAS verification
 
-Both parties derive the same Short Authentication String:
+Both parties derive the same Short Authentication String from their Ed25519 identity public keys (order-independent, so both sides compute the same value regardless of role):
 
 ```text
-sas = HKDF-SHA256(
-  IKM: X25519(hostEphemeral, clientEphemeral),
-  salt: hostIdentity || clientIdentity,
-  info: "crosslink-sas"
-)[:6]  // 6 digits
+sas = deriveOkm(
+  IKM: hostIdentityPubKey || clientIdentityPubKey,  // sorted, not role-based
+  info: "crosslink-sas-v1",
+  context: appId
+)
+// formatted as three 3-digit groups, e.g. "482 019 337"
 ```
 
 The user must visually confirm both sides show the same digits.
@@ -131,9 +132,8 @@ Frame encryption
 
 The host can revoke a client's access by:
 
-1. Calling `server.revoke(deviceId)`
-2. This prevents future sessions from being established
-3. Existing sessions are not immediately terminated (use disconnect)
+1. Calling `server.revokeDevice(deviceId)`
+2. This prevents future sessions from being established -- revocation is re-checked on every handshake, so reconnection is refused even though the device still holds a valid Ed25519 key
 
 ### Client revocation
 

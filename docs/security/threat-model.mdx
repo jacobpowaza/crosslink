@@ -47,7 +47,7 @@ This document describes Crosslink's threat model: what attacks are in scope, how
 
 | Attack | Mitigation |
 | --- | --- |
-| **OS keychain theft (host)** | Keytar/Electron safeStorage (OS-level protection) |
+| **OS keychain theft (host)** | Electron safeStorage, or the optional `keytar` package if the host app installs it (OS-level protection) |
 | **Browser XSS (seed theft)** | Non-extractable WebCrypto key (client) |
 | **Compromised signaling server** | Cannot forge identities, cannot decrypt sessions |
 | **Compromised relay server** | Cannot decrypt sessions, sees only ciphertext |
@@ -60,6 +60,8 @@ This document describes Crosslink's threat model: what attacks are in scope, how
 | **Replay old session frames** | Sequence numbers + nonce uniqueness |
 | **Downgrade attacks** | Protocol version negotiation, no fallback to weaker |
 | **Key substitution** | Ed25519 signatures on all key material |
+| **Pairing code brute-force** | Constant-time code comparison, host-side throttling of repeated wrong codes |
+| **Cross-origin WebSocket hijack (LAN)** | The LAN listener refuses upgrades from browser origins it did not advertise itself |
 
 ## Threats out of scope
 
@@ -106,7 +108,7 @@ Crosslink's capability system is a **transport-layer primitive**, not a full aut
 
 - Implement rate limiting
 - Enforce time-based restrictions (use TTLs)
-- Prevent滥用 by a compromised client
+- Prevent abuse by a compromised client
 - Replace application-layer authorization
 
 <Warning>

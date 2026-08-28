@@ -85,11 +85,13 @@ export {
 export {
   InMemoryHostDeviceStore,
   InMemoryClientAppStore,
+  cascadeRevokeLinked,
   createPairingSession,
   generatePairingCode,
   normalizePairingCode,
   pairingTranscriptBytes,
   PAIRING_TRANSCRIPT,
+  DEVICE_LINK_RPC_METHOD,
   type ClientAppStore,
   type HostDeviceStore,
   type PairedAppRecord,
@@ -117,8 +119,26 @@ export {
   unwrapBootstrapUri,
   BOOTSTRAP_FRAGMENT_KEY,
   PAIRING_URI_SCHEME,
-  type ParsedPairingUri
+  PAIRING_URI_VERSION,
+  type ParsedPairingUri,
+  type BuildPairingUriInput
 } from "./pairing/uri.js";
+export {
+  ENDPOINT_KINDS,
+  ENDPOINT_PREFERENCE,
+  encodeEndpoints,
+  decodeEndpoints,
+  filterEndpoints,
+  sortEndpoints,
+  isValidEndpointUrl,
+  isLoopbackHost,
+  isHostDirectKind,
+  HOST_DIRECT_KINDS,
+  toWebSocketUrl,
+  toHttpUrl,
+  type EndpointKind,
+  type PairingEndpoint
+} from "./pairing/endpoints.js";
 export {
   deviceIdFromPublicKey,
   fingerprintFromPublicKey

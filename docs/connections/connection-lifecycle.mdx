@@ -42,14 +42,16 @@ offline
 connecting
   |  transport connected
   |  CLX1 handshake complete
-connected
+direct | turn-relayed | crosslink-relayed   (which one depends on the transport used)
   |  transport lost
 reconnecting
   |  new transport connected
   |  CLX1 handshake complete
-connected
-  |  max retries exceeded / device revoked
-offline
+direct | turn-relayed | crosslink-relayed
+  |  device revoked
+revoked
+  |  protocol version mismatch
+protocol-incompatible
 ```
 
 ## Events

@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * Todo Host — cross-network example with notifications.
+ * Todo Host — capability tiers, consent prompts and notifications.
  *
- * Network modes:
- *   --local     LAN-only (no relay/signaling needed, same WiFi only)
- *   (default)   Relay mode (works from any network)
+ * Nothing to configure:
+ *   node examples/todo-host/src/cli.ts
+ *   # scan the QR from a phone on the same Wi-Fi
  *
- * Usage (local):
- *   node examples/todo-host/src/cli.ts --local
- *   # scan the QR from a browser on the same network
+ * Reachable from another network (asks the router for an inbound port):
+ *   node examples/todo-host/src/cli.ts --remote
  *
- * Usage (anywhere):
+ * A signaling/relay pair is optional, for phones that cannot reach this
+ * machine directly:
  *   npm run stack
  *   CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \
  *   CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \
@@ -22,30 +22,18 @@ import QRCode from "qrcode";
 import { randomUUID } from "node:crypto";
 
 const args = new Set(process.argv.slice(2));
-const isLocal = args.has("--local") || args.has("--lan");
 
+// Optional, and unset by default. A phone pairs and connects over the address
+// in the QR with no service in the middle; a signaling/relay pair only adds a
+// route for phones that cannot reach this machine directly.
 const signalingUrl = process.env.CROSSLINK_SIGNALING_URL;
 const relayUrl = process.env.CROSSLINK_RELAY_URL;
 
-if (!isLocal && (!signalingUrl || !relayUrl)) {
-  console.error(`
-  ┌───────────────────────────────────────────────────────────────┐
-  │  Missing signaling / relay URLs for cross-network mode.       │
-  │                                                               │
-  │  Pick a mode:                                                 │
-  │                                                               │
-  │  1) Local network only (no setup needed):                     │
-  │     node examples/todo-host/src/cli.ts --local                │
-  │                                                               │
-  │  2) Cross-network (requires infrastructure):                  │
-  │     npm run stack                                             │
-  │     CROSSLINK_SIGNALING_URL=http://127.0.0.1:8081 \\          │
-  │     CROSSLINK_RELAY_URL=http://127.0.0.1:8082 \\             │
-  │     node examples/todo-host/src/cli.ts                        │
-  └───────────────────────────────────────────────────────────────┘
-`);
-  process.exit(1);
-}
+// `--remote` asks the router for an inbound port (UPnP / NAT-PMP / PCP) so a
+// phone on another network can dial this host directly. If the router refuses,
+// the host says so rather than pretending; it never advertises a private
+// address as if it were a public one.
+const networkMode = args.has("--remote") ? "remote" : "auto";
 
 /* ------------------------------------------------------------------ */
 /* data model                                                          */
@@ -91,10 +79,10 @@ const server = createCrosslinkServer({
     requireApproval: "high",
     maxDevices: 10,
   },
-  // Cross-network: use relay + signaling.  Local: LAN only, no relay.
-  ...(isLocal
-    ? { lan: { enabled: true, bind: "all" } }
-    : { signalingUrl, relayUrl, lan: { enabled: false } }),
+  networkMode,
+  signalingUrl,
+  relayUrl,
+  lan: { enabled: true, bind: "all" },
   pairing: {
     autoApprove: args.has("--yes"),
     approve: async (req) => {
@@ -213,7 +201,7 @@ server
     name: "Todo List",
     appId: "com.example.todo",
     version: "1.0.0",
-    mode: isLocal ? "local" : "relay",
+    mode: networkMode,
     todoCount: todos.size,
     doneCount: [...todos.values()].filter((t) => t.done).length,
   }))
@@ -225,10 +213,13 @@ server
 
 await server.start();
 
-const modeLabel = isLocal ? "local network only" : "cross-network (relay)";
-console.log(`Todo Host ready — ${modeLabel}.`);
+console.log(`Todo Host ready — ${networkMode}.`);
 console.log(`  fingerprint ${server.fingerprintHex.slice(0, 32)}...`);
-console.log(`  transports  ${JSON.stringify(server.status().transports)}`);
+for (const endpoint of server.connectionEndpoints()) {
+  console.log(`  ${endpoint.kind.padEnd(11)} ${endpoint.url}`);
+}
+const remote = server.getRemoteDiagnostics();
+if (remote && !remote.reachable) console.log(`  remote      ${remote.message}`);
 console.log("  commands    code | devices | revoke <id> | consent | quit\n");
 
 async function printPairingCode(): Promise<void> {

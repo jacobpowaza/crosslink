@@ -18,21 +18,22 @@ npm init -y
 npm install @crosslink/sdk-node @crosslink/sdk-browser
 ```
 
-## Step 2: Start the services
+## Step 2: (Optional) start the signaling and relay services
 
-Crosslink uses two small services for pairing and cross-network connectivity:
+With no services configured at all, a phone on the same network pairs and connects **directly** to the host over the address embedded in the QR code -- no signaling service, no relay, no tunnel, no account. Signaling and relay are an optional addition for pairing and connecting across different networks.
 
 ```bash
-# In a separate terminal, from the crosslink repo root
+# In a separate terminal, from the crosslink repo root -- only needed for
+# cross-network pairing/connectivity
 npm run stack
 ```
 
 This starts:
-- **Signaling** on `ws://127.0.0.1:8081` -- helps devices find each other
-- **Relay** on `http://127.0.0.1:8082` -- forwards encrypted traffic across networks
+- **Signaling** on `ws://127.0.0.1:8081` -- helps devices find each other across networks
+- **Relay** on `http://127.0.0.1:8082` -- forwards encrypted traffic when a direct connection isn't possible
 
 <Note>
-Both services are optional for LAN-only pairing. For cross-network use, you need both.
+Skip this step entirely for same-network (LAN) pairing.
 </Note>
 
 ## Step 3: Create a host
@@ -119,7 +120,7 @@ rpc.subscribe("app.tick", (payload) => {
 Run it (pass the URI from the host):
 
 ```bash
-node client.mjs "crosslink://pair?v=1&s=http://127.0.0.1:8081&c=123456789&a=com.example.myapp&n=My%20App&f=..."
+node client.mjs "crosslink://pair?v=2&e=lan~ws%3A%2F%2F192.168.1.20%3A54213&c=123456789&a=com.example.myapp&n=My%20App&f=..."
 ```
 
 ## Step 5: Verify
@@ -149,18 +150,19 @@ That's it -- you have an end-to-end encrypted connection.
 The pairing URI has this structure:
 
 ```
-crosslink://pair?v=1&s=<signalingUrl>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>&e=<expiryMs>
+crosslink://pair?v=2&e=<endpoints>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>
 ```
 
 | Parameter | Description |
 | --- | --- |
-| `v` | Protocol version (always `1`) |
-| `s` | Signaling server URL |
+| `v` | Protocol version (always `2`) |
+| `e` | Comma-separated list of routes the host advertises, as `kind~url` pairs (`lan`, `wan`, `sig`, `relay`, `tunnel`), tried by the client in that order |
 | `c` | 9-digit pairing code |
 | `a` | Application ID |
 | `n` | Application name (URL-encoded) |
 | `f` | First 16 hex chars of host fingerprint (MITM pin) |
-| `e` | Expiry timestamp in ms |
+
+A private (`lan`) address is only ever tagged `lan` in the QR -- it is never advertised as a public route.
 
 ## Next steps
 

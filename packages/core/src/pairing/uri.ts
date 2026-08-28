@@ -1,26 +1,65 @@
 /**
- * Crosslink pairing URI (QR content).
+ * Crosslink pairing URI (QR content) — the single canonical pairing payload.
  *
- *   crosslink://pair?v=1&s=<signaling http(s) url>&c=<9-digit code>&a=<appId>&n=<name>&f=<fp16>
+ *   crosslink://pair?v=2&e=<endpoints>&c=<9-digit code>&a=<appId>&n=<name>&f=<fp16>
  *
- * `f` carries the first 16 hex chars of sha256(hostIdentityPubEd) so clients
- * can pin the host identity before any network exchange. Plain https URLs
- * carrying the same parameters are accepted for camera deep-link fallbacks.
+ * `e` is the endpoint list (see `endpoints.ts`): every route the host actually
+ * has, in preference order. `f` carries the first 16 hex chars of
+ * sha256(hostIdentityPubEd) so a client pins the host identity before any
+ * network exchange. Plain https URLs carrying the same parameters are accepted
+ * for camera deep-link fallbacks.
+ *
+ * v1 payloads carried a single mandatory `s=<signaling url>` instead. They are
+ * still parsed — an installed PWA may hold an old link — but never emitted.
+ * Nothing outside this module may build or parse a pairing URI.
  */
 import { base64ToBytes } from "@crosslink/protocol";
 import { fingerprintFromPublicKey } from "./device-id.js";
+import {
+  decodeEndpoints,
+  encodeEndpoints,
+  filterEndpoints,
+  isValidEndpointUrl,
+  type PairingEndpoint
+} from "./endpoints.js";
 
 export const PAIRING_URI_SCHEME = "crosslink://pair";
+export const PAIRING_URI_VERSION = 2;
 
 export interface ParsedPairingUri {
-  signalingUrl: string;
+  version: number;
+  /** Every route the host advertised, already in attempt order. */
+  endpoints: PairingEndpoint[];
   code: string;
   appId: string;
   appName: string;
   /** first 16 hex chars of host fingerprint */
   fp16: string;
-  /** Connection transport intended for pairing: auto | lan | relay | webrtc */
+  /** Transport the host wants used: auto | lan | remote | relay | webrtc. */
   transport?: string;
+  /**
+   * First signaling/relay endpoint, for the code-resolution step that still
+   * requires a rendezvous service. Undefined for a LAN- or WAN-direct payload.
+   */
+  signalingUrl?: string;
+  /**
+   * Marks this as a device-link continuation URI rather than a normal
+   * human-witnessed pairing: `code` is an opaque single-use token (not a
+   * 9-digit code), and the client completes it silently, skipping the SAS
+   * confirmation prompt, since trust was already established elsewhere.
+   */
+  link?: boolean;
+}
+
+export interface BuildPairingUriInput {
+  endpoints: readonly PairingEndpoint[];
+  code?: string;
+  appId: string;
+  appName: string;
+  hostPubEdB64: string;
+  transport?: string;
+  /** See `ParsedPairingUri.link`. */
+  link?: boolean;
 }
 
 /** First 16 hex chars of the host identity fingerprint (QR pin). */
@@ -28,62 +67,96 @@ export function fingerprint16(pubEdB64: string): string {
   return fingerprintFromPublicKey(base64ToBytes(pubEdB64)).slice(0, 16);
 }
 
-export function buildPairingUri(input: {
-  signalingUrl: string;
-  code?: string;
-  appId: string;
-  appName: string;
-  hostPubEdB64: string;
-  transport?: string;
-}): string {
+/**
+ * Builds the canonical v2 pairing URI.
+ *
+ * Throws when `endpoints` is empty. A pairing URI with no route is not a
+ * degraded payload that a client might still salvage — it is unusable, and
+ * emitting one moves the failure from the host (where the reason is known and
+ * can be reported) to the phone (where it cannot).
+ */
+export function buildPairingUri(input: BuildPairingUriInput): string {
+  const usable = input.endpoints.filter((e) => isValidEndpointUrl(e.url, e.kind));
+  if (usable.length === 0) {
+    throw new Error(
+      "cannot build a pairing URI: the host has no reachable endpoint. " +
+        "Enable LAN, configure a signaling/relay service, or enable remote access."
+    );
+  }
   const cleanCode = (input.code ?? "").replace(/\s/g, "");
   const params = new URLSearchParams({
-    v: "1",
-    s: input.signalingUrl,
+    v: String(PAIRING_URI_VERSION),
+    e: encodeEndpoints(usable),
     ...(cleanCode ? { c: cleanCode } : {}),
     a: input.appId,
     n: input.appName,
     f: fingerprint16(input.hostPubEdB64),
     ...(input.transport ? { t: input.transport } : {}),
+    ...(input.link ? { l: "1" } : {})
   });
   return `${PAIRING_URI_SCHEME}?${params.toString()}`;
 }
 
 export function parsePairingUri(text: string): ParsedPairingUri {
-  const trimmed = text.trim();
-  let params: URLSearchParams;
+  const params = paramsFrom(text.trim());
 
-  if (trimmed.startsWith(PAIRING_URI_SCHEME)) {
-    params = new URLSearchParams(trimmed.slice(PAIRING_URI_SCHEME.length));
-  } else if (/^https?:\/\//i.test(trimmed)) {
-    const url = new URL(trimmed);
-    params =
-      url.searchParams.get("c") !== null || url.searchParams.get("s") !== null || url.searchParams.get("a") !== null
-        ? url.searchParams
-        : new URLSearchParams(url.hash.replace(/^#/, ""));
-  } else {
-    throw new Error("not a crosslink pairing URI");
+  const version = Number(params.get("v"));
+  if (version !== 1 && version !== 2) {
+    throw new Error(`unsupported pairing uri version: ${String(params.get("v"))}`);
   }
 
-  const version = params.get("v");
-  const signalingUrl = params.get("s");
+  const endpoints = readEndpoints(params, version);
   const rawCode = params.get("c");
   const code = rawCode ? normalizeCode(rawCode) : "";
   const appId = params.get("a");
   const appName = params.get("n") ?? appId ?? "";
   const fp16 = (params.get("f") ?? "").toLowerCase();
   const transport = params.get("t") ?? undefined;
+  const link = params.get("l") === "1";
 
-  if (version !== "1") throw new Error(`unsupported pairing uri version: ${String(version)}`);
-  if (!signalingUrl || !/^(https?|wss?):\/\//i.test(signalingUrl)) {
-    throw new Error("pairing uri missing valid signaling url");
+  if (endpoints.length === 0) {
+    throw new Error(
+      "pairing uri advertises no usable endpoint " +
+        "(expected e=lan~ws://… / wan~ws://… / sig~wss://…)"
+    );
   }
   if (!appId || appId.length > 256 || !/^[\w.@:/-]+$/.test(appId)) {
     throw new Error("pairing uri missing valid app id");
   }
   if (!/^[0-9a-f]{16}$/.test(fp16)) throw new Error("pairing uri missing fingerprint");
 
-  return { signalingUrl, code, appId, appName, fp16, transport };
+  const brokered = filterEndpoints(endpoints, ["sig", "relay", "tunnel"]);
+  return {
+    version,
+    endpoints,
+    code,
+    appId,
+    appName,
+    fp16,
+    transport,
+    signalingUrl: brokered[0]?.url,
+    link
+  };
+}
+
+function paramsFrom(trimmed: string): URLSearchParams {
+  if (trimmed.startsWith(PAIRING_URI_SCHEME)) {
+    return new URLSearchParams(trimmed.slice(PAIRING_URI_SCHEME.length).replace(/^\?/, ""));
+  }
+  if (!/^https?:\/\//i.test(trimmed)) throw new Error("not a crosslink pairing URI");
+  const url = new URL(trimmed);
+  const hasQueryPayload = ["c", "e", "s", "a"].some((k) => url.searchParams.get(k) !== null);
+  return hasQueryPayload ? url.searchParams : new URLSearchParams(url.hash.replace(/^#/, ""));
+}
+
+/**
+ * v2 reads `e`; v1 is upgraded in place by treating its single `s` as one
+ * brokered endpoint, so every consumer downstream sees the same shape.
+ */
+function readEndpoints(params: URLSearchParams, version: number): PairingEndpoint[] {
+  if (version === 2) return decodeEndpoints(params.get("e") ?? "");
+  const legacy = params.get("s") ?? "";
+  return isValidEndpointUrl(legacy, "sig") ? [{ kind: "sig", url: legacy }] : [];
 }
 
 /** Accepts "483921004", "483 921 004", "483-921-004". */

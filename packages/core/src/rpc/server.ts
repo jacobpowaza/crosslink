@@ -53,6 +53,8 @@ export interface EventOptions {
 interface MethodRecord {
   options: ExposeOptions;
   handler: RpcHandler;
+  /** Built once at registration so a bad schema fails there, not per call. */
+  validator?: Validator;
 }
 
 interface Inflight {
@@ -113,7 +115,9 @@ export class RpcRouter {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$/.test(method)) {
       throw new TypeError(`invalid method name: ${method}`);
     }
-    this.methods.set(method, { options, handler });
+    const validator =
+      options.validate ?? (options.inputSchema ? miniValidator(options.inputSchema) : undefined);
+    this.methods.set(method, { options, handler, validator });
     return this;
   }
 
@@ -252,9 +256,7 @@ export class RpcRouter {
       return;
     }
 
-    const validator =
-      record.options.validate ??
-      (record.options.inputSchema ? miniValidator(record.options.inputSchema) : undefined);
+    const validator = record.validator;
 
     let input: unknown = undefined;
     if ("p" in msg && msg.p !== undefined) input = msg.p;

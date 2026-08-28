@@ -14,6 +14,7 @@ import {
   type CrosslinkClientOptions
 } from "../client.js";
 import {
+  toHttpUrl,
   type ConnectionState,
   type RpcClient,
   type PairedAppRecord
@@ -350,7 +351,7 @@ export class CrosslinkOfflineShell {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 4000);
         const fetchFn = (this.options.clientOptions as any)?.fetch ?? globalThis.fetch;
-        const res = await fetchFn(`${hints.signalingUrl.replace(/\/$/, "")}/apps/${encodeURIComponent(appId)}`, {
+        const res = await fetchFn(`${toHttpUrl(hints.signalingUrl).replace(/\/$/, "")}/apps/${encodeURIComponent(appId)}`, {
           signal: controller.signal,
           cache: "no-store"
         });

@@ -77,7 +77,7 @@ contextBridge.exposeInMainWorld("crosslink", {
 Electron's `safeStorage` provides OS-level encryption:
 
 ```js
-import safeStorage from "electron";
+import { safeStorage } from "electron";
 
 // Encrypt
 const encrypted = safeStorage.encryptString("my-secret");
@@ -105,7 +105,7 @@ contextBridge.exposeInMainWorld("electronCrosslink", {
 
 ## Security considerations
 
-- The main process holds the identity key in the OS keychain via keytar or safeStorage
+- The main process holds the identity key in the OS keychain via Electron's `safeStorage` (or the optional `keytar` package, if your app installs it)
 - The renderer process does not have direct access to the keychain
 - Use IPC to communicate between main and renderer
 - Consider disabling Node integration in the renderer for security

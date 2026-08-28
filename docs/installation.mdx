@@ -5,86 +5,77 @@ description: How to install and set up Crosslink
 
 ## Requirements
 
-- **Node.js** >= 20 (22 recommended)
-- **npm** >= 9
+- **Node.js** >= 18.17
+- **npm** (workspaces-aware)
 
-## Install packages
+## Get the code
 
-```bash
-npm install @crosslink/sdk-node @crosslink/sdk-browser
-```
-
-## Install the services
-
-Crosslink's signaling and relay services are stateless and can run anywhere:
-
-### Local development
+Crosslink is not published to a package registry yet — use it from a clone as npm workspaces.
 
 ```bash
-# Clone the crosslink repo
-git clone https://github.com/anthropics/crosslink.git
+git clone https://github.com/jacobpowaza/crosslink.git
 cd crosslink
 npm install
+```
+
+Each package under `packages/*` (`@crosslink/sdk-node`, `@crosslink/sdk-browser`, `@crosslink/react`, `@crosslink/core`, `@crosslink/protocol`, ...) is then available as a workspace dependency to any app in the same monorepo, or via `npm link` / a `file:` reference from outside it.
+
+## Optional: OS keychain storage
+
+A host stores its identity seed in the operating system's credential store when
+one is reachable, and in an authenticated-encryption file otherwise. `keytar`
+and Electron's `safeStorage` are both optional and imported dynamically — their
+absence is a normal outcome, not an error.
+
+```bash
+npm i keytar        # only if you want the libsecret / Keychain / Credential Vault backend
+```
+
+On Linux, `keytar` needs libsecret headers to build:
+
+```bash
+sudo apt-get install libsecret-1-dev
+```
+
+Without either, set `CROSSLINK_SECRET_KEY` so the encrypted-file fallback uses a
+passphrase you control.
+
+## Optional: run the local services
+
+Nothing here is needed to pair or connect — a phone reaches the host directly
+over the address in the QR. Signaling and relay only add a route for phones that
+cannot. For local development:
+
+```bash
 npm run stack
 ```
 
-This starts both services on localhost.
-
-### Docker
-
-```bash
-docker compose up -d
-```
-
-### Docker Compose (standalone)
-
-```yaml
-version: "3.9"
-services:
-  signaling:
-    image: crosslink/signaling:latest
-    ports:
-      - "8081:8081"
-    environment:
-      - PORT=8081
-    restart: unless-stopped
-
-  relay:
-    image: crosslink/relay:latest
-    ports:
-      - "8082:8082"
-    environment:
-      - PORT=8082
-    restart: unless-stopped
-```
-
-### Standalone binaries
-
-Download from the [releases page](https://github.com/anthropics/crosslink/releases) for your platform.
+This starts both services on localhost (signaling on `:8081`, relay on `:8082` by default).
 
 ## Environment variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CROSSLINK_SIGNALING_URL` | `http://127.0.0.1:8081` | Signaling server URL |
-| `CROSSLINK_RELAY_URL` | `http://127.0.0.1:8082` | Relay server URL |
+| `CROSSLINK_SIGNALING_URL` | _(auto-discovered)_ | Signaling server URL |
+| `CROSSLINK_RELAY_URL` | _(auto-discovered)_ | Relay server URL |
 | `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted file storage (host fallback) |
+| `CROSSLINK_LAN_HOST` | _(auto-detected)_ | Pin the LAN address advertised, when the machine is on several networks |
 
 ## Verify installation
 
 ```bash
-node -e "
-  const { createCrosslinkServer } = require('@crosslink/sdk-node');
-  console.log('Host SDK loaded');
-"
+npm test          # the full suite
+node -e "import('@crosslink/sdk-node').then(() => console.log('Host SDK loaded'))"
 ```
+
+The packages are ESM-only, so `require()` will not load them.
 
 ## TypeScript support
 
 Both SDKs ship with full TypeScript declarations. No `@types` packages needed.
 
 ```ts
-import type { CreateCrosslinkServerOptions } from "@crosslink/sdk-node";
+import type { CrosslinkServerConfig } from "@crosslink/sdk-node";
 ```
 
 ## Framework-specific setup
@@ -94,15 +85,7 @@ import type { CreateCrosslinkServerOptions } from "@crosslink/sdk-node";
 ```bash
 npm create vite@latest my-app -- --template react
 cd my-app
-npm install @crosslink/sdk-browser
-```
-
-### Next.js
-
-```bash
-npx create-next-app@latest my-app
-cd my-app
-npm install @crosslink/sdk-browser
+npm install @crosslink/sdk-browser @crosslink/react
 ```
 
 ### Electron
@@ -112,41 +95,11 @@ npm install @crosslink/sdk-node  # In main process
 npm install @crosslink/sdk-browser  # In renderer (if needed)
 ```
 
-### Tauri
-
-```bash
-npm install @crosslink/sdk-browser  # In frontend
-```
-
-## Node.js requirements by platform
-
-| Platform | Minimum | Notes |
-| --- | --- | --- |
-| Linux | 20 | Keytar requires `libsecret-dev` for OS keychain |
-| macOS | 20 | Native Keychain access works out of the box |
-| Windows | 20 | Native Credential Vault access works out of the box |
-| Docker | 20 | Use `node:20-slim` or `node:20-alpine` |
-
 ## Troubleshooting
-
-### `keytar` fails to load
-
-Install the native dependency for your OS:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install libsecret-1-dev
-
-# RHEL/Fedora
-sudo dnf install libsecret-devel
-
-# macOS (usually works, but if not)
-brew install pkg-config
-```
 
 ### WebCrypto unavailable
 
-Ensure you're serving from a **secure context** (HTTPS or localhost). WebCrypto is not available on `http://` origins.
+Ensure you're serving from a **secure context** (HTTPS or localhost). WebCrypto is not available on `http://` origins, which affects `CrosslinkClient.create()`'s encrypted storage (it falls back to plaintext storage, or throws if `allowPlaintextFallback` is `false`).
 
 ### Module not found
 

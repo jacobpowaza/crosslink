@@ -13,6 +13,7 @@ createCrosslinkServer({
   relayUrl: "...",
   lan: { ... },
   pairing: { ... },
+  networkMode: "auto",
   logger: ...
 });
 ```
@@ -23,7 +24,7 @@ createCrosslinkServer({
 | --- | --- | --- | --- |
 | `id` | `string` | Yes | Unique application identifier (reverse-domain recommended) |
 | `name` | `string` | Yes | Human-readable name |
-| `version` | `string` | Yes | Semantic version |
+| `version` | `string` | No | Semantic version |
 
 ### capabilities
 
@@ -35,31 +36,39 @@ Array of capability objects:
 | `title` | `string` | Yes | Human-readable name |
 | `risk` | `"low" \| "medium" \| "high"` | Yes | Risk level |
 | `description` | `string` | No | Detailed explanation |
-| `ttlMs` | `number` | No | Time-to-live in milliseconds |
+| `defaultGranted` | `boolean` | No | Granted by default at pairing when the client requests it |
+| `confirmEachUse` | `boolean` | No | Require a fresh user confirmation on every use, not just at pairing |
 
 ### signalingUrl
 
-`string` -- URL of the signaling server. Default: `http://127.0.0.1:8081`
+`string` -- URL of the signaling server (enables QR pairing across networks). No default is hardcoded; when unset it is auto-discovered from `.crosslink-data/stack.json` if a local `npm run stack` is running, or left unconfigured.
 
 ### relayUrl
 
-`string` -- URL of the relay server. Default: `http://127.0.0.1:8082`
+`string` -- URL of the relay server (enables connectivity behind NATs). Same auto-discovery as `signalingUrl`.
 
 ### lan
 
 | Property | Type | Description |
 | --- | --- | --- |
+| `enabled` | `boolean` | Enable the LAN listener (default: `true`) |
+| `port` | `number` | Port to bind (default: an ephemeral port, remembered across restarts) |
 | `bind` | `"loopback" \| "all"` | Bind address (default: `"loopback"`) |
 | `host` | `string` | Address to advertise for LAN pairing when `bind: "all"`. Overrides auto-detection (first non-internal interface, unreliable with more than one active network) — also settable via `CROSSLINK_LAN_HOST` |
+| `httpHandler` | `(req, res) => void \| Promise<void>` | Serves the app's own HTTP on the same port as the Crosslink transport (e.g. an installable mobile page) |
 
 ### pairing
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `approve` | `(req) => Promise<boolean>` | Pairing approval callback |
-| `autoApprove` | `boolean` | Auto-approve low-risk (default: `false`) |
-| `codeLength` | `number` | Pairing code digits (default: `9`) |
-| `codeTtlMs` | `number` | Code TTL in ms (default: `120000`) |
+| `ttlMs` | `number` | Pairing code/session TTL |
+| `autoApprove` | `boolean` | Dev convenience: skip human confirmation. Never grants above policy. Never for production |
+| `approve` | `(req: PairingApprovalRequest) => PairingApproval \| Promise<PairingApproval>` | Pairing approval callback |
+| `bootstrapUrl` | `string` | Base URL of a hosted, installable client page for the iOS "Add to Home Screen" pairing flow |
+
+### networkMode
+
+`"auto" | "local-only" | "lan-and-relay" | "remote"` -- Which transports the host offers. `auto` (default) uses LAN plus whatever remote path is configured or discovered; `local-only` disables signaling, relay, tunnel, and port mapping entirely; `lan-and-relay` uses LAN plus the configured relay/signaling services; `remote` requires a working outside-the-network route and fails startup loudly if none can be established.
 
 ---
 
@@ -79,37 +88,38 @@ CrosslinkClient.create({
 
 ### deviceName
 
-`string` -- Device name shown to host. Default: `"browser"`
+`string` -- Device name shown to host.
 
 ### storage
 
-`SecureStorage` -- Custom storage backend. Default: IndexedDB (encrypted)
+`SecureStorage` -- Custom storage backend. Default (via `.create()`): IndexedDB-backed, encrypted with a non-extractable WebCrypto key when available.
 
 ### onStateChange
 
-`(state: string) => void` -- State change callback
+`(state: ConnectionState, detail?: Record<string, unknown>) => void` -- State change callback.
 
 ### onConfirmPairing
 
-`(req: PairingConfirmRequest) => Promise<boolean>` -- Pairing confirmation
+`(req: PairingConfirmRequest) => boolean | Promise<boolean>` -- Pairing confirmation.
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `sas` | `string` | SAS digits |
-| `grantedCaps` | `string[]` | Granted capabilities |
+| `sas` | `string` | Short Authentication String shown on both devices |
 | `hostName` | `string` | Host application name |
+| `hostFp16` | `string` | First 16 hex chars of the host's identity fingerprint |
+| `grantedCaps` | `string[]` | Granted capabilities |
 
 ### logger
 
-`Logger` -- Custom logger implementation
+`Logger` -- Custom logger implementation (must implement `trace`, `debug`, `info`, `warn`, `error`, `child`, `isEnabled` — use `consoleLogger()` from `@crosslink/core` for a ready-made one).
 
 ### dialTimeoutMs
 
-`number` -- Connection timeout in ms. Default: `10000`
+`number` -- Max time to wait for a WebSocket to open before giving up. Default: `10000`.
 
 ### allowPlaintextFallback
 
-`boolean` -- Allow plaintext storage when IndexedDB is unavailable. Default: `true`
+`boolean` -- Only accepted by `CrosslinkClient.create()`, not the plain constructor. Allows falling back to unencrypted storage when WebCrypto/IndexedDB is unavailable.
 
 ---
 
@@ -117,35 +127,36 @@ CrosslinkClient.create({
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `CROSSLINK_SIGNALING_URL` | `http://127.0.0.1:8081` | Signaling server URL |
-| `CROSSLINK_RELAY_URL` | `http://127.0.0.1:8082` | Relay server URL |
+| `CROSSLINK_SIGNALING_URL` | _(auto-discovered)_ | Signaling server URL |
+| `CROSSLINK_RELAY_URL` | _(auto-discovered)_ | Relay server URL |
 | `CROSSLINK_SECRET_KEY` | _(none)_ | Passphrase for encrypted file storage |
-| `CROSSLINK_STORAGE_DIR` | `.crosslink-data` | Storage directory for host |
+| `CROSSLINK_DATA_DIR` | `.crosslink-data` | Dev tokens and local stack config (`@crosslink/dev-tokens`). A host's identity and device store go under its `storageDir` config field instead. |
 | `CROSSLINK_LAN_HOST` | _(auto-detected)_ | Address advertised for LAN pairing (`lan.bind: "all"`); set on a multi-network host so phones/tablets get an address they can actually reach |
 
 ---
 
 ## Service configuration
 
-### Signaling
+Both services read configuration from CLI flags (`--port`, `--host`, `--auth-token`) or the environment variables below; `PORT`/`HOST` win over a positional/flag port, and an explicit token always wins over the per-machine dev token fallback.
+
+### Signaling (`services/signaling`)
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8081` | HTTP server port |
+| `PORT` | `8081` | HTTP/WebSocket server port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
-| `CODE_TTL_MS` | `120000` | Pairing code TTL |
-| `CLEANUP_INTERVAL_MS` | `30000` | Cleanup interval |
+| `CROSSLINK_SIGNALING_TOKEN` | _(per-machine dev token)_ | Shared secret hosts must present to register presence |
+| `CROSSLINK_REGION` | _(none)_ | Advertised in `/health` for operators |
 
-### Relay
+### Relay (`services/relay`)
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8082` | HTTP server port |
+| `PORT` | `8082` | HTTP/WebSocket server port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
-| `MAX_FRAME_SIZE` | `65536` | Max frame size in bytes |
-| `IDLE_TIMEOUT_MS` | `300000` | Idle connection timeout |
+| `CROSSLINK_RELAY_TOKEN` | _(per-machine dev token)_ | Shared secret hosts must present to allocate a channel |
+| `CROSSLINK_RELAY_CLIENT_TOKEN` | _(none)_ | Shared secret clients must also present, if set |
+| `CROSSLINK_RELAY_MAX_CLIENTS` | `8` | Max concurrent clients per relay channel |
 
 ---
 

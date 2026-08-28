@@ -60,8 +60,10 @@ Crosslink is built on four principles:
 | Compromised signaling | Cannot forge identities (signature verification) |
 | Replay attacks | Nonce-based, single-use pairing codes |
 | Key compromise | Forward secrecy (ephemeral session keys) |
+| Pairing code brute-force | Constant-time code comparison, host-side throttling |
+| Cross-origin WebSocket hijack (LAN) | LAN listener refuses upgrades from browser origins it did not itself advertise |
 | Browser XSS (seed theft) | Non-extractable WebCrypto key |
-| OS keychain theft | Keytar/Electron safeStorage (OS-level protection) |
+| OS keychain theft | Electron safeStorage (OS-level protection), where available |
 
 ### Out of scope
 
@@ -87,9 +89,9 @@ Each pairing code can only be used once. The code is:
 ### SAS verification
 
 Short Authentication String (SAS) digits are derived from:
-- The host's public key
-- The client's public key
-- The session's shared secret
+- The host's Ed25519 identity public key
+- The client's Ed25519 identity public key
+- The application ID
 
 Both parties must see the same digits. If they don't, a MITM is detected.
 
@@ -128,7 +130,7 @@ Every encrypted frame includes:
 
 The SDK tries backends in order:
 
-1. **keytar** -- OS keychain (macOS Keychain, Linux libsecret, Windows Credential Vault)
+1. **keytar** -- OS keychain (macOS Keychain, Linux libsecret, Windows Credential Vault), if the optional `keytar` package is installed by the host application. Crosslink does not depend on it or install it for you.
 2. **Electron safeStorage** -- Same vaults via Electron bindings
 3. **Encrypted file** -- AES-256-GCM with scrypt-derived key
 4. **Plaintext file** -- Requires explicit `allowPlaintextFallback: true`

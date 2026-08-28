@@ -141,7 +141,6 @@ Yes. See the [Node.js Integration](/guides/node) guide.
 
 ### Why can't I store secrets securely?
 
-1. Check OS keychain availability (host)
+1. Check OS keychain availability (host) -- Electron `safeStorage`, or the optional `keytar` package if your app installs it
 2. Serve from HTTPS/localhost (client for WebCrypto)
-3. Install keytar dependencies (Linux)
-4. Use `CROSSLINK_SECRET_KEY` as fallback
+3. Use `CROSSLINK_SECRET_KEY` as a fallback passphrase for encrypted-file storage

@@ -236,7 +236,7 @@ async function pairAndConnect(
   const session = host.pairing.beginSession();
   const parsed = parsePairingUri(
     buildPairingUri({
-      signalingUrl: "https://signal.test",
+      endpoints: [{ kind: "sig", url: "https://signal.test" }],
       code: session.code,
       appId: APP_ID,
       appName: "WebRTC Demo",

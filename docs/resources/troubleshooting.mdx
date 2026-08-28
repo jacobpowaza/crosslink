@@ -136,14 +136,9 @@ description: Common issues and solutions
 **Symptom:** `STORAGE_ERROR` error
 
 **Fix:**
-1. Check OS keychain availability
-2. Install keytar dependencies:
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install libsecret-1-dev
-   ```
-3. Set `CROSSLINK_SECRET_KEY` environment variable
-4. Use `allowPlaintextFallback: true` (not recommended for production)
+1. Check OS keychain availability (the optional `keytar` package, if your app installs it, or Electron `safeStorage`)
+2. Set `CROSSLINK_SECRET_KEY` environment variable to use the encrypted-file fallback with a fixed passphrase
+3. Use `allowPlaintextFallback: true` (not recommended for production)
 
 ### Browser storage not encrypted
 
@@ -175,9 +170,9 @@ description: Common issues and solutions
 
 **Fix:**
 1. Check both devices are on same network
-2. Check firewall rules (port 8081/8082)
-3. Check LAN binding (`bind: "all"` for non-loopback)
-4. Try with `bind: "loopback"` for local testing
+2. Check firewall rules for the host's LAN listener port (printed by the host at startup; `bind: "loopback"` restricts it to the host machine itself)
+3. Check LAN binding (`bind: "all"` for non-loopback, so phones can reach it)
+4. Try with `bind: "loopback"` only when host and client run on the same machine
 
 ---
 

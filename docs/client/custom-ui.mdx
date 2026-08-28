@@ -80,11 +80,16 @@ function SasConfirmScreen({ sas, hostName, grantedCaps, onConfirm }) {
 function ConnectionStatus({ state }) {
   const states = {
     offline: { color: "gray", label: "Disconnected" },
+    discovering: { color: "yellow", label: "Looking for host..." },
+    pairing: { color: "yellow", label: "Pairing..." },
     connecting: { color: "yellow", label: "Connecting..." },
-    lan: { color: "green", label: "Connected (LAN)" },
+    direct: { color: "green", label: "Connected (Direct)" },
+    "turn-relayed": { color: "blue", label: "Connected (TURN relay)" },
     "crosslink-relayed": { color: "blue", label: "Connected (Relay)" },
-    "webrtc-direct": { color: "green", label: "Connected (Direct)" },
     reconnecting: { color: "yellow", label: "Reconnecting..." },
+    unauthorized: { color: "red", label: "Not authorized" },
+    revoked: { color: "red", label: "Access revoked" },
+    "protocol-incompatible": { color: "red", label: "Incompatible version" },
   };
 
   const { color, label } = states[state] || states.offline;

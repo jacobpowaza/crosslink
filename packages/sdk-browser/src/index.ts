@@ -49,9 +49,11 @@ export {
   PairingCard,
   createPairingCard,
   injectPairingCardStyles,
+  normalizeNetworkMode,
   type PairingCardOptions,
   type PairingCardState,
   type PairingCardTheme,
+  type PairingCardEndpoint,
   type NetworkMode
 } from "./ui/pairing-card.js";
 
@@ -107,3 +109,10 @@ export function createSecureCrosslinkClient(
 ): Promise<CrosslinkClient> {
   return CrosslinkClient.create(options);
 }
+export {
+  DirectPairingChannel,
+  BrokeredPairingChannel,
+  type PairingChannel,
+  type PairingHostInfo,
+  type ResolvedPairingSession
+} from "./pairing-channel.js";

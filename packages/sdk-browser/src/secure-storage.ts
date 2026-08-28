@@ -17,7 +17,7 @@
  * This is meaningfully stronger than `localStorage` and it is not a vault: a
  * script running on the origin can still ask the key to decrypt. The honest
  * summary is that it removes the copy-and-leave attack, not the code-execution
- * one - see docs/THREAT_MODEL.md.
+ * one - see docs/security/threat-model.mdx.
  *
  * The synchronous `SecureStorage` interface the SDK uses internally is served
  * by `hydrate()`, which decrypts everything once into memory and writes back

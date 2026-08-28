@@ -188,4 +188,26 @@ describe("capabilities + validation", () => {
     expect(validate({ title: "" })?.message).toContain("shorter");
     expect(validate({ title: "ok", extra: true })?.message).toContain("unexpected property");
   });
+
+  it("refuses a schema whose constraint key it does not implement", () => {
+    // `maxLength` is the JSON Schema spelling; this validator's field is
+    // `maxLen`. Accepting the misspelling would validate nothing at all, and
+    // the input it was meant to bound would cross the trust boundary unchecked.
+    expect(() =>
+      miniValidator({ type: "string", maxLength: 200 } as never)
+    ).toThrow(/unknown key "maxLength"/);
+  });
+
+  it("checks nested schemas for the same mistake", () => {
+    expect(() =>
+      miniValidator({
+        type: "object",
+        properties: { title: { type: "string", minLength: 1 } }
+      } as never)
+    ).toThrow(/unknown key "minLength" in string schema at \$\.title/);
+
+    expect(() =>
+      miniValidator({ type: "array", items: { type: "number", minimum: 0 } } as never)
+    ).toThrow(/unknown key "minimum".*\$\[\]/);
+  });
 });

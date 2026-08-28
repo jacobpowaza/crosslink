@@ -5,148 +5,105 @@ description: All events emitted by Crosslink
 
 ## Host events
 
-### `clientConnected`
+`CrosslinkServer` extends Node's `EventEmitter`. Use `server.typedOn(event, callback)` for typed payloads, or the inherited `.on()`.
 
-Emitted when a client connects.
+### `devicePaired`
+
+Emitted when a device completes pairing.
 
 ```js
-server.on("clientConnected", (event) => {
-  console.log(`Client ${event.deviceId} connected`);
+server.typedOn("devicePaired", (record) => {
+  console.log(`Paired: ${record.deviceId}`);
+});
+```
+
+Payload is the full `TrustedDeviceRecord`.
+
+### `deviceRevoked`
+
+Emitted when a device's access is revoked.
+
+```js
+server.typedOn("deviceRevoked", (deviceId) => {
+  console.log(`Revoked: ${deviceId}`);
+});
+```
+
+### `deviceConnected`
+
+Emitted when a paired device opens a session.
+
+```js
+server.typedOn("deviceConnected", (info) => {
+  console.log(`Connected: ${info.deviceId} via ${info.transport}`);
 });
 ```
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `deviceId` | `string` | Client device ID |
+| `deviceId` | `string` | Device ID |
+| `transport` | `string` | Transport kind (`lan`, `crosslink-relayed`, `webrtc-direct`, ...) |
 
-### `clientDisconnected`
+### `deviceDisconnected`
 
-Emitted when a client disconnects.
+Emitted when a paired device's session closes. Same payload shape as `deviceConnected`.
+
+### `pairingIssued`
+
+Emitted whenever a new pairing code is generated. Payload is the `PairingCodeInfo` returned by `server.getPairingCode()`.
+
+### `connectivity`
+
+Emitted whenever host reachability changes.
 
 ```js
-server.on("clientDisconnected", (event) => {
-  console.log(`Client ${event.deviceId} disconnected`);
+server.typedOn("connectivity", (status) => {
+  console.log(status.message);
 });
 ```
 
-| Property | Type | Description |
-| --- | --- | --- |
-| `deviceId` | `string` | Client device ID |
+Payload is a `ConnectivityStatus`: `{ reach, lan, relay, signaling, webrtc, message, transports }`.
 
-### `error`
-
-Emitted on server error.
-
-```js
-server.on("error", (error) => {
-  console.error("Server error:", error);
-});
-```
-
-### `clientError`
-
-Emitted on client error.
-
-```js
-server.on("clientError", (event) => {
-  console.error(`Client ${event.deviceId} error:`, event.error);
-});
-```
-
-| Property | Type | Description |
-| --- | --- | --- |
-| `deviceId` | `string` | Client device ID |
-| `error` | `Error` | Error object |
+There is no `error` or `clientError` server event — `server.start()` / `server.getPairingCode()` reject their promise on failure instead.
 
 ---
 
 ## Client events
 
-### `stateChange`
-
-Emitted on state change.
+`CrosslinkClient` is not an event emitter. The only lifecycle notification is `onStateChange`, set either as a constructor option or subscribed to later.
 
 ```js
-client.onStateChange((state) => {
-  console.log("State:", state);
+const unsubscribe = client.onStateChange((state, detail) => {
+  console.log("State:", state, detail);
 });
 ```
 
-States:
-- `idle` -- Not connected
-- `connecting` -- Establishing connection
-- `connected` -- Active session
-- `reconnecting` -- Attempting to reconnect
-- `disconnected` -- Intentionally disconnected
-- `error` -- Connection failed
+States (`ConnectionState`):
+- `offline` -- No connection
+- `discovering` -- Resolving how to reach the host
+- `pairing` -- Pairing handshake in progress
+- `connecting` -- Dialing a transport candidate
+- `direct` -- Connected over LAN, memory, or a direct WebRTC channel
+- `turn-relayed` -- Connected via TURN relay
+- `crosslink-relayed` -- Connected via the Crosslink relay service
+- `reconnecting` -- Recovering after a dropped connection
+- `unauthorized` -- Host rejected the session
+- `revoked` -- Host revoked this device
+- `protocol-incompatible` -- No mutually supported protocol version
 
-### `connected`
+`isConnected(state)` (from `@crosslink/react`) is `true` for `"direct"`, `"crosslink-relayed"`, and `"turn-relayed"`.
 
-Emitted when connected to host.
-
-```js
-client.on("connected", (event) => {
-  console.log(`Connected to ${event.deviceId}`);
-});
-```
-
-### `disconnected`
-
-Emitted when disconnected from host.
-
-```js
-client.on("disconnected", (event) => {
-  console.log(`Disconnected from ${event.deviceId}`);
-});
-```
-
-### `error`
-
-Emitted on client error.
-
-```js
-client.on("error", (error) => {
-  console.error("Client error:", error);
-});
-```
+There are no `connected` / `disconnected` / `error` client events.
 
 ---
 
 ## RPC events
 
-### `connected`
-
-Emitted when RPC is connected.
-
-```js
-rpc.on("connected", (event) => {
-  console.log(`RPC connected to ${event.deviceId}`);
-});
-```
-
-### `disconnected`
-
-Emitted when RPC is disconnected.
-
-```js
-rpc.on("disconnected", (event) => {
-  console.log(`RPC disconnected from ${event.deviceId}`);
-});
-```
-
-### `error`
-
-Emitted on RPC error.
-
-```js
-rpc.on("error", (error) => {
-  console.error("RPC error:", error);
-});
-```
+`RpcClient` has no event emitter surface (no `connected`, `disconnected`, or `error` events, and no `.on()` method). Connection lifecycle is observed through the client's `onStateChange`, and per-call failures reject the `rpc.call()` promise with a `CrosslinkError`.
 
 ### Custom events
 
-Declare and emit custom events:
+Declare and emit custom events on the host, subscribe on the client:
 
 ```js
 // Host

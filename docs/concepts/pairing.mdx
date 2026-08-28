@@ -5,18 +5,35 @@ description: How devices discover and authenticate each other
 
 ## Pairing flow
 
+Pairing runs over whichever route the client reaches the host on. There are two,
+and the cryptographic exchange is identical either way:
+
+**Direct** — the client opens a WebSocket straight to the host using a route
+from the QR (`lan` on the same network, `wan` through a router mapping). No
+service is involved at all. This is the default and needs no infrastructure.
+
+**Brokered** — for a host reachable neither way, a signaling service relays the
+same frames between the two sides.
+
 ```text
-1. Host generates pairing code (9-digit, 2-min TTL)
-2. User displays QR code / reads code to client
-3. Client scans QR or enters code
-4. Client resolves code via signaling service
-5. Client verifies host fingerprint
-6. Both exchange signed public keys
-7. Host sends challenge, client signs it
-8. Both derive SAS digits
-9. User confirms matching SAS
-10. Client persists paired-app record
+1. Host generates a pairing code (9 digits, 2-minute TTL, single use)
+2. User displays the QR, or reads the code aloud
+3. Client scans the QR, and dials the routes in it in order
+4. Client claims the code on the first route that answers
+5. Client verifies the host fingerprint pinned in the QR
+6. Both sides exchange signed public keys
+7. Host sends a challenge; the client signs it
+8. Both derive the SAS digits
+9. User confirms the SAS digits match
+10. Client persists the paired-app record and the routes it learned
 ```
+
+Step 3 is the reason a scan works without setup: the QR names the host, so the
+client has somewhere to go before any service exists.
+
+Repeated wrong codes are throttled on the host — a 9-digit code is only about
+30 bits, and a direct socket has nothing in front of it — and the code is
+compared in constant time.
 
 ## Pairing code
 
@@ -42,28 +59,58 @@ Example: 123-456-789
 const code = await server.getPairingCode();
 // code = {
 //   code: "123456789",
-//   uri: "crosslink://pair?v=1&s=...&c=123456789&a=...",
-//   expires: 1699999999999
+//   uri: "crosslink://pair?v=2&e=lan~ws://192.168.1.83:54676&c=123456789&a=…",
+//   endpoints: [{ kind: "lan", url: "ws://192.168.1.83:54676" }],
+//   expiresAt: 1699999999999
 // }
 ```
 
 ## Pairing URI
 
-The QR code encodes a pairing URI:
+The QR encodes a pairing URI carrying a **list** of routes, not one URL:
 
 ```text
-crosslink://pair?v=1&s=<signalingUrl>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>&e=<expiryMs>
+crosslink://pair?v=2&e=<endpoints>&c=<code>&a=<appId>&n=<appName>&f=<fingerprint16>
 ```
 
 | Parameter | Description |
 | --- | --- |
-| `v` | Protocol version |
-| `s` | Signaling server URL |
+| `v` | Pairing URI version (`2`) |
+| `e` | Endpoint list, `kind~url` separated by commas |
 | `c` | 9-digit pairing code |
 | `a` | Application ID |
 | `n` | Application name (URL-encoded) |
-| `f` | First 16 hex chars of host fingerprint |
-| `e` | Expiry timestamp in ms |
+| `f` | First 16 hex chars of the host fingerprint |
+
+Endpoint kinds are `lan`, `wan`, `sig`, `relay` and `tunnel`, and the client
+attempts them in that order. A real example:
+
+```text
+crosslink://pair?v=2
+  &e=lan~ws://192.168.1.83:54676,wan~ws://203.0.113.9:54676
+  &c=754524531&a=com.crosslink.chat&n=Crosslink+Chat&f=110ed6212454f46f
+```
+
+An unknown kind or a malformed URL is dropped rather than making the QR
+unscannable, so a newer host can advertise a transport an older client does not
+understand. A loopback address is never accepted as a `lan` or `wan` route: on
+the phone, `127.0.0.1` is the phone.
+
+Version 1 URIs (`v=1&s=<signalingUrl>`) still parse, and are read as a single
+`sig` endpoint.
+
+### Delivering the URI to a phone
+
+iOS has no handler for a custom scheme, so a camera app will refuse to open
+`crosslink://` directly. Hosts put the pairing URI in the fragment of an ordinary
+HTTPS/HTTP bootstrap URL instead:
+
+```text
+http://203.0.113.9:54676/mobile.html#pair=crosslink%3A%2F%2Fpair%3Fv%3D2…
+```
+
+The fragment is never sent to the server, so the pairing code does not land in
+anyone's access log.
 
 ## SAS verification
 
@@ -131,6 +178,6 @@ If a device loses its paired record:
 
 - Single-use codes prevent replay attacks
 - Short TTL limits the window for interception
-- Fingerprint pinning prevents MITM via compromised signaling
+- Fingerprint pinning prevents MITM by a compromised signaling service, or by anything else that can relay a host's address while substituting its own identity
 - SAS verification confirms no active attacker
 - Capability scoping limits blast radius of compromised client

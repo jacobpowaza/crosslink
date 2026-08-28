@@ -1,6 +1,6 @@
 /**
  * Crosslink application-layer messages (inside an established encrypted
- * session). One JSON object per frame. See docs/PROTOCOL.md.
+ * session). One JSON object per frame. See docs/reference/protocol.mdx.
  */
 import { ALL_ERROR_CODES, ErrorCodes } from "./errors.js";
 import type { Json } from "./json.js";

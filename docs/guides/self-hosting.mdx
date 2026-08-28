@@ -10,7 +10,7 @@ Crosslink's signaling and relay servers are stateless, horizontally scalable, an
 ## Quick start
 
 ```bash
-git clone https://github.com/anthropics/crosslink.git
+git clone https://github.com/jacobpowaza/crosslink.git
 cd crosslink
 npm install
 npm run stack
@@ -48,49 +48,11 @@ The relay service forwards encrypted traffic when a direct connection isn't poss
 - Session keys
 - Message content
 
-## Docker deployment
+## Building your own container image
 
-### Docker Compose
+Crosslink does not publish Docker images or Dockerfiles today. Each service is a plain Node.js CLI (`@crosslink/signaling`'s `crosslink-signaling` bin, `@crosslink/relay`'s `crosslink-relay` bin) built with `npm run build`, so it packages into a container however you already build Node services -- copy `services/signaling` (or `services/relay`) and its built `dist/` into a `node:20-slim` (or similar) base image and run the bin.
 
-```yaml
-version: "3.9"
-services:
-  signaling:
-    image: crosslink/signaling:latest
-    ports:
-      - "8081:8081"
-    environment:
-      - PORT=8081
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  relay:
-    image: crosslink/relay:latest
-    ports:
-      - "8082:8082"
-    environment:
-      - PORT=8082
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-```
-
-### Standalone containers
-
-```bash
-# Signaling
-docker run -d -p 8081:8081 -e PORT=8081 crosslink/signaling:latest
-
-# Relay
-docker run -d -p 8082:8082 -e PORT=8082 crosslink/relay:latest
-```
+Both services require a bind before phones can reach them from anywhere but the machine they're on; use your normal container port-mapping.
 
 ## Environment variables
 
@@ -98,21 +60,24 @@ docker run -d -p 8082:8082 -e PORT=8082 crosslink/relay:latest
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8081` | HTTP server port |
+| `PORT` | `8081` | HTTP/WebSocket server port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
-| `CODE_TTL_MS` | `120000` | Pairing code TTL (2 minutes) |
-| `CLEANUP_INTERVAL_MS` | `30000` | Cleanup interval |
+| `CROSSLINK_SIGNALING_TOKEN` | _(none)_ | Shared secret hosts must present; required unless per-machine dev tokens apply |
+| `CROSSLINK_REGION` | _(none)_ | Optional region label included in presence data |
 
 ### Relay
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8082` | HTTP server port |
+| `PORT` | `8082` | HTTP/WebSocket server port |
 | `HOST` | `0.0.0.0` | Bind address |
-| `MAX_CONNECTIONS` | `10000` | Max concurrent connections |
-| `MAX_FRAME_SIZE` | `65536` | Max frame size in bytes |
-| `IDLE_TIMEOUT_MS` | `300000` | Idle connection timeout (5 minutes) |
+| `CROSSLINK_RELAY_TOKEN` | _(none)_ | Shared secret hosts must present; required unless per-machine dev tokens apply |
+| `CROSSLINK_RELAY_CLIENT_TOKEN` | _(none)_ | Optional shared secret clients must present to attach |
+| `CROSSLINK_RELAY_MAX_CLIENTS` | _(unset)_ | Max clients per relay channel |
+
+<Warning>
+Outside of local development, both services refuse to start without an auth token (`CROSSLINK_SIGNALING_TOKEN` / `CROSSLINK_RELAY_TOKEN`) or the per-machine dev tokens written to `.crosslink-data/dev-tokens.json`. Set these explicitly for any deployment other services will connect to.
+</Warning>
 
 ## Production considerations
 
@@ -163,7 +128,7 @@ Monitor these metrics:
 
 | Metric | Warning threshold |
 | --- | --- |
-| Connection count | > 80% of MAX_CONNECTIONS |
+| Connection count | Sustained growth with no corresponding drop-off |
 | Memory usage | > 80% of container limit |
 | Error rate | > 1% of requests |
 | Latency (p99) | > 500ms |
@@ -171,19 +136,19 @@ Monitor these metrics:
 ### Backup
 
 The services are stateless -- no backup needed. However, if you customize configuration, back up:
-- Environment variables
+- Environment variables (including auth tokens)
 - TLS certificates
-- Docker Compose files
+- Your deployment manifests
 
 ## Security checklist
 
 - [ ] Use TLS termination (nginx, Caddy, Cloudflare)
 - [ ] Run in a DMZ or private network
 - [ ] Monitor connection counts and error rates
-- [ ] Set appropriate MAX_CONNECTIONS
+- [ ] Set `CROSSLINK_SIGNALING_TOKEN` / `CROSSLINK_RELAY_TOKEN` explicitly
 - [ ] Enable health checks
-- [ ] Use Docker secrets for sensitive values
-- [ ] Regularly update the images
+- [ ] Keep secrets out of source control (env vars, a secrets manager, or Docker/Kubernetes secrets)
+- [ ] Regularly update the packages
 - [ ] Restrict network access with firewall rules
 
 ## Custom deployment
@@ -207,12 +172,17 @@ spec:
     spec:
       containers:
       - name: signaling
-        image: crosslink/signaling:latest
+        image: your-registry/crosslink-signaling:latest  # built per "Building your own container image" above
         ports:
         - containerPort: 8081
         env:
         - name: PORT
           value: "8081"
+        - name: CROSSLINK_SIGNALING_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: crosslink-signaling
+              key: token
         resources:
           limits:
             memory: "256Mi"
@@ -230,7 +200,8 @@ After=network.target
 Type=simple
 User=crosslink
 Environment=PORT=8081
-ExecStart=/usr/bin/node /opt/crosslink/signaling/index.js
+Environment=CROSSLINK_SIGNALING_TOKEN=change-me
+ExecStart=/usr/bin/node /opt/crosslink/signaling/dist/cli.js
 Restart=always
 RestartSec=5
 
