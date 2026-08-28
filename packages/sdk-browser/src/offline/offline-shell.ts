@@ -561,36 +561,18 @@ export function createOfflineUI(
 
   const statusWrap = document.createElement("div");
   statusWrap.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 8px;
     margin-bottom: 24px;
-    padding: 6px 14px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 9999px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-  `;
-
-  const spinner = document.createElement("div");
-  spinner.style.cssText = `
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #38bdf8;
-    box-shadow: 0 0 8px #38bdf8;
-    animation: clPulse 1.5s ease-in-out infinite;
   `;
 
   const status = document.createElement("span");
   status.id = "crosslink-offline-status";
   status.style.cssText = `
-    color: #38bdf8;
+    color: #94a3b8;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 400;
   `;
   status.textContent = "Trying to reconnect…";
 
-  statusWrap.appendChild(spinner);
   statusWrap.appendChild(status);
   container.appendChild(statusWrap);
 
@@ -616,18 +598,6 @@ export function createOfflineUI(
     container.appendChild(retryBtn);
   }
 
-  // Inject keyframe animation if not present
-  if (typeof document !== "undefined" && !document.getElementById("crosslink-offline-styles")) {
-    const style = document.createElement("style");
-    style.id = "crosslink-offline-styles";
-    style.textContent = `
-      @keyframes clPulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.4; transform: scale(0.85); }
-      }
-    `;
-    document.head.appendChild(style);
-  }
 
   return container;
 }

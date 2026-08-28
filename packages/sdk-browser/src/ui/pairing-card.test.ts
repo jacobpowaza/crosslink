@@ -247,6 +247,21 @@ describe("PairingCard UI Component", () => {
     card.destroy();
   });
 
+  it("syncs a server-reported mode without treating it as another user change", () => {
+    const modeSpy = vi.fn();
+    const card = new PairingCard({
+      networkMode: "auto",
+      onNetworkModeChange: modeSpy,
+      injectStyles: false,
+    });
+
+    card.update({ networkMode: "remote" });
+
+    expect(card.getNetworkMode()).toBe("remote");
+    expect(modeSpy).not.toHaveBeenCalled();
+    card.destroy();
+  });
+
   it("folds a mode name persisted by an older build onto a current one", () => {
     // An upgraded app finds "open-lan-remote" or "ngrok" in localStorage; the
     // card must start on a mode that still exists rather than on nothing.

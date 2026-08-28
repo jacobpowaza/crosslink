@@ -721,6 +721,7 @@ describe("connectivity", () => {
 
   it("reports internet reachability when a tunnel is configured", async () => {
     const server = await startServer({
+      networkMode: "auto",
       lan: { enabled: true, bind: "all" },
       tunnelUrl: "https://crosslink-test.trycloudflare.com",
     });
@@ -788,6 +789,27 @@ describe("networkMode", () => {
     expect(status.lan).toBe(true);
     expect(status.relay).toBe(false);
     expect(status.signaling).toBe(false);
+  });
+
+  it("filters the routes advertised by a runtime pairing-mode selection", async () => {
+    const server = await startServer({
+      networkMode: "auto",
+      tunnelUrl: "https://chat.example.test",
+      signalingUrl: "https://signal.crosslink.app",
+      relayUrl: "https://relay.crosslink.app",
+      lan: { enabled: true, bind: "all" },
+    });
+
+    expect(server.connectionEndpoints("local-only").map((endpoint) => endpoint.kind)).toEqual(["lan"]);
+    expect(server.connectionEndpoints("lan-and-relay").map((endpoint) => endpoint.kind)).toEqual([
+      "lan",
+      "sig",
+      "relay",
+    ]);
+    expect(server.connectionEndpoints("remote").map((endpoint) => endpoint.kind)).toContain("tunnel");
+
+    const localPair = await server.getPairingCode(undefined, "local-only");
+    expect(localPair.endpoints?.map((endpoint) => endpoint.kind)).toEqual(["lan"]);
   });
 });
 

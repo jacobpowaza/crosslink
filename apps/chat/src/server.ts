@@ -55,6 +55,7 @@ const tunnelUrl = process.env.CROSSLINK_TUNNEL_URL;
  */
 const networkMode = (process.env.CROSSLINK_NETWORK_MODE ?? "auto") as
   NonNullable<CrosslinkServerConfig["networkMode"]>;
+let pairingNetworkMode = networkMode;
 
 // ─── state ──────────────────────────────────────────────────────────────
 
@@ -113,7 +114,11 @@ const host = createCrosslinkServer({
   lan: { enabled: true, bind: "all", port: lanPort, httpHandler: serveBootstrap },
   // A demo pairs unattended; a real app should leave this off so a human sees
   // and confirms the SAS before a device is trusted.
-  pairing: { autoApprove: true, ttlMs: 120_000 }
+  pairing: { autoApprove: true, ttlMs: 300_000 },
+  // Pairing codes are minted only through the loopback-bound desktop control
+  // surface, so mode changes can replace the QR immediately without exposing
+  // an internet-facing code-generation endpoint.
+  security: { pairingRateLimitMs: 0 }
 });
 
 host
@@ -150,6 +155,11 @@ host.declareEvent("chat.new_message");
 
 host.on("deviceConnected", (info) => broadcast("status", { mobile: true, deviceId: info.deviceId }));
 host.on("deviceDisconnected", (info) => broadcast("status", { mobile: false, deviceId: info.deviceId }));
+// A pairing code is single-use. Once a device redeems one — or a device is
+// revoked and has to pair again — the code still on screen would fail with
+// `pairing_expired`, so the browser mints a fresh one immediately.
+host.on("devicePaired", () => broadcast("pair.refresh", {}));
+host.on("deviceRevoked", () => broadcast("pair.refresh", {}));
 
 function addMessage(sender: string, text: string): ChatMsg {
   const msg: ChatMsg = {
@@ -265,6 +275,11 @@ const control = http.createServer(async (req, res) => {
   // from the SDK — this demo does not construct a pairing URL.
   if (pathname === "/api/pair" && req.method === "GET") {
     try {
+      const requestedMode = url.searchParams.get("mode");
+      if (["auto", "local-only", "lan-and-relay", "remote"].includes(requestedMode ?? "")) {
+        pairingNetworkMode = requestedMode as typeof pairingNetworkMode;
+      }
+      host.config.networkMode = pairingNetworkMode;
       const info = await host.getPairingCode();
       const bootstrapUrl = `${bootstrapOrigin()}/mobile.html#pair=${encodeURIComponent(info.uri!)}`;
       // The QR points at an https/http page rather than the `crosslink://`
@@ -277,7 +292,7 @@ const control = http.createServer(async (req, res) => {
         mobileUrl: bootstrapUrl,
         mobileQr: qrSvg,
         endpoints: info.endpoints,
-        mode: networkMode,
+        mode: pairingNetworkMode,
         // Only present when remote access was attempted and did not produce a
         // public route; the UI shows the reason rather than implying success.
         remoteNote: remoteNote()
@@ -292,6 +307,22 @@ const control = http.createServer(async (req, res) => {
           ? 409
           : 500;
       json(res, status, { error: message });
+    }
+    return;
+  }
+
+  if (pathname === "/api/network-mode" && req.method === "POST") {
+    try {
+      const { mode } = (await readJsonBody(req)) as { mode?: string };
+      if (!mode || !["auto", "local-only", "lan-and-relay", "remote"].includes(mode)) {
+        json(res, 400, { error: "invalid network mode" });
+        return;
+      }
+      pairingNetworkMode = mode as typeof pairingNetworkMode;
+      host.config.networkMode = pairingNetworkMode;
+      json(res, 200, { mode: pairingNetworkMode });
+    } catch (err) {
+      json(res, 400, { error: (err as Error).message });
     }
     return;
   }
@@ -327,7 +358,7 @@ const control = http.createServer(async (req, res) => {
 
   if (pathname === "/api/devices" && req.method === "GET") {
     json(res, 200, {
-      devices: host.listDevices().map((d) => ({
+      devices: host.listDevices().filter((d) => d.revokedAt === undefined).map((d) => ({
         deviceId: d.deviceId,
         name: d.name,
         firstPaired: d.addedAt,
@@ -337,6 +368,21 @@ const control = http.createServer(async (req, res) => {
         revokedAt: d.revokedAt ?? null
       }))
     });
+    return;
+  }
+
+  if (pathname === "/api/revoke" && req.method === "POST") {
+    try {
+      const { deviceId } = (await readJsonBody(req)) as { deviceId?: string };
+      const target = String(deviceId ?? "").trim();
+      if (!target) {
+        json(res, 400, { ok: false, error: "deviceId required" });
+        return;
+      }
+      json(res, 200, { ok: host.revokeDevice(target), deviceId: target });
+    } catch (err) {
+      json(res, 400, { ok: false, error: (err as Error).message });
+    }
     return;
   }
 

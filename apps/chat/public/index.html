@@ -237,18 +237,28 @@
   <script>
     const $ = id => document.getElementById(id);
     let mobileConnected = false;
-    // The network mode belongs to the host process (CROSSLINK_NETWORK_MODE),
-    // not to this page: the browser cannot open a router port. The card shows
-    // whatever the server reports.
-    let currentMode = "auto";
+    const savedMode = localStorage.getItem("crosslink.networkMode");
+    let currentMode = ["auto", "local-only", "lan-and-relay", "remote"].includes(savedMode)
+      ? savedMode
+      : "auto";
 
     // ── pairing card ─────────────────────────────────────
     const pairingCard = CrosslinkSDK.createPairingCard({
       target: "#pairCardContainer",
       appName: "Crosslink Chat",
-      blurb: "<strong>Connect your phone</strong> to chat from another device. The link is end-to-end encrypted &mdash; this server and any relay in between only ever see ciphertext.",
+      blurb: "<strong>Connect another device</strong> with Crosslink. Trusted devices can use this app across the routes the host makes available, with end-to-end encryption built into the framework.",
       networkMode: currentMode,
-      onRefresh: () => generatePair()
+      onRefresh: () => generatePair(),
+      onNetworkModeChange: async (mode) => {
+        currentMode = mode;
+        const res = await fetch("/api/network-mode", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mode })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await generatePair();
+      }
     });
 
     // ── SSE ─────────────────────────────────────────────
@@ -276,7 +286,7 @@
     async function generatePair() {
       pairingCard.update({ loading: true });
       try {
-        const res = await fetch("/api/pair");
+        const res = await fetch(`/api/pair?mode=${encodeURIComponent(currentMode)}`);
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         currentMode = data.mode || currentMode;
@@ -291,9 +301,9 @@
           loading: false
         });
 
-        // codes expire after 2 minutes; fetch a fresh one just before then
+        // Demo codes allow enough time to scan and complete the phone flow.
         clearTimeout(generatePair._timer);
-        generatePair._timer = setTimeout(() => generatePair(), 105_000);
+        generatePair._timer = setTimeout(() => generatePair(), 285_000);
       } catch (err) {
         let msg = "Failed to generate a pairing QR.";
         try {

@@ -264,6 +264,8 @@ export interface CrosslinkServerConfig {
   attachTo?: "existing-server" | { type: "existing-server"; server?: unknown };
 }
 
+export type PairingNetworkMode = NonNullable<CrosslinkServerConfig["networkMode"]>;
+
 export interface PairingCodeInfo {
   code: string;
   expiresAt: number;
@@ -658,7 +660,7 @@ export class CrosslinkServer extends EventEmitter {
 
   /* -------------------------------- pairing -------------------------- */
 
-  async getPairingCode(ip?: string): Promise<PairingCodeInfo> {
+  async getPairingCode(ip?: string, mode: PairingNetworkMode = this.config.networkMode ?? "auto"): Promise<PairingCodeInfo> {
     this.assertStarted();
     const sec = this.config.security;
 
@@ -728,8 +730,8 @@ export class CrosslinkServer extends EventEmitter {
     // The QR advertises every route this host genuinely has, in preference
     // order, and nothing it does not. Endpoint construction lives in one place
     // (`connectionEndpoints`) so no demo, example or app can invent its own.
-    const endpoints = this.connectionEndpoints();
-    if (this.config.networkMode === "remote" && !this.hasRemoteEndpoint(endpoints)) {
+    const endpoints = this.connectionEndpoints(mode);
+    if (mode === "remote" && !this.hasRemoteEndpoint(endpoints)) {
       throw remoteUnavailableError(
         this.remote?.diagnostics ?? {
           protocol: "none",
@@ -786,7 +788,7 @@ export class CrosslinkServer extends EventEmitter {
    * real network interface. A loopback-only listener produces no endpoint at
    * all, because `ws://127.0.0.1:…` on a phone means the phone itself.
    */
-  connectionEndpoints(): PairingEndpoint[] {
+  connectionEndpoints(mode: PairingNetworkMode = this.config.networkMode ?? "auto"): PairingEndpoint[] {
     const endpoints: PairingEndpoint[] = [];
 
     if (this.lan) {
@@ -811,7 +813,17 @@ export class CrosslinkServer extends EventEmitter {
       endpoints.push({ kind: "tunnel", url: toWebSocketUrl(this.config.tunnelUrl.replace(/\/$/, "")) });
     }
 
-    return sortEndpoints(endpoints.filter((e) => isValidEndpointUrl(e.url, e.kind)));
+    const allowedKinds = mode === "local-only"
+      ? new Set<PairingEndpoint["kind"]>(["lan"])
+      : mode === "lan-and-relay"
+        ? new Set<PairingEndpoint["kind"]>(["lan", "sig", "relay"])
+        : null;
+
+    return sortEndpoints(
+      endpoints.filter((e) =>
+        isValidEndpointUrl(e.url, e.kind) && (!allowedKinds || allowedKinds.has(e.kind))
+      )
+    );
   }
 
   /** True when at least one advertised route works from outside this network. */

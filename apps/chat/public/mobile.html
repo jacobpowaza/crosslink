@@ -200,7 +200,7 @@
     // cannot continue running a stale bootstrap bundle from its old cache.
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        const key = "crosslink.sw-reloaded.v2";
+        const key = "crosslink.sw-reloaded.v3";
         if (!sessionStorage.getItem(key)) {
           sessionStorage.setItem(key, "1");
           location.reload();
@@ -208,7 +208,7 @@
       });
     }
   </script>
-  <script src="./bundle.js?v=3.0.0"></script>
+  <script src="./bundle.js?v=4.0.0"></script>
   <script>
     const $ = id => document.getElementById(id);
     const vibrate = p => { try { navigator.vibrate?.(p); } catch {} };

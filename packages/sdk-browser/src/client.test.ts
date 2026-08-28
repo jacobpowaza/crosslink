@@ -66,7 +66,23 @@ function makeHost(options: { policy?: ConstructorParameters<typeof HostPairingMa
     let active: CrosslinkSession | undefined;
     new HostAcceptor(
       wsTransport(socket, "crosslink-relayed"),
-      { identity, appId: APP_ID, lookupDevice: (id) => store.get(id) },
+      {
+        identity,
+        appId: APP_ID,
+        lookupDevice: (id) => store.get(id),
+        pairing: {
+          resolveCode: (code) => pairing.resolveCodeForDirectPairing(code),
+          describeApp: () => ({
+            appId: APP_ID,
+            name: "Notes",
+            fingerprint: identity.fingerprint,
+            pubEdB64: bytesToBase64(identity.edPublicKey),
+            pubXB64: bytesToBase64(identity.xPublicKey),
+          }),
+          handleClaim: (claim, reply) => pairing.handleClaim(claim, reply),
+          handleComplete: (complete, reply) => pairing.handleComplete(complete, reply),
+        },
+      },
       {
         onMessage: (msg, session) => router.handleMessage(session, msg),
         onSession: (session) => {
@@ -280,6 +296,23 @@ describe("pairing", () => {
     const h = makeHarness();
     const bootstrapUrl = `https://my-pwa.netlify.app/#pair=${encodeURIComponent(h.pairingUri)}`;
     const record = await h.client.pairFromBootstrap(bootstrapUrl, ["notes.read"]);
+    expect(record.appId).toBe(APP_ID);
+    expect(record.grantedCaps).toEqual(["notes.read"]);
+  });
+
+  it("pairs directly through a configured tunnel route", async () => {
+    const h = makeHarness();
+    const session = h.host.pairing.beginSession();
+    const tunnelUri = buildPairingUri({
+      endpoints: [{ kind: "tunnel", url: "https://chat-tunnel.example" }],
+      code: session.code,
+      appId: APP_ID,
+      appName: "Notes",
+      hostPubEdB64: bytesToBase64(h.host.identity.edPublicKey),
+    });
+
+    const record = await h.client.pairFromQr(tunnelUri, ["notes.read"]);
+
     expect(record.appId).toBe(APP_ID);
     expect(record.grantedCaps).toEqual(["notes.read"]);
   });

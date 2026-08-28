@@ -622,7 +622,7 @@ export class PairingCard {
     this.blurbEl.className = "cl-pair-blurb";
     this.blurbEl.innerHTML =
       options.blurb ??
-      `<strong>Connect your phone</strong> to sync securely with this app. The link is end-to-end encrypted &mdash; relays only ever see ciphertext.`;
+      `<strong>Connect another device</strong> with Crosslink. The framework authenticates trusted devices and protects application data end to end across supported transports.`;
 
     this.refreshBtn = document.createElement("button");
     this.refreshBtn.className = "cl-pair-refresh";
@@ -724,8 +724,8 @@ export class PairingCard {
         <div class="cl-info-knob-wrap">
           <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> The QR carries every route this host genuinely has, and your phone picks the first one that answers &mdash; same Wi-Fi first, then any other route the host confirmed.<br>
-            <strong>Security:</strong> End-to-end encrypted with XChaCha20-Poly1305 whichever route wins.
+            <strong>How it works:</strong> The pairing payload carries every available route, and the connecting device picks the first one that answers &mdash; local first, then other confirmed routes.<br>
+            <strong>Security:</strong> Crosslink authenticates devices and encrypts application data end to end whichever route wins.
             <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
@@ -740,8 +740,8 @@ export class PairingCard {
         <div class="cl-info-knob-wrap">
           <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Direct connection on this Wi-Fi or LAN. Nothing leaves the local network and no service is involved at all.<br>
-            <strong>Security:</strong> Direct local link with XChaCha20-Poly1305 end-to-end encryption.
+            <strong>How it works:</strong> Direct connection on the current Wi-Fi or LAN. No remote transport is advertised.<br>
+            <strong>Security:</strong> The same Crosslink authentication and end-to-end encryption apply on the local link.
             <a href="${lanUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
@@ -756,8 +756,8 @@ export class PairingCard {
         <div class="cl-info-knob-wrap">
           <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Adds a relay service so a phone on another network can still reach this host when a direct route is unavailable.<br>
-            <strong>Security:</strong> The relay forwards ciphertext only &mdash; it cannot read or alter your data.
+            <strong>How it works:</strong> Adds a configured relay so another device can reach the host when a direct local route is unavailable.<br>
+            <strong>Security:</strong> Crosslink encrypts application data before it reaches the relay and authenticates it at the destination.
             <a href="${secUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
@@ -772,8 +772,8 @@ export class PairingCard {
         <div class="cl-info-knob-wrap">
           <button type="button" class="cl-info-knob" aria-label="Info">&#8505;</button>
           <div class="cl-dropdown-tooltip">
-            <strong>How it works:</strong> Asks your router for an inbound port using UPnP, NAT-PMP or PCP. Nothing to configure &mdash; but if the router refuses, or your ISP uses carrier-grade NAT, this mode reports that plainly instead of quietly falling back.<br>
-            <strong>Security:</strong> Only ciphertext crosses the public internet; the host still authenticates every device.
+            <strong>How it works:</strong> Advertises a confirmed internet route, such as a router mapping or configured tunnel. If none is available, Crosslink reports that instead of claiming remote reachability.<br>
+            <strong>Security:</strong> The framework keeps device authentication and end-to-end encryption in place on the public route.
             <a href="${remoteUrl}" target="_blank" rel="noopener noreferrer">Documentation &rarr;</a>
           </div>
         </div>
@@ -856,7 +856,7 @@ export class PairingCard {
     }
 
     if (state.networkMode) {
-      this.setNetworkMode(normalizeNetworkMode(state.networkMode));
+      this.syncNetworkMode(normalizeNetworkMode(state.networkMode));
     }
 
     if (state.endpoints !== undefined || state.remoteNote !== undefined) {
@@ -901,6 +901,12 @@ export class PairingCard {
   setBlurb(html: string): this {
     this.blurbEl.innerHTML = html;
     return this;
+  }
+
+  private syncNetworkMode(mode: NetworkMode): void {
+    this.currentMode = mode;
+    const radio = this.settingsPopover.querySelector(`input[value="${mode}"]`) as HTMLInputElement | null;
+    if (radio) radio.checked = true;
   }
 
   private renderLogo(logo?: string) {
@@ -1037,7 +1043,7 @@ export class PairingCard {
       const res = await fetch(endpoint);
       if (!res.ok) throw new Error(`Failed to fetch devices: ${res.status}`);
       const data = await res.json();
-      const devices: Array<{ deviceId: string; name: string; deviceType?: string; location?: string; ipAddress?: string; lastConnected?: number; firstPaired?: number; status?: string; trusted?: boolean; caps?: string[]; revokedAt?: number }> = data.devices || data || [];
+      const devices: Array<{ deviceId: string; name: string; deviceType?: string; location?: string; ipAddress?: string; lastConnected?: number; firstPaired?: number; status?: string; trusted?: boolean; caps?: string[]; revokedAt?: number | null }> = (data.devices || data || []).filter((device: { revokedAt?: number | null }) => typeof device.revokedAt !== "number");
       this.renderConnectedDevicesModal(devices);
     } catch (err: any) {
       this.renderConnectedDevicesModal([], String(err?.message || err));
@@ -1130,34 +1136,28 @@ export class PairingCard {
         const actions = document.createElement("div");
         actions.className = "cl-device-actions";
         
-        if (!dev.revokedAt) {
-          const revokeBtn = document.createElement("button");
-          revokeBtn.className = "cl-revoke-btn";
-          revokeBtn.textContent = "Revoke Access";
-          revokeBtn.addEventListener("click", async () => {
-            revokeBtn.disabled = true;
-            revokeBtn.textContent = "Revoking...";
-            try {
-              const revokeEndpoint = this.options.revokeEndpoint || "/api/revoke";
-              const res = await fetch(revokeEndpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ deviceId: dev.deviceId })
-              });
-              if (!res.ok) throw new Error("Revoke failed");
-              card.remove();
-            } catch (e: any) {
-              revokeBtn.textContent = "Failed";
-              revokeBtn.style.background = "#7f1d1d";
-            }
-          });
-          actions.appendChild(revokeBtn);
-        } else {
-          const revokedLabel = document.createElement("span");
-          revokedLabel.style.cssText = "color:#9a9a9a;font-size:12px;";
-          revokedLabel.textContent = "Access Revoked";
-          actions.appendChild(revokedLabel);
-        }
+        const revokeBtn = document.createElement("button");
+        revokeBtn.className = "cl-revoke-btn";
+        revokeBtn.textContent = "Revoke Access";
+        revokeBtn.addEventListener("click", async () => {
+          revokeBtn.disabled = true;
+          revokeBtn.textContent = "Revoking...";
+          try {
+            const revokeEndpoint = this.options.revokeEndpoint || "/api/revoke";
+            const res = await fetch(revokeEndpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ deviceId: dev.deviceId })
+            });
+            const result = await res.json().catch(() => null) as { ok?: boolean } | null;
+            if (!res.ok || result?.ok !== true) throw new Error("Revoke failed");
+            card.remove();
+          } catch (e: any) {
+            revokeBtn.textContent = "Failed";
+            revokeBtn.style.background = "#7f1d1d";
+          }
+        });
+        actions.appendChild(revokeBtn);
 
         card.appendChild(info);
         card.appendChild(actions);

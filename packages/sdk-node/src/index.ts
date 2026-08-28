@@ -3,6 +3,7 @@ export type {
   CrosslinkServerConfig,
   OfflineConfig,
   PwaConfig,
+  PairingNetworkMode,
   PairingCodeInfo,
   DeviceSummary,
   ServerEvents,
