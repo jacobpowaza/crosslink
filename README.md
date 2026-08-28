@@ -14,7 +14,7 @@
   <a href="https://github.com/jacobpowaza/crosslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Node-≥20-green.svg" alt="Node.js" />
-  <img src="https://img.shields.io/badge/Tests-283+-brightgreen.svg" alt="Tests" />
+  <img src="https://img.shields.io/badge/Tests-477-brightgreen.svg" alt="Tests" />
   <img src="https://img.shields.io/badge/Crypto-X25519%20%2B%20ML--KEM--768-9b59b6.svg" alt="Crypto" />
   <a href="https://github.com/jacobpowaza/crosslink/security"><img src="https://img.shields.io/badge/Security-audited%20primitives-orange.svg" alt="Security" /></a>
   <a href="https://venmo.com/u/jacobpowaza"><img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" /></a>
@@ -311,9 +311,9 @@ The full documentation site lives in `docs/` (Mintlify). Start here:
 ## Development
 
 ```bash
-npm test          # 450 tests: unit, both SDKs, full-stack integration
+npm test          # 477 tests: unit, both SDKs, full-stack integration
 npm run typecheck # strict TS across every workspace
-npm run build     # 18 build targets
+npm run build     # 19 build targets
 ```
 
 Both SDKs are unit-testable without a network. `@crosslink/sdk-browser` ships

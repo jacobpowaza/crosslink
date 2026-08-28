@@ -15,7 +15,7 @@
     "@crosslink/sdk-node": "*"
   },
   "devDependencies": {
-    "electron": "^44.0.0",
+    "electron": "44.0.0",
     "electron-builder": "^26.15.3",
     "tsup": "^8.5.1",
     "typescript": "^5.9.2"
