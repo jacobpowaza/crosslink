@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
+    <title>Crosslink Electron Chat</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header><div><strong>Crosslink</strong><span>Electron Chat</span></div><p id="reach">Starting securely…</p></header>
+    <main>
+      <section class="sidebar">
+        <div class="intro"><p class="eyebrow">Trusted devices</p><h1>Your app.<br>Every network.</h1><p>Pair explicitly approved devices over an end-to-end encrypted Crosslink session.</p><button id="pair-button" type="button">Pair a device</button></div>
+        <div id="pairing" class="pairing"><img id="pair-qr" alt="Crosslink pairing QR code"><div><span>Pairing code</span><strong id="pair-code">—</strong></div></div>
+        <div class="device-heading"><span id="device-count">0 trusted</span><span id="vault">Secrets: loading</span></div>
+        <div id="devices" class="devices"></div>
+      </section>
+      <section class="chat">
+        <div class="chat-heading"><div><p class="eyebrow">Capability-gated RPC</p><h2>Messages</h2></div><span class="secure">E2E encrypted</span></div>
+        <div id="messages" class="messages"><div class="empty">Messages from the desktop and paired devices appear here.</div></div>
+        <form id="composer"><input id="message" maxlength="2000" autocomplete="off" placeholder="Write a message…" aria-label="Message"><button>Send</button></form>
+      </section>
+    </main>
+    <script src="./renderer.global.js"></script>
+  </body>
+</html>

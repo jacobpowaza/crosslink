@@ -1,0 +1,44 @@
+{
+  "name": "@crosslink/example-electron-chat",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Secure Electron desktop chat host example for Crosslink",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsup src/main.ts src/preload.ts --format cjs --platform node --out-dir dist --external electron && tsup src/renderer.ts --format iife --platform browser --out-dir dist && node scripts/copy-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@crosslink/sdk-node": "*"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.2"
+  },
+  "build": {
+    "appId": "com.crosslink.example.chat",
+    "productName": "Crosslink Electron Chat",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Development"
+    }
+  }
+}

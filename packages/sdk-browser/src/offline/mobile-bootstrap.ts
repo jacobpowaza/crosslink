@@ -290,7 +290,7 @@ const BOOTSTRAP_STYLES = `
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(18px + env(safe-area-inset-bottom));
+  bottom: calc(4px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -307,8 +307,8 @@ const BOOTSTRAP_STYLES = `
   line-height: 1.2;
 }
 .cl-bootstrap-nudge svg {
-  width: 46px;
-  height: 46px;
+  width: 34px;
+  height: 52px;
   color: #ffffff;
   opacity: 0.92;
 }
@@ -986,8 +986,8 @@ export class CrosslinkMobileBootstrap {
     nudge.innerHTML = `
       <span>Add to home screen</span>
       <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 36 C 20 28, 34 12, 40 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        <path d="M31 9 L 40 8 L 35 16" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <path d="M24 5 C 24 16, 24 27, 24 39" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path d="M16 31 L 24 40 L 32 31" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       </svg>
     `;
     overlay.appendChild(nudge);
