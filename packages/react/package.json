@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "React integration for Crosslink — framework-independent connectivity bindings",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/react" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -13,10 +17,10 @@
   "files": ["dist"],
   "peerDependencies": {
     "react": ">=18.0.0",
-    "@crosslink/sdk-browser": "*"
+    "@crosslink/sdk-browser": "^0.1.0"
   },
   "dependencies": {
-    "@crosslink/sdk-browser": "*"
+    "@crosslink/sdk-browser": "^0.1.0"
   },
   "devDependencies": {
     "react": "^18.3.1",

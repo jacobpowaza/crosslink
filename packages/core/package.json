@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink transport-agnostic engine: identity, E2E sessions, capabilities, RPC, pairing",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/core" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -18,7 +22,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crosslink/protocol": "*",
+    "@crosslink/protocol": "^0.1.0",
     "@noble/ciphers": "^1.2.0",
     "@noble/curves": "^1.8.1",
     "@noble/hashes": "^1.7.1",

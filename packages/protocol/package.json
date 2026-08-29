@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink language-neutral wire protocol: envelopes, framing, versioning, errors, fixtures",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/protocol" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {

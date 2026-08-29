@@ -39,6 +39,15 @@ describe("PairingCard UI Component", () => {
     card.destroy();
   });
 
+  it("ships useful default text on a black card", () => {
+    const card = createPairingCard({ source: false, injectStyles: false });
+
+    expect(card.element.querySelector(".cl-pair-blurb")?.textContent).toContain("Connect another device");
+    expect(card.element.style.getPropertyValue("--cl-bg")).toBe("#000000");
+
+    card.destroy();
+  });
+
   it("updates state with new code, QR, and loading status", () => {
     const card = new PairingCard({ source: false, injectStyles: false });
 
@@ -114,6 +123,7 @@ describe("PairingCard UI Component", () => {
         bg: "#112233",
         fg: "#ffffff",
         pill: "#445566",
+        border: "2px solid #778899",
         radius: "16px",
       },
     });
@@ -121,7 +131,12 @@ describe("PairingCard UI Component", () => {
     expect(card.element.style.getPropertyValue("--cl-bg")).toBe("#112233");
     expect(card.element.style.getPropertyValue("--cl-fg")).toBe("#ffffff");
     expect(card.element.style.getPropertyValue("--cl-pill")).toBe("#445566");
+    expect(card.element.style.getPropertyValue("--cl-border")).toBe("2px solid #778899");
     expect(card.element.style.getPropertyValue("--cl-radius")).toBe("16px");
+
+    card.setBrand({ backgroundColor: "#abcdef" });
+    expect(card.element.style.getPropertyValue("--cl-bg")).toBe("#112233");
+    expect(card.element.style.getPropertyValue("--cl-border")).toBe("2px solid #778899");
 
     card.destroy();
   });

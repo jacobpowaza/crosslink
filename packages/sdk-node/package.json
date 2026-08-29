@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink host SDK for Node.js: createCrosslinkServer, QR pairing, device management",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/sdk-node" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -18,14 +22,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crosslink/core": "*",
-    "@crosslink/dev-tokens": "*",
-    "@crosslink/protocol": "*",
-    "@crosslink/webrtc-adapter": "*",
+    "@crosslink/core": "^0.1.0",
+    "@crosslink/dev-tokens": "^0.1.0",
+    "@crosslink/protocol": "^0.1.0",
+    "@crosslink/webrtc-adapter": "^0.1.0",
     "@noble/hashes": "^1.7.1",
     "qrcode": "^1.5.4",
     "ws": "^8.18.0",
-    "@crosslink/sdk-browser": "*"
+    "@crosslink/sdk-browser": "^0.1.0"
   },
   "optionalDependencies": {
     "bonjour-service": "^1.4.4"

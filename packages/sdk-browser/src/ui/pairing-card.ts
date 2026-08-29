@@ -14,7 +14,8 @@
  * implies reachability the host has not confirmed.
  *
  * Fully customizable via options and CSS custom properties:
- *   --cl-bg, --cl-fg, --cl-muted, --cl-divider, --cl-pill, --cl-pill-text, --cl-radius
+ *   --cl-bg, --cl-fg, --cl-muted, --cl-divider, --cl-pill, --cl-pill-text,
+ *   --cl-border, --cl-radius
  */
 
 import {
@@ -38,7 +39,16 @@ export interface PairingCardTheme {
   divider?: string;
   pill?: string;
   pillText?: string;
+  /** CSS border shorthand. Default: `1px solid #000000`. */
+  border?: string;
   radius?: string;
+}
+
+function resolvePairingCardTheme(theme: CrosslinkTheme): ResolvedCrosslinkTheme {
+  return resolveCrosslinkTheme({
+    ...theme,
+    backgroundColor: theme.backgroundColor ?? (theme.appearance === "light" ? "#ffffff" : "#000000")
+  });
 }
 
 /**
@@ -157,11 +167,16 @@ const PAIRING_CARD_STYLES = `
   --cl-divider: #2a2a2a;
   --cl-pill: #e7e7ea;
   --cl-pill-text: #0a0a0a;
+  --cl-border: 1px solid #000000;
   --cl-radius: 28px;
   --cl-accent: #38bdf8;
   position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: var(--cl-bg);
   color: var(--cl-fg);
+  border: var(--cl-border);
   border-radius: var(--cl-radius);
   padding: 28px 32px;
   margin: 20px 0;
@@ -618,6 +633,11 @@ const PAIRING_CARD_STYLES = `
     padding: 20px 24px;
     gap: 20px;
   }
+  .cl-pair-left,
+  .cl-pair-center,
+  .cl-pair-right {
+    min-width: 0;
+  }
   .cl-pair-left {
     align-items: center;
   }
@@ -631,6 +651,7 @@ const PAIRING_CARD_STYLES = `
   }
   .cl-pair-blurb {
     max-width: none;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -805,7 +826,7 @@ export class PairingCard {
 
   constructor(options: PairingCardOptions = {}) {
     this.options = options;
-    this.brand = resolveCrosslinkTheme({
+    this.brand = resolvePairingCardTheme({
       appName: options.appName,
       appIcon: options.appIcon,
       ...options.brand
@@ -1067,7 +1088,7 @@ export class PairingCard {
       textColor: explicit.textColor ?? app.textColor,
       appearance: explicit.appearance ?? app.appearance
     };
-    const resolved = resolveCrosslinkTheme(merged);
+    const resolved = resolvePairingCardTheme(merged);
     if (JSON.stringify(resolved) === JSON.stringify(this.brand)) return;
     this.brand = resolved;
     this.applyBrand();
@@ -1378,6 +1399,7 @@ export class PairingCard {
     if (theme.divider) style.setProperty("--cl-divider", theme.divider);
     if (theme.pill) style.setProperty("--cl-pill", theme.pill);
     if (theme.pillText) style.setProperty("--cl-pill-text", theme.pillText);
+    if (theme.border) style.setProperty("--cl-border", theme.border);
     if (theme.radius) style.setProperty("--cl-radius", theme.radius);
     return this;
   }
@@ -1454,11 +1476,13 @@ export class PairingCard {
     style.setProperty("--cl-accent", this.brand.accentColor);
     style.setProperty("--cl-logo", this.brand.textColor);
     style.setProperty("--cl-attribution", this.brand.attributionColor);
+    // Component-level overrides must survive host branding arriving later.
+    this.applyTheme(this.options.theme);
   }
 
   /** Re-themes a mounted card; the mark and attribution are unaffected. */
   setBrand(brand: CrosslinkTheme): this {
-    this.brand = resolveCrosslinkTheme({ ...this.options.brand, ...brand });
+    this.brand = resolvePairingCardTheme({ ...this.options.brand, ...brand });
     this.applyBrand();
     this.renderAppRow();
     return this;

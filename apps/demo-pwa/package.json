@@ -2,6 +2,9 @@
   "name": "@crosslink/demo-pwa",
   "private": true,
   "version": "0.1.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "apps/demo-pwa" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "type": "module",
   "scripts": {
     "build": "node src/build.mjs",
@@ -9,6 +12,6 @@
     "dev": "npm run build && node src/serve.mjs"
   },
   "dependencies": {
-    "@crosslink/sdk-node": "*"
+    "@crosslink/sdk-node": "^0.1.0"
   }
 }

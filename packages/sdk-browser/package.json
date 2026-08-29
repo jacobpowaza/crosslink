@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink client SDK for browsers and PWAs",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/sdk-browser" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -21,9 +25,9 @@
     "bundle": "esbuild src/index.ts --bundle --minify --format=iife --global-name=CrosslinkSDK --platform=browser --outfile=dist/crosslink.global.js"
   },
   "dependencies": {
-    "@crosslink/core": "*",
-    "@crosslink/protocol": "*",
-    "@crosslink/webrtc-adapter": "*"
+    "@crosslink/core": "^0.1.0",
+    "@crosslink/protocol": "^0.1.0",
+    "@crosslink/webrtc-adapter": "^0.1.0"
   },
   "devDependencies": {
     "tsup": "^8.3.6",

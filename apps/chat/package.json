@@ -2,6 +2,9 @@
   "name": "@crosslink/demo-chat",
   "private": true,
   "version": "0.1.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "apps/chat" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
@@ -10,6 +13,6 @@
     "start": "node src/server.ts"
   },
   "dependencies": {
-    "@crosslink/sdk-node": "*"
+    "@crosslink/sdk-node": "^0.1.0"
   }
 }

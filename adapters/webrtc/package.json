@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink WebRTC data-channel transport adapter (interface + roadmap)",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "adapters/webrtc" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -10,13 +14,14 @@
       "import": "./dist/index.js"
     }
   },
+  "files": ["dist"],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crosslink/core": "*",
-    "@crosslink/protocol": "*"
+    "@crosslink/core": "^0.1.0",
+    "@crosslink/protocol": "^0.1.0"
   },
   "devDependencies": {
     "tsup": "^8.3.6",

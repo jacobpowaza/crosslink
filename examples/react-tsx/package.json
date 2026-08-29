@@ -2,6 +2,9 @@
   "name": "crosslink-react-example",
   "version": "0.1.0",
   "private": true,
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "examples/react-tsx" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,8 +14,8 @@
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@crosslink/react": "*",
-    "@crosslink/sdk-browser": "*"
+    "@crosslink/react": "^0.1.0",
+    "@crosslink/sdk-browser": "^0.1.0"
   },
   "devDependencies": {
     "vite": "^8.2.2",

@@ -2,6 +2,9 @@
   "name": "@crosslink/example-todo-host",
   "private": true,
   "version": "0.1.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "examples/todo-host" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "type": "module",
   "bin": { "todo-host": "./dist/cli.js" },
   "scripts": {
@@ -10,7 +13,7 @@
     "dev": "node src/cli.ts"
   },
   "dependencies": {
-    "@crosslink/sdk-node": "*",
+    "@crosslink/sdk-node": "^0.1.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

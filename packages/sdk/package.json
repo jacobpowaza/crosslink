@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink umbrella SDK — server entry (Node) and browser entry (clients)",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/sdk" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -20,8 +24,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crosslink/sdk-browser": "*",
-    "@crosslink/sdk-node": "*"
+    "@crosslink/sdk-browser": "^0.1.0",
+    "@crosslink/sdk-node": "^0.1.0"
   },
   "devDependencies": {
     "tsup": "^8.3.6",

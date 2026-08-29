@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Crosslink relay service: dumb encrypted-pipe fallback transport",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "services/relay" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {
@@ -11,7 +15,7 @@
     }
   },
   "bin": {
-    "crosslink-relay": "./dist/cli.js"
+    "crosslink-relay": "dist/cli.js"
   },
   "files": [
     "dist"
@@ -22,8 +26,8 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
-    "@crosslink/dev-tokens": "*",
-    "@crosslink/protocol": "*",
+    "@crosslink/dev-tokens": "^0.1.0",
+    "@crosslink/protocol": "^0.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

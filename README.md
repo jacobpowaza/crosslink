@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="crosslink.svg" alt="Crosslink" width="400" />
+  <img src="https://crosslink.mintlify.site/crosslink.svg" alt="Crosslink" width="400" />
 </p>
 
 <h3 align="center">Universal secure app-to-app connectivity.</h3>
@@ -14,7 +14,7 @@
   <a href="https://github.com/jacobpowaza/crosslink/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
   <img src="https://img.shields.io/badge/TypeScript-strict-blue.svg" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Node-≥20-green.svg" alt="Node.js" />
-  <img src="https://img.shields.io/badge/Tests-477-brightgreen.svg" alt="Tests" />
+  <img src="https://img.shields.io/badge/Tests-561-brightgreen.svg" alt="Tests" />
   <img src="https://img.shields.io/badge/Crypto-X25519%20%2B%20ML--KEM--768-9b59b6.svg" alt="Crypto" />
   <a href="https://github.com/jacobpowaza/crosslink/security"><img src="https://img.shields.io/badge/Security-audited%20primitives-orange.svg" alt="Security" /></a>
 </p>
@@ -60,6 +60,28 @@ crypto, brittle sockets. Crosslink packages the hard parts once:
 Services are dumb by design: **signaling never sees keys or plaintext**, and the
 relay forwards only opaque ciphertext.
 
+## Install from npm
+
+Install only the package for the environment you are building:
+
+```bash
+# Canonical Node.js host, including generated mobile delivery and pairing UI
+npm install @crosslink/sdk-node
+
+# Lower-level browser client
+npm install @crosslink/sdk-browser
+
+# React bindings (React remains a peer dependency)
+npm install @crosslink/react @crosslink/sdk-browser react
+
+# Optional umbrella package with Node.js and browser entry points
+npm install @crosslink/sdk
+```
+
+The published packages contain compiled runtime files, type declarations,
+licenses, and package documentation only. Demo applications, examples, tests,
+repository documentation, and local development data are not included.
+
 ## Quickstart
 
 The root `demo:*` scripts are convenience aliases for the example workspaces
@@ -83,9 +105,9 @@ path: the QR carries the host's own address and the whole pairing exchange runs
 on the host's socket.
 
 <p align="center">
-  <img src="docs/assets/pairing/connect-widget-v2.png" alt="Crosslink pairing widget with QR and pairing code" width="760" />
+  <img src="https://crosslink.mintlify.site/assets/pairing/connection-widget-v2.png" alt="Crosslink pairing widget with QR and pairing code" width="760" />
   <br />
-  <img src="docs/assets/pairing/pairing-code-page.jpg" alt="Crosslink mobile pairing code screen" width="260" />
+  <img src="https://crosslink.mintlify.site/assets/pairing/pairing-code-page.jpg" alt="Crosslink mobile pairing code screen" width="260" />
 </p>
 
 ### From another network

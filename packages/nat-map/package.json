@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Inbound reachability for a Crosslink host: PCP, NAT-PMP, UPnP IGD port mapping and STUN address discovery",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/nat-map" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {

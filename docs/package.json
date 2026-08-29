@@ -1,6 +1,9 @@
 {
   "name": "crosslink-docs",
   "private": true,
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "docs" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "scripts": {
     "check": "mint validate && mint broken-links --check-anchors --check-redirects"
   },

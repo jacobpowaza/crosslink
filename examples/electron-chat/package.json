@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "description": "Secure Electron desktop chat host example for Crosslink",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "examples/electron-chat" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "main": "dist/main.js",
   "scripts": {
     "build": "tsup src/main.ts src/preload.ts --format cjs --platform node --out-dir dist --external electron && tsup src/renderer.ts --format iife --platform browser --out-dir dist && node scripts/copy-assets.mjs",
@@ -12,8 +15,8 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
-    "@crosslink/sdk-browser": "*",
-    "@crosslink/sdk-node": "*"
+    "@crosslink/sdk-browser": "^0.1.0",
+    "@crosslink/sdk-node": "^0.1.0"
   },
   "devDependencies": {
     "electron": "44.0.0",

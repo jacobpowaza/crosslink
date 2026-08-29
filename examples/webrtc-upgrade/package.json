@@ -2,6 +2,9 @@
   "name": "@crosslink/example-webrtc-upgrade",
   "private": true,
   "version": "0.1.0",
+  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "examples/webrtc-upgrade" },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
   "type": "module",
   "scripts": {
     "host": "node src/host.ts",
@@ -10,10 +13,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crosslink/sdk-browser": "*",
-    "@crosslink/sdk-node": "*",
-    "@crosslink/core": "*",
-    "@crosslink/webrtc-adapter": "*",
+    "@crosslink/sdk-browser": "^0.1.0",
+    "@crosslink/sdk-node": "^0.1.0",
+    "@crosslink/core": "^0.1.0",
+    "@crosslink/webrtc-adapter": "^0.1.0",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

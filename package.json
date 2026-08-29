@@ -4,6 +4,14 @@
   "version": "0.1.0",
   "description": "Crosslink \u2014 universal secure app-to-app connectivity framework",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jacobpowaza/crosslink.git"
+  },
+  "homepage": "https://crosslink.mintlify.site",
+  "bugs": {
+    "url": "https://github.com/jacobpowaza/crosslink/issues"
+  },
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -37,6 +45,8 @@
     "docs:check": "node scripts/validate-docs.mjs && npm --prefix docs run check",
     "security:secrets": "gitleaks detect --no-banner --redact && gitleaks detect --no-git --no-banner --redact",
     "security:check": "npm audit --omit=dev --audit-level=high && node scripts/security-baseline.mjs",
+    "release:dry-run": "npm run build && node scripts/publish-packages.mjs --dry-run",
+    "release:publish": "npm run build && node scripts/publish-packages.mjs --publish",
     "check:ci": "npm run build && npm run typecheck && npm test && npm run docs:check && npm run security:check"
   },
   "dependencies": {
