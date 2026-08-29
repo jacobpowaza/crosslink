@@ -205,7 +205,7 @@ describe("Crosslink control surface", () => {
 
     expect(card.element.textContent).not.toContain("Powered by Crosslink");
     expect(card.element.textContent).not.toContain("End-to-end encrypted with crosslink");
-    expect(card.element.querySelector(".cl-pair-attribution")).toBeNull();
+    expect(card.element.querySelector('[class*="pair-attribution"]')).toBeNull();
     expect(card.element.querySelector(".cl-powered-by-crosslink")).toBeNull();
     expect(card.element.querySelector(".cl-crosslink-attribution-footer")).toBeNull();
     expect(card.element.lastElementChild?.className).toContain("cl-pair-right");

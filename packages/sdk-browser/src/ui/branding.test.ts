@@ -85,7 +85,7 @@ describe("Crosslink branding", () => {
     expect(card.element.querySelector("#not-crosslink")).toBeNull();
 
     // The desktop card carries the wordmark itself and no attribution/footer.
-    expect(card.element.querySelector(".cl-pair-attribution")).toBeNull();
+    expect(card.element.querySelector('[class*="pair-attribution"]')).toBeNull();
     expect(card.element.querySelector(".cl-crosslink-attribution-footer")).toBeNull();
 
     // The application's own icon and name sit beside the mark, not instead of it.

@@ -179,14 +179,14 @@ describe("pairing card layout", () => {
 
     // Attribution belongs to the mobile app shell after authorization. The
     // desktop widget ends at the pairing status.
-    expect(card.element.querySelector(".cl-pair-attribution")).toBeNull();
+    expect(card.element.querySelector('[class*="pair-attribution"]')).toBeNull();
     expect(card.element.querySelector(".cl-crosslink-attribution-footer")).toBeNull();
     expect(card.element.querySelector(".cl-pair-logo")).toBeTruthy();
 
     const styles = Array.from(document.head.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .join("\n");
-    expect(styles).not.toContain(".cl-pair-attribution");
+    expect(styles).not.toMatch(/\.cl-[\\w-]*pair-attribution/);
 
     card.destroy();
   });

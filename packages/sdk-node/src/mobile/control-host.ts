@@ -166,7 +166,7 @@ export function createControlHandler(
       for (const [key, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(key, value);
       res.writeHead(200, {
         "content-type": "text/javascript; charset=utf-8",
-        "cache-control": "public, max-age=300"
+        "cache-control": "no-cache, no-store, must-revalidate"
       });
       res.end(bundle);
       return;
