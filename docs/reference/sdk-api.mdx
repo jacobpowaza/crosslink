@@ -477,11 +477,11 @@ An HTTP handler serving your `mobile.entry` plus the manifest, service worker,
 icons, browser SDK and install handoff. Mounted automatically on the transport
 port when `mobile.entry` is set; call it to mount on a server you already run.
 
-`mobile.attribution` configures the "Powered by Crosslink" badge the bootstrap
-mounts on every Crosslink-owned mobile screen — `placement`, `color`,
-`background`, `size`, `offset`, `logoWidth`, `zIndex`, `className`. It defaults
-to the foot of the screen and there is no field that removes it. See
-[Mobile bootstrap](/client/mobile-bootstrap#the-powered-by-crosslink-badge).
+`mobile.attribution` configures the Crosslink attribution footer the bootstrap
+mounts on the authorized mobile app shell — `color`, `background`, `size`,
+`offset`, `className`. It participates in normal layout flow and there is no
+field that removes it. See
+[Mobile bootstrap](/client/mobile-bootstrap#the-crosslink-attribution-footer).
 
 ### `host.createControlHandler(options?)`
 

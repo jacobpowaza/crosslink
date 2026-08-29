@@ -40,7 +40,7 @@ export interface BootstrapHostView {
     display?: "standalone" | "minimal-ui" | "fullscreen";
     icons?: Array<{ src: string; sizes?: string; type?: string }>;
   };
-  /** Presentation of the "Powered by Crosslink" badge on the mobile screens. */
+  /** Presentation of the Crosslink attribution footer on the mobile app shell. */
   attribution?: MobileAttributionConfig | null;
   mobile: {
     /** Absolute path of the developer's mobile entry HTML. */

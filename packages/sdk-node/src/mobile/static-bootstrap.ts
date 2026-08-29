@@ -61,7 +61,7 @@ export interface StaticBootstrapOptions {
   entry?: string;
   /** Local files copied in beside the entry, e.g. icons and stylesheets. */
   assets?: string[];
-  /** Presentation of the "Powered by Crosslink" badge on the mobile screens. */
+  /** Presentation of the Crosslink attribution footer on the mobile app shell. */
   attribution?: MobileAttributionConfig | null;
 }
 

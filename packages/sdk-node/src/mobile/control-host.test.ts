@@ -5,8 +5,12 @@
 // security model undone.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
+import { createRequire } from "node:module";
 import { createControlHandler, isLoopbackRequest, type ControlHostView } from "./control-host.js";
 import type { PairingCodeInfo, DeviceSummary } from "../server.js";
+
+const require = createRequire(import.meta.url);
+const { JSDOM } = require("jsdom") as { JSDOM: any };
 
 const devices: DeviceSummary[] = [
   { deviceId: "phone-1", name: "iPhone", caps: ["notes.read"], addedAt: 1, lastSeen: Date.now() },
@@ -178,6 +182,34 @@ describe("Crosslink control surface", () => {
     const chunk = new TextDecoder().decode((await reader.read()).value);
     expect(chunk).toContain("event: crosslink.pairing-invalidated");
     await reader.cancel();
+  });
+
+  it("serves a widget bundle whose pairing card has no attribution footer", async () => {
+    const res = await fetch(`${origin}/__crosslink/widget.js`);
+    expect(res.status).toBe(200);
+    const bundle = await res.text();
+    const dom = new JSDOM('<!doctype html><div id="pairCardContainer"></div>', {
+      url: origin,
+      runScripts: "outside-only"
+    });
+    const sdk = dom.window.eval(`${bundle}\n;CrosslinkSDK;`) as typeof import("@crosslink/sdk-browser");
+    expect(sdk?.createPairingCard).toBeTypeOf("function");
+
+    const card = sdk!.createPairingCard({
+      target: "#pairCardContainer",
+      source: false,
+      code: "123456789",
+      qr: "<svg/>",
+      status: "Waiting for a device to scan"
+    });
+
+    expect(card.element.textContent).not.toContain("Powered by Crosslink");
+    expect(card.element.textContent).not.toContain("End-to-end encrypted with crosslink");
+    expect(card.element.querySelector(".cl-pair-attribution")).toBeNull();
+    expect(card.element.querySelector(".cl-powered-by-crosslink")).toBeNull();
+    expect(card.element.querySelector(".cl-crosslink-attribution-footer")).toBeNull();
+    expect(card.element.lastElementChild?.className).toContain("cl-pair-right");
+    dom.window.close();
   });
 
   it("falls through to the application for anything outside its own routes", async () => {

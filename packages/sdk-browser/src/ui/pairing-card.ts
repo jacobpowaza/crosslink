@@ -950,10 +950,9 @@ export class PairingCard {
     this.element.appendChild(center);
     this.element.appendChild(div2);
     this.element.appendChild(right);
-    // No attribution line here. The desktop card already draws the Crosslink
-    // wordmark in its own column; the "Powered by Crosslink" badge belongs to
-    // the Crosslink-owned mobile screens, where `PoweredByCrosslink` mounts it
-    // automatically and the framework, not the page, is what the user sees.
+    // No attribution or footer here. The desktop card already draws the
+    // Crosslink wordmark in its own column; the mobile app shell carries the
+    // Crosslink attribution after authorization.
 
     // Auto mount if target provided
     if (options.target) {
@@ -1480,7 +1479,7 @@ export class PairingCard {
     this.applyTheme(this.options.theme);
   }
 
-  /** Re-themes a mounted card; the mark and attribution are unaffected. */
+  /** Re-themes a mounted card; the mark is unaffected. */
   setBrand(brand: CrosslinkTheme): this {
     this.brand = resolvePairingCardTheme({ ...this.options.brand, ...brand });
     this.applyBrand();

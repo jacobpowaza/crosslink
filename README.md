@@ -17,6 +17,7 @@
   <img src="https://img.shields.io/badge/Tests-561-brightgreen.svg" alt="Tests" />
   <img src="https://img.shields.io/badge/Crypto-X25519%20%2B%20ML--KEM--768-9b59b6.svg" alt="Crypto" />
   <a href="https://github.com/jacobpowaza/crosslink/security"><img src="https://img.shields.io/badge/Security-audited%20primitives-orange.svg" alt="Security" /></a>
+  <a href="https://venmo.com/u/jacobpowaza"><img src="https://img.shields.io/badge/Venmo-%40jacobpowaza-3D95FF?logo=venmo&logoColor=white" alt="Venmo @jacobpowaza" /></a>
 </p>
 
 ---
@@ -108,6 +109,36 @@ on the host's socket.
   <img src="https://crosslink.mintlify.site/assets/pairing/connection-widget-v2.png" alt="Crosslink pairing widget with QR and pairing code" width="760" />
   <br />
   <img src="https://crosslink.mintlify.site/assets/pairing/pairing-code-page.jpg" alt="Crosslink mobile pairing code screen" width="260" />
+</p>
+
+Pairing screenshots used by the README and Mintlify docs live under
+`docs/assets/pairing/`. Mintlify serves that directory as `/assets/pairing`, so
+the connection widget and mobile pairing screen are part of the docs asset tree
+instead of being checked in beside unrelated source files. Full app demo
+screenshots live beside them in `docs/assets/app-demo/`.
+
+### Chat demo
+
+The chat app is the quickest full app demo: it serves a desktop chat page, a
+phone bootstrap page, the Crosslink pairing widget, and the WebSocket transport
+from one development server.
+
+```bash
+npm run demo:chat
+```
+
+Open the local URL printed by the command, scan the pairing QR with a phone on
+the same Wi-Fi, approve the SAS prompt, and send a message from either side.
+For a phone on cellular or another network, use the tunnel wrapper instead:
+
+```bash
+npm run demo:chat:tunnel
+```
+
+<p align="center">
+  <img src="docs/assets/app-demo/desktop-chat-demo.png" alt="Crosslink chat demo desktop conversation" width="760" />
+  <br />
+  <img src="docs/assets/app-demo/mobile-chat-demo.png" alt="Crosslink chat demo mobile conversation" width="260" />
 </p>
 
 ### From another network
@@ -285,9 +316,10 @@ bootstrap origin is used.
 Pairing, onboarding, install, offline and revoked screens are Crosslink's, not
 yours. You declare one `application` block on the host and it drives all of
 them: the desktop pairing card, the installable manifest, and every mobile
-screen. The desktop card draws the Crosslink wordmark; the mobile screens carry
-a "Powered by Crosslink" badge mounted by the bootstrap, whose placement,
-colour and size you configure through `mobile.attribution`.
+screen. The desktop card draws the Crosslink wordmark; the authorized mobile app
+shell carries an "End-to-end encrypted with crosslink" footer mounted by the
+bootstrap, whose colour, size and spacing you configure through
+`mobile.attribution`.
 
 ### Installation address vs. transport address
 
@@ -423,6 +455,11 @@ npm run build     # 19 build targets
 npm run security:check   # dependency audit + secret/isolation baseline
 npm run security:secrets # gitleaks over the history and the working tree
 ```
+
+Run `npm run security:secrets` before publishing screenshots, demos or release
+branches. It runs `gitleaks detect --redact` against both git history and the
+current working tree, so local demo state, generated docs assets and accidental
+tokens get checked before they leave your machine.
 
 Both SDKs are unit-testable without a network. `@crosslink/sdk-browser` ships
 `MockSocket`, an in-memory `WsLike` pair, so pairing, RPC dispatch, reconnect

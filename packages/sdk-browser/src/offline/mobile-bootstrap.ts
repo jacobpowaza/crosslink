@@ -118,7 +118,7 @@ export interface MobileBootstrapOptions {
   serviceWorkerUrl?: string;
   /** Pairing URI override; otherwise read from `#pair=` / `?pair=` or storage. */
   pairingUri?: string;
-  /** Styling and placement for the mandatory Crosslink attribution. */
+  /** Styling for the Crosslink attribution footer. */
   poweredBy?: PoweredByCrosslinkOptions;
   /**
    * Called once with what this origin can actually deliver.
@@ -437,8 +437,6 @@ export class CrosslinkMobileBootstrap {
    * This is the single entry point controlling what the mobile device sees.
    */
   async start(): Promise<void> {
-    this.ensurePoweredBy();
-
     // 1. Establish what this origin can actually deliver, and say so once.
     //
     // Registering a worker that the browser will refuse, and then presenting an
@@ -784,7 +782,6 @@ export class CrosslinkMobileBootstrap {
    * Transition state machine to a new state and mount appropriate UI.
    */
   private transitionTo(newState: MobileBootstrapState, detail?: Record<string, unknown>): void {
-    this.ensurePoweredBy();
     this.state = newState;
     this.options.onStateChange?.(newState, detail);
 
@@ -802,10 +799,13 @@ export class CrosslinkMobileBootstrap {
       if (rpc) {
         this.options.onAuthorized(rpc, this.client);
       }
+      this.ensurePoweredBy();
       return;
     }
 
     // Authorization lost or pending -> notify consumer
+    this.poweredBy?.destroy();
+    this.poweredBy = null;
     this.options.onUnauthorized?.();
 
     const container = this.options.container ?? (typeof document !== "undefined" ? document.body : null);

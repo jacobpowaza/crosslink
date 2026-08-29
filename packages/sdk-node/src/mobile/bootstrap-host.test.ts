@@ -145,18 +145,18 @@ describe("Crosslink-served mobile bootstrap", () => {
     expect(body).toContain('"secureContext":true');
   });
 
-  it("mounts the attribution at the foot of the mobile screens by default", async () => {
+  it("mounts the attribution footer by default", async () => {
     const { body } = await get("/__crosslink/boot.js");
-    // The badge is the bootstrap's, not the developer page's: the mobile app
-    // gets "Powered by Crosslink" without writing any markup for it.
+    // The footer is the bootstrap's, not the developer page's: the mobile app
+    // gets the Crosslink attribution without writing any markup for it.
     expect(body).toContain("poweredBy");
-    expect(body).toContain('placement: "bottom-center"');
+    expect(body).toContain("offset: 10");
     // Nothing in the payload can switch it off; the shape only carries
     // presentation, and an unconfigured host sends none at all.
     expect(body).toContain('"attribution":null');
   });
 
-  it("lets the application move and re-colour the attribution", () => {
+  it("lets the application tune the attribution footer", () => {
     const script = renderBootScript({
       appId: "com.example.notes",
       appName: "Example Notes",
@@ -171,13 +171,13 @@ describe("Crosslink-served mobile bootstrap", () => {
       offlineTitle: null,
       offlineMessage: null,
       debuggingUrl: "https://example.test/debug",
-      attribution: { placement: "top-right", color: "#ffffff", size: 12 }
+      attribution: { color: "#ffffff", size: 12, offset: 14 }
     });
 
     // Presentation is merged over the defaults at runtime, so the application's
-    // placement wins while the badge itself stays.
-    expect(script).toContain('"placement":"top-right"');
+    // colours and spacing win while the footer itself stays.
     expect(script).toContain('"color":"#ffffff"');
+    expect(script).toContain('"offset":14');
     expect(script).toContain("config.attribution || {}");
   });
 

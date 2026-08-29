@@ -14,7 +14,6 @@ import {
   type CrosslinkClientOptions
 } from "../client.js";
 import {
-  crosslinkLogoSvg,
   resolveCrosslinkTheme,
   CROSSLINK_REPOSITORY,
   CROSSLINK_ATTRIBUTION_TEXT,
@@ -638,16 +637,21 @@ export function createOfflineUI(
   guide.style.cssText = `color:${brand.mutedColor};font-size:12px;margin-top:18px;text-underline-offset:3px`;
   container.appendChild(guide);
 
-  // Mark and attribution, unconditionally. When the host is unreachable this
-  // screen is the only thing on the phone, so it is also the only place that
-  // can say what is trying to reconnect and what is doing the trying.
+  // Attribution, unconditionally. When the host is unreachable this screen is
+  // the only thing on the phone, so it is also the only place that can say what
+  // is securing the connection while it retries.
   const brandFooter = document.createElement("div");
   brandFooter.id = "crosslink-offline-brand";
-  brandFooter.style.cssText =
-    "position:absolute;left:0;right:0;bottom:calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:8px";
-  const logoContainer = document.createElement("div");
-  logoContainer.style.cssText = "display:flex;justify-content:center;opacity:.95";
-  logoContainer.innerHTML = crosslinkLogoSvg({ width: "132px", color: brand.logoColor });
+  brandFooter.style.cssText = `
+    width: calc(100% + 48px);
+    margin: auto -24px 0;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid ${brand.dividerColor};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+  `;
   const attribution = document.createElement("div");
   attribution.style.cssText = `font-size:11px;color:${brand.attributionColor}`;
   const prefix = document.createElement("span");
@@ -657,9 +661,9 @@ export function createOfflineUI(
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.textContent = CROSSLINK_ATTRIBUTION_LINK_TEXT;
-  link.style.cssText = "color:inherit;font-weight:700;text-underline-offset:2px";
+  link.style.cssText = "color:inherit;font-weight:600;text-decoration:none";
   attribution.append(prefix, link);
-  brandFooter.append(logoContainer, attribution);
+  brandFooter.appendChild(attribution);
   container.appendChild(brandFooter);
 
   return container;

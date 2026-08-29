@@ -137,9 +137,9 @@ export interface MobileAppConfig {
   /** Set false to serve nothing automatically and keep a custom handler. */
   enabled?: boolean;
   /**
-   * Where the "Powered by Crosslink" badge sits on the mobile screens and what
-   * it looks like. Crosslink mounts it automatically on every screen it owns;
-   * this moves and re-colours it, and there is no option that removes it.
+   * How the Crosslink attribution footer looks on the mobile app shell.
+   * Crosslink mounts it automatically after the device is authorized; it
+   * participates in normal layout flow, and there is no option that removes it.
    */
   attribution?: MobileAttributionConfig;
 }

@@ -177,10 +177,10 @@ describe("pairing card layout", () => {
   it("carries no attribution line, only the wordmark", () => {
     const card = new PairingCard({ source: false, injectStyles: true });
 
-    // The badge is the mobile screens' job (`PoweredByCrosslink`, mounted by
-    // the bootstrap). On the desktop card the wordmark is the attribution, and
-    // a second line under the columns only crowded it.
+    // Attribution belongs to the mobile app shell after authorization. The
+    // desktop widget ends at the pairing status.
     expect(card.element.querySelector(".cl-pair-attribution")).toBeNull();
+    expect(card.element.querySelector(".cl-crosslink-attribution-footer")).toBeNull();
     expect(card.element.querySelector(".cl-pair-logo")).toBeTruthy();
 
     const styles = Array.from(document.head.querySelectorAll("style"))

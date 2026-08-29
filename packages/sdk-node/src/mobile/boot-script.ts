@@ -13,15 +13,14 @@
  */
 
 /**
- * How the "Powered by Crosslink" badge is drawn on the mobile screens.
+ * How the Crosslink attribution footer is drawn on mobile screens.
  *
- * The badge itself is not optional — every Crosslink-owned mobile surface
- * carries it — but where it sits and what colour it is belong to the
- * application. There is deliberately no `enabled` flag and no text override:
- * position, colour, size and spacing are the whole of the surface.
+ * The footer itself is not optional after the developer application is
+ * authorized, but its colour, size and spacing can be tuned. There is
+ * deliberately no `enabled` flag and no text override.
  */
 export interface MobileAttributionConfig {
-  /** Screen corner, or `inline` to sit in the page flow. Default bottom-center. */
+  /** @deprecated The attribution is always a normal flow footer. */
   placement?:
     | "top-left"
     | "top-center"
@@ -32,15 +31,15 @@ export interface MobileAttributionConfig {
     | "inline";
   /** Text colour. */
   color?: string;
-  /** Background pill behind the badge. */
+  /** Footer background. */
   background?: string;
   /** Font size; a number is pixels. */
   size?: string | number;
-  /** Distance from the chosen screen edges; a number is pixels. */
+  /** Footer block padding; a number is pixels. */
   offset?: string | number;
-  /** Width of the wordmark; a number is pixels. */
+  /** @deprecated The footer is text-only. */
   logoWidth?: string | number;
-  /** Stacking order, for a page with its own fixed furniture. */
+  /** @deprecated The attribution no longer uses fixed positioning. */
   zIndex?: number;
   /** Extra class, for application-specific styling. */
   className?: string;
@@ -73,7 +72,7 @@ export interface BootPayload {
   offlineTitle: string | null;
   offlineMessage: string | null;
   debuggingUrl: string;
-  /** Presentation of the "Powered by Crosslink" badge. Null uses the default. */
+  /** Presentation of the Crosslink attribution footer. Null uses the default. */
   attribution?: MobileAttributionConfig | null;
 }
 
@@ -203,15 +202,13 @@ export function renderBootScript(payload: BootPayload): string {
       icon: config.icon || undefined,
       themeColor: config.accentColor
     },
-    /* Every Crosslink-owned mobile screen carries the attribution, mounted by
-       the bootstrap rather than by the application's page. It sits at the foot
-       of the screen unless the application moved it; nothing here can turn it
-       off, and the wording is not configurable. */
+    /* The Crosslink attribution footer is mounted by the bootstrap after the
+       application is authorized. It participates in normal layout flow, and
+       nothing here can turn it off or change its wording. */
     poweredBy: Object.assign(
       {
-        placement: "bottom-center",
-        offset: 8,
-        size: 10,
+        offset: 10,
+        size: 11,
         accentColor: config.accentColor,
         backgroundColor: config.backgroundColor
       },

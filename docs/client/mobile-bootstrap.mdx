@@ -114,14 +114,18 @@ handling to write either.
 Corresponding DOM events (`crosslink:connected`, `crosslink:disconnected`,
 `crosslink:state`) fire too, for pages that prefer listeners.
 
-## The "Powered by Crosslink" badge
+## The Crosslink attribution footer
 
-Every Crosslink-owned mobile screen carries the attribution, and the bootstrap
-mounts it for you — pairing, onboarding, offline, revoked, and your own page
-once it takes over. You write no markup for it. It sits at the foot of the
-screen and links to the Crosslink repository.
+The authorized mobile app shell carries the Crosslink attribution footer, and
+the bootstrap mounts it for you once your page takes over. You write no markup
+for it. It participates in normal layout flow, spans the page width, centers the
+text, and links to the Crosslink repository:
 
-Where it sits and what it looks like is yours:
+```text
+End-to-end encrypted with crosslink
+```
+
+Its presentation can be tuned:
 
 ```ts
 createCrosslinkServer({
@@ -129,7 +133,6 @@ createCrosslinkServer({
   mobile: {
     entry: "./mobile.html",
     attribution: {
-      placement: "bottom-right",
       color: "#94a3b8",
       background: "transparent",
       size: 11,
@@ -141,23 +144,20 @@ createCrosslinkServer({
 
 | Field | What it does |
 | --- | --- |
-| `placement` | `top-left`…`bottom-right`, or `inline` to sit in the page flow. Default `bottom-center`. |
-| `color` | Text colour of the badge. |
-| `background` | Pill behind it. `transparent` for none. |
+| `color` | Text colour of the footer. |
+| `background` | Footer background. |
 | `size` | Font size; a number is pixels. |
-| `offset` | Distance from the chosen screen edges; a number is pixels. |
-| `logoWidth` | Width of the wordmark. |
-| `zIndex` | Stacking order, for a page with its own fixed furniture. |
+| `offset` | Footer block padding; a number is pixels. |
 | `className` | Extra class, for your own styling. |
 
-There is no field that removes the badge or changes its wording. Colour, size
-and placement are the whole surface. `writeStaticBootstrap()` takes the same
-`attribution` object, so a published static origin looks the same as the one
-your host serves.
+There is no field that removes the footer or changes its wording. Colour, size,
+background and spacing are the whole surface. `writeStaticBootstrap()` takes the
+same `attribution` object, so a published static origin looks the same as the
+one your host serves.
 
 <Note>
 The desktop pairing card is the other side of this: it draws the Crosslink
-wordmark in its own column and carries no attribution line. See
+wordmark in its own column and carries no attribution footer. See
 [Pairing Card](/client/pairing-card).
 </Note>
 

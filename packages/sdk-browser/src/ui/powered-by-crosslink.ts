@@ -1,5 +1,4 @@
 import {
-  crosslinkLogoSvg,
   resolveCrosslinkTheme,
   CROSSLINK_REPOSITORY,
   CROSSLINK_ATTRIBUTION_TEXT,
@@ -7,13 +6,14 @@ import {
 } from "./branding.js";
 
 /**
- * The Crosslink attribution badge shown on Crosslink-owned mobile screens.
+ * The Crosslink attribution footer shown on Crosslink-owned mobile screens.
  *
- * It renders the mark and the wording together and offers no option that
- * removes either: an application chooses colour, size and placement, and the
- * attribution is what is left. Colour defaults come from the shared brand
- * resolver, so the badge lands on the right side of the WCAG contrast floor
- * against whatever background the application configured.
+ * It participates in normal layout flow. It is not a floating badge, overlay,
+ * capsule or reserved layer: applications get a quiet full-width footer with a
+ * separator, centered text, and the shared Crosslink attribution wording.
+ * Colour defaults come from the shared brand resolver, so the footer lands on
+ * the right side of the WCAG contrast floor against whatever background the
+ * application configured.
  */
 export type PoweredByPlacement =
   | "top-left"
@@ -37,21 +37,21 @@ export interface PoweredByCrosslinkOptions {
   color?: string;
   /** Any CSS font-size value, or a pixel number. */
   size?: string | number;
-  /** Screen placement, or `inline` to participate in the target's layout. */
+  /** @deprecated The attribution is always rendered as a normal flow footer. */
   placement?: PoweredByPlacement;
-  /** Distance from the selected screen edges. */
+  /** Footer block padding. */
   offset?: string | number;
-  /** Optional background behind the attribution. */
+  /** Optional footer background. */
   background?: string;
   /** Optional extra class for application-specific styling. */
   className?: string;
-  /** Stacking order for fixed placements. */
+  /** @deprecated The attribution no longer uses fixed positioning. */
   zIndex?: number;
   /** Application accent, used to tint the mark. */
   accentColor?: string;
-  /** Background the badge sits on, used for the contrast correction. */
+  /** Background the footer sits on, used for the contrast correction. */
   backgroundColor?: string;
-  /** Height of the mark. Default scales with `size`. */
+  /** @deprecated The footer is text-only. */
   logoWidth?: string | number;
 }
 
@@ -61,7 +61,7 @@ function cssLength(value: string | number | undefined, fallback: string): string
 }
 
 /**
- * Small reusable attribution shown by Crosslink mobile bootstrap applications.
+ * Small reusable attribution footer shown by Crosslink mobile bootstrap applications.
  * It is also exported for apps that own their lifecycle UI directly.
  */
 export class PoweredByCrosslink {
@@ -93,60 +93,42 @@ export class PoweredByCrosslink {
   }
 
   private render(): void {
-    const placement = this.options.placement ?? "bottom-center";
-    const offset = cssLength(this.options.offset, "8px");
+    const offset = cssLength(this.options.offset, "10px");
     const size = cssLength(this.options.size, "11px");
-    const position: string[] = [];
-
-    if (placement !== "inline") {
-      position.push("position:fixed", `z-index:${this.options.zIndex ?? 100002}`);
-      if (placement.startsWith("top")) position.push(`top:calc(${offset} + env(safe-area-inset-top))`);
-      else position.push(`bottom:calc(${offset} + env(safe-area-inset-bottom))`);
-      if (placement.endsWith("left")) position.push(`left:${offset}`);
-      else if (placement.endsWith("right")) position.push(`right:${offset}`);
-      else position.push("left:50%", "transform:translateX(-50%)");
-    }
-
-    this.element.className = `cl-powered-by-crosslink${this.options.className ? ` ${this.options.className}` : ""}`;
-    this.element.style.cssText = [
-      ...position,
-      "display:inline-flex",
-      "align-items:center",
-      "gap:.32em",
-      "max-width:calc(100vw - 24px)",
-      "padding:4px 7px",
-      "border-radius:999px",
-      `background:${this.options.background ?? "rgba(0,0,0,.58)"}`,
-      `color:${this.options.color ?? "#94a3b8"}`,
-      `font:${size}/1.2 system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif`,
-      "white-space:nowrap",
-      "box-sizing:border-box"
-    ].join(";");
-    this.element.textContent = "";
-
     const brand = resolveCrosslinkTheme({
       accentColor: this.options.accentColor,
       backgroundColor: this.options.backgroundColor ?? this.options.background
     });
 
-    const prefix = document.createElement("span");
-    prefix.textContent = this.options.text ?? CROSSLINK_ATTRIBUTION_TEXT;
+    this.element.className = `cl-crosslink-attribution-footer${this.options.className ? ` ${this.options.className}` : ""}`;
+    this.element.style.cssText = [
+      "width:100%",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "gap:.35em",
+      "flex-shrink:0",
+      `padding:${offset} 16px`,
+      "border-top:1px solid rgba(148,163,184,.24)",
+      `background:${this.options.background ?? "transparent"}`,
+      `color:${this.options.color ?? brand.attributionColor}`,
+      `font:${size}/1.2 system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif`,
+      "text-align:center",
+      "white-space:normal",
+      "box-sizing:border-box"
+    ].join(";");
+    this.element.textContent = "";
 
-    // The linked element is the wordmark itself, so the badge carries the
-    // Crosslink identity rather than only its name. The SVG is labelled, which
-    // is what keeps the link readable to a screen reader; the text fallback
-    // below covers the case where the mark cannot be drawn at all.
+    const prefix = document.createElement("span");
+    prefix.textContent = `${this.options.text ?? CROSSLINK_ATTRIBUTION_TEXT} `;
+
     const link = document.createElement("a");
     link.href = CROSSLINK_REPOSITORY;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.setAttribute("aria-label", CROSSLINK_ATTRIBUTION_LINK_TEXT);
-    link.style.cssText = "color:inherit;display:inline-flex;align-items:center;text-decoration:none";
-    link.innerHTML = crosslinkLogoSvg({
-      width: cssLength(this.options.logoWidth, "58px"),
-      color: this.options.accentColor ? brand.logoColor : undefined,
-      title: CROSSLINK_ATTRIBUTION_LINK_TEXT
-    });
+    link.style.cssText = "color:inherit;font-weight:600;text-decoration:none";
+    link.textContent = this.options.linkText ?? CROSSLINK_ATTRIBUTION_LINK_TEXT;
 
     this.element.append(prefix, link);
     if (this.options.suffix) {

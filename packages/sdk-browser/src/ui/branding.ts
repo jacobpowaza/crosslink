@@ -3,10 +3,10 @@
  * for the Crosslink identity rendered by every Crosslink-owned screen.
  *
  * The mark is an SVG filled with `currentColor`, so it takes the colour of the
- * Crosslink surface around it. That is how an application accent tints the logo
- * without anybody shipping a recoloured copy: `resolveCrosslinkTheme` derives a
- * logo colour from the accent and then lifts it until it clears the WCAG
- * contrast floor for graphical objects against the surface behind it.
+ * Crosslink surface around it. By default the mark is white. When an application
+ * explicitly supplies an accent, `resolveCrosslinkTheme` derives a logo colour
+ * from that accent and then lifts it until it clears the WCAG contrast floor for
+ * graphical objects against the surface behind it.
  *
  * Nothing here can remove the mark or the attribution. The helpers always
  * return a logo and always return attribution text; only colour, size and
@@ -24,8 +24,8 @@ export const CROSSLINK_LOGO_PATH =
 export const CROSSLINK_REPOSITORY = "https://github.com/jacobpowaza/crosslink";
 
 /** Attribution wording. Not configurable — every Crosslink screen says this. */
-export const CROSSLINK_ATTRIBUTION_TEXT = "Powered by";
-export const CROSSLINK_ATTRIBUTION_LINK_TEXT = "Crosslink";
+export const CROSSLINK_ATTRIBUTION_TEXT = "End-to-end encrypted with";
+export const CROSSLINK_ATTRIBUTION_LINK_TEXT = "crosslink";
 
 /**
  * The whole of what an application may say about how Crosslink-owned screens
@@ -195,6 +195,7 @@ export function resolveCrosslinkTheme(theme: CrosslinkTheme = {}): ResolvedCross
 
   const background =
     requestedBg ?? parseColor(appearance === "light" ? DEFAULT_LIGHT_BG : DEFAULT_DARK_BG)!;
+  const hasAccent = Boolean(theme.accentColor?.trim());
   const accent = parseColor(theme.accentColor) ?? parseColor(DEFAULT_ACCENT)!;
   const text =
     parseColor(theme.textColor) ??
@@ -213,7 +214,7 @@ export function resolveCrosslinkTheme(theme: CrosslinkTheme = {}): ResolvedCross
     textColor: toHex(text),
     mutedColor: toHex(muted),
     dividerColor: toHex(divider),
-    logoColor: toHex(ensureContrast(accent, background, LOGO_MIN_CONTRAST)),
+    logoColor: hasAccent ? toHex(ensureContrast(accent, background, LOGO_MIN_CONTRAST)) : "#ffffff",
     attributionColor: toHex(ensureContrast(muted, background, ATTRIBUTION_MIN_CONTRAST)),
     appearance
   };
@@ -246,7 +247,8 @@ function cssSize(value: string | number | undefined, fallback: string): string {
  */
 export function crosslinkLogoSvg(options: CrosslinkLogoOptions = {}): string {
   const width = cssSize(options.width, "140px");
-  const style = `width:${width};height:auto;display:block;${options.color ? `color:${options.color};` : ""}${options.style ?? ""}`;
+  const color = options.color ?? "#ffffff";
+  const style = `width:${width};height:auto;display:block;color:${color};${options.style ?? ""}`;
   const className = options.className ? ` class="${options.className}"` : "";
   const title = options.title ?? "Crosslink";
   return [

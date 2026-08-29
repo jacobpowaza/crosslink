@@ -1,12 +1,20 @@
 {
   "name": "@crosslink/sdk-browser",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Crosslink client SDK for browsers and PWAs",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "git+https://github.com/jacobpowaza/crosslink.git", "directory": "packages/sdk-browser" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jacobpowaza/crosslink.git",
+    "directory": "packages/sdk-browser"
+  },
   "homepage": "https://crosslink.mintlify.site",
-  "bugs": { "url": "https://github.com/jacobpowaza/crosslink/issues" },
-  "publishConfig": { "access": "public" },
+  "bugs": {
+    "url": "https://github.com/jacobpowaza/crosslink/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "exports": {
     ".": {

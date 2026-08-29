@@ -96,23 +96,25 @@ describe("PairingCard UI Component", () => {
     card.destroy();
   });
 
-  it("creates a reusable, customizable Crosslink attribution", () => {
-    const badge = createPoweredByCrosslink({
+  it("creates a reusable, customizable Crosslink attribution footer", () => {
+    const footer = createPoweredByCrosslink({
       color: "#abcdef",
       size: 13,
-      placement: "top-right",
-      text: "Built with",
+      offset: 14,
+      text: "Secured with",
     });
-    expect(badge.element.className).toContain("cl-powered-by-crosslink");
+    expect(footer.element.className).toContain("cl-crosslink-attribution-footer");
     // jsdom normalises hex colours to rgb() when reading back cssText.
-    expect(badge.element.style.color).toBe("rgb(171, 205, 239)");
-    expect(badge.element.style.cssText).toContain("13px");
-    const link = badge.element.querySelector("a") as any;
+    expect(footer.element.style.color).toBe("rgb(171, 205, 239)");
+    expect(footer.element.style.cssText).toContain("13px");
+    expect(footer.element.style.cssText).toContain("14px");
+    expect(footer.element.style.position).toBe("");
+    expect(footer.element.style.borderRadius).toBe("");
+    const link = footer.element.querySelector("a") as any;
     expect(link.href).toBe("https://github.com/jacobpowaza/crosslink");
-    // The link *is* the wordmark, so the accessible name comes from the SVG.
-    expect(link.getAttribute("aria-label")).toBe("Crosslink");
-    expect(link.querySelector("svg")).toBeTruthy();
-    badge.destroy();
+    expect(link.getAttribute("aria-label")).toBe("crosslink");
+    expect(link.textContent).toBe("crosslink");
+    footer.destroy();
   });
 
   it("applies custom theme variables", () => {
